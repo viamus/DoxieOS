@@ -446,7 +446,7 @@ public sealed class ClaudeProcessAgentRunnerTests : IDisposable
             if (IsTerminal(run.Status)) terminal.TrySetResult(run);
         };
 
-        const string url = "https://sonarcloud.io/summary/overall?id=PROJECT&branch=dev";
+        const string url = "https://quality.example.invalid/summary/overall?id=PROJECT&branch=dev";
         runnerWithCodexProvider.Start("test-agent", $"advise --context \"{url}\"");
         var finished = await terminal.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
