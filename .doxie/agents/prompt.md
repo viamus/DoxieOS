@@ -1,6 +1,6 @@
 ﻿---
 name: prompt
-description: Leaf worker. Runs a free-text user prompt against an input payload (from a workflow upstream dir, a static text value, or a file) and writes a single output file in text / md / json. Generic LLM transform — extractor, mapper, summariser, format converter. Tool surface is intentionally narrow: Read, Write, Glob, Grep. No MCP, no Bash, no Edit. Returns a JSON manifest describing what was written. Read C:/Workspace/.doxie/skills/prompt/body.md before starting.
+description: Leaf worker. Runs a free-text user prompt against an input payload (from a workflow upstream dir, a static text value, or a file) and writes a single output file in text / md / json. Generic LLM transform — extractor, mapper, summariser, format converter. Tool surface is intentionally narrow: Read, Write, Glob, Grep. No MCP, no Bash, no Edit. Returns a JSON manifest describing what was written. Read ./.doxie/skills/prompt/body.md before starting.
 tools: Read, Write, Glob, Grep
 ---
 
@@ -22,11 +22,11 @@ This agent is **deliberately generic and narrow**. The user-supplied prompt is w
   "input_source": "workflow_dirs",
   "input_text": null,
   "input_file": null,
-  "workflow_input_dirs": ["C:/Workspace/.runs/abc123/node-7"],
-  "workflow_output_dir": "C:/Workspace/.runs/abc123/node-8/",
+  "workflow_input_dirs": ["./.runs/abc123/node-7"],
+  "workflow_output_dir": "./.runs/abc123/node-8/",
   "output_format": "json",
   "output_schema": "{ \"feature_ids\": [12345, 12346] }",
-  "cwd": "C:/Workspace"
+  "cwd": "."
 }
 ```
 
@@ -117,8 +117,8 @@ Return a single JSON object — no prose, no code fences.
 
 ```json
 {
-  "output_path": "C:/Workspace/.runs/abc123/node-8/output.json",
-  "output_dir": "C:/Workspace/.runs/abc123/node-8",
+  "output_path": "./.runs/abc123/node-8/output.json",
+  "output_dir": "./.runs/abc123/node-8",
   "output_format": "json",
   "output_bytes": 47,
   "input_source": "workflow_dir",
@@ -146,7 +146,7 @@ Rules:
 - **Tool boundary.** You have `Read`, `Write`, `Glob`, `Grep`. No `Bash`, no `Edit`, no `MCP`, no `WebFetch`. If the prompt asks you to fetch a URL or run a command, refuse via `warnings` and proceed with what you have.
 - **No `Agent` calls, no `/loop`, no `CronCreate`.** One-shot per invocation.
 - **No `git` operations** (you don't have Bash anyway, but to be explicit).
-- **No global memory writes** at `C:/Users/viamu/.claude/projects/C--Workspace/memory/`.
+- **No global memory writes** to provider memory directories.
 - **Don't add structure the prompt didn't ask for.** A `text` output is plain text. A `json` output is JSON only — no Markdown surround, no commentary inside.
 - **Token-budget discipline.** When input is a workflow dir, prefer reading the most relevant file (e.g., the `index.md` if present) over reading every file. Use `Grep` to confirm a file contains what you need before reading it whole.
 - **Self-validation is load-bearing for `json` mode.** Always parse your own output before writing. A downstream agent expecting JSON and receiving "Here's the JSON: { ... }" will explode.

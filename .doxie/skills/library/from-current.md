@@ -23,7 +23,7 @@ Thin dispatcher: resolves the workspace's memory directory, builds the input JSO
 
 2. **Resolve the source memory directory:**
    - If `--memory-dir` was passed, use it.
-   - Otherwise compute the default: `%USERPROFILE%/.claude/projects/<workspace-id>/memory`. `<workspace-id>` is the standard Claude Code derivation from the project root path: drive letter followed by `--` and each path segment joined by `-` (e.g. `C--Workspace` if the project lives at `C:/Workspace`, `D--code-doxie` if it lives at `D:/code/doxie`). Expand `%USERPROFILE%` against the running environment.
+   - Otherwise compute the default: `%USERPROFILE%/.claude/projects/<workspace-id>/memory`. `<workspace-id>` is the standard Claude Code derivation from the project root path: drive letter followed by `--` and each path segment joined by `-` (for example, a project at `/home/user/code/doxie` becomes `home-user-code-doxie`). Expand `%USERPROFILE%` against the running environment.
 
 3. **Build the agent input:**
    ```json

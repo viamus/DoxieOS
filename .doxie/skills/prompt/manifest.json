@@ -22,7 +22,7 @@
         {
           "id": "input_file",
           "label": "Input file path (alternative to input text)",
-          "placeholder": "C:\\Workspace\\.workspace\\\u003Cmy-workspace\u003E\\some-file.md",
+          "placeholder": ".\\.workspace\\\u003Cmy-workspace\u003E\\some-file.md",
           "required": false
         },
         {
