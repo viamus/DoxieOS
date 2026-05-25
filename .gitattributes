@@ -1,6 +1,7 @@
 * text=auto
 
 .gitattributes text eol=lf
+.github/workflows/*.yml text eol=lf
 .githooks/* text eol=lf
 tools/*.json text eol=lf
 *.sh text eol=lf

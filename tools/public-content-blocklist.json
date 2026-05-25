@@ -50,7 +50,7 @@
     },
     {
       "label": "removed review catalog reference",
-      "patternParts": ["(?i)\\b", "pull", "[_ -]?", "request", "\\b|\\bP", "Rs?\\b|\\bmerge", "[_ -]?", "request", "\\b|\\breviewer", "\\s+vote\\b|\\bquality", "\\s+gate\\b"]
+      "patternParts": ["(?i)\\bmerge", "[_ -]?", "request", "\\b|\\breviewer", "\\s+vote\\b|\\bquality", "\\s+gate\\b"]
     },
     {
       "label": "local absolute Windows path",
