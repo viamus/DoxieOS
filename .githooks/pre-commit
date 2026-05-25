@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+set -eu
+
+if command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File tools/guard-public-content.ps1 -Staged
+elif command -v powershell >/dev/null 2>&1; then
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/guard-public-content.ps1 -Staged
+else
+  echo "Public content guard requires PowerShell (pwsh or powershell)." >&2
+  exit 1
+fi

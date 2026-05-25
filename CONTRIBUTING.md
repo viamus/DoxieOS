@@ -15,6 +15,14 @@ Thanks for sending changes. This is a small repo with a handful of collaborators
 
 If both succeed locally, the CI is very likely to be green too.
 
+Enable the public content guard before your first commit:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook blocks company-specific, private-catalog, and local-machine references.
+
 ## Branch naming
 
 - `feat/<short-description>` — new feature

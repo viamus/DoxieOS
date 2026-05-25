@@ -12,6 +12,7 @@ This folder is the product documentation entry point.
 - [Architecture](architecture.md): runtime boundaries, data flow, and provider compatibility.
 - [Authoring Agents And Workflows](authoring-agents-and-workflows.md): how Doxie catalog assets are shaped.
 - [Operations Guide](operations.md): running locally, Docker Compose, MCPs, storage, and validation.
+- [Public Content Guard](public-content-guard.md): pre-commit checks for keeping the public repo clean.
 - [Licensing And Attribution](licensing.md): why the project uses Apache-2.0 plus NOTICE.
 
 ## Product Map
