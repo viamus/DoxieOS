@@ -16,39 +16,17 @@ function Join-Pattern([string[]]$Parts) {
     return ($Parts -join '')
 }
 
+$configPath = Join-Path -Path $PSScriptRoot -ChildPath 'public-content-blocklist.json'
+$config = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop | ConvertFrom-Json
+
 $blockedPatterns = @(
-    @{ Pattern = Join-Pattern @('(?i)\b', 'am', 'bev', '\b'); Label = 'company-specific reference' },
-    @{ Pattern = Join-Pattern @('(?i)', 'ab', '\s*[-_ ]?\s*', 'in', '\s*', 'bev'); Label = 'company-specific reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'abin', 'bev', '\b'); Label = 'company-specific reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'am', 'bev', '\s*', 'tech', '\b|\b', 'am', 'bev', 'tech', '\b'); Label = 'company-specific reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'am', 'bev', 'ize', '\b'); Label = 'private toolkit reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'AM', 'BEV', '-SA\b|\b', 'am', 'bev', 'devs\b|@', 'am', 'bev'); Label = 'private organization reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'brew', 'dat\b|\b', 'brew', 'zone\b|\b', 'touch', 'less\b|\b', 'lud', 'eritz\b'); Label = 'private internal artifact reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'azure', '\s+', 'dev', 'ops\b|\bmcp-', 'azure', 'dev', 'ops\b|@', 'azure', '/mcp'); Label = 'removed external integration reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'A', 'DO', '\b'); Label = 'removed external integration acronym' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'data', 'dog', '\b'); Label = 'removed external integration reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'sonar', 'qube', '\b|\b', 'SONAR', '_TOKEN\b'); Label = 'removed external integration reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'L', 'GPD\b|\bG', 'DPR\b'); Label = 'removed privacy catalog reference' },
-    @{ Pattern = Join-Pattern @('(?i)\b', 'pull', '[_ -]?', 'request', '\b|\bP', 'Rs?\b'); Label = 'removed review catalog reference' },
-    @{ Pattern = Join-Pattern @('(?i)C:[\\/](Work', 'space|Users[\\/]via', 'mu|DoxieOS)'); Label = 'local absolute Windows path' },
-    @{ Pattern = Join-Pattern @('(?i)DoxieOS', '-Public'); Label = 'local public-clone name reference' }
+    foreach ($blocked in $config.blockedPatterns) {
+        @{ Pattern = Join-Pattern ([string[]]$blocked.patternParts); Label = $blocked.label }
+    }
 )
 
-$includeExtensions = @(
-    '.cs', '.csproj', '.razor', '.css', '.js', '.json', '.md', '.yml', '.yaml',
-    '.xml', '.props', '.targets', '.slnx', '.toml', '.ps1', '.sh', '.dockerignore',
-    '.gitignore', '.webmanifest', '.svg'
-)
-
-$ignoredPathParts = @(
-    '/.git/',
-    '/bin/',
-    '/obj/',
-    '/.claude/',
-    '/.codex/',
-    '/.agents/',
-    '/.doxie/index/'
-)
+$includeExtensions = @($config.includeExtensions)
+$ignoredPathParts = @($config.ignoredPathParts)
 
 function Test-TextFile([string]$Path) {
     $name = [System.IO.Path]::GetFileName($Path)

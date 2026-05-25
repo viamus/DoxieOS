@@ -1,0 +1,8 @@
+* text=auto
+
+.gitattributes text eol=lf
+.githooks/* text eol=lf
+tools/*.json text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.ps1 text eol=lf

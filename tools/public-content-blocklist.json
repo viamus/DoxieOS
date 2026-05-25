@@ -1,0 +1,132 @@
+{
+  "blockedPatterns": [
+    {
+      "label": "large-company reference",
+      "patternParts": ["(?i)\\b(?:alpha", "bet|face", "book|insta", "gram|whats", "app|ora", "cle|sales", "force|service", "now|i", "bm|ad", "obe|net", "flix|u", "ber|spot", "ify|air", "bnb|tes", "la|cis", "co)\\b"]
+    },
+    {
+      "label": "large-company reference",
+      "patternParts": ["(?i)\\b(?:wal", "mart|carre", "four|cost", "co|star", "bucks|mc", "donald", "'s|co", "ca[- ]?co", "la|pep", "si", "co|uni", "lever|nest", "l", "e|hein", "eken|dia", "geo|mon", "delez|kel", "logg", "'s|proc", "ter\\s*&\\s*gam", "ble|p\\s*&\\s*g)\\b"]
+    },
+    {
+      "label": "large-company reference",
+      "patternParts": ["(?i)\\b(?:jp", "morgan|jp\\s*morgan|gold", "man\\s+sachs|mor", "gan\\s+stan", "ley|bank\\s+of\\s+amer", "ica|citi", "group|h", "sbc|bar", "clays|sant", "ander|it", "au|ita", "u|bra", "desco|nu", "bank|mer", "cado\\s+livre|mer", "cadolivre|pag", "seguro|stone\\s*co)\\b"]
+    },
+    {
+      "label": "large-company reference",
+      "patternParts": ["(?i)\\b(?:accen", "ture|del", "oitte|k", "pmg|p", "wc|mc", "kinsey|b", "cg|ba", "in|cap", "gemini|glo", "bant|to", "tvs|mag", "alu|i", "food|rap", "pi|exxon", "mobil|chev", "ron|petro", "bras)\\b"]
+    },
+    {
+      "label": "large-company domain reference",
+      "patternParts": ["(?i)\\b(?:ora", "cle|sales", "force|service", "now|s", "ap|i", "bm|ad", "obe|net", "flix|u", "ber|spot", "ify|air", "bnb|tes", "la|nvi", "dia|wal", "mart|carre", "four|nu", "bank|mer", "cadolivre|pag", "seguro|sto", "ne|accen", "ture|del", "oitte|k", "pmg|p", "wc|cap", "gemini|glo", "bant|to", "tvs|mag", "alu|i", "food|rap", "pi|petro", "bras)\\.com\\b"]
+    },
+    {
+      "label": "private repository or catalog reference",
+      "patternParts": ["(?i)\\b", "claude", "-ops\\b|\\b", "fix", "-hub\\b|\\b", "PIPELINE", "-BLUEPRINTS\\b|\\b", "blueprint", "-contracts\\b"]
+    },
+    {
+      "label": "private migration/reference pack reference",
+      "patternParts": ["(?i)\\b", "knowledge", "-pack\\b|\\b", "project", "-decisions\\.yaml\\b|\\b", "project", "-mappings\\.yaml\\b|\\b", "lovable", "-analysis\\.yaml\\b"]
+    },
+    {
+      "label": "removed external integration reference",
+      "patternParts": ["(?i)\\b", "azure", "\\s+", "dev", "ops\\b|\\bmcp-", "azure", "dev", "ops\\b|@", "azure", "/mcp\\b|\\baz", "do\\b|", "dev\\.azure\\.com|", "visualstudio\\.com|", "pkgs\\.dev\\.azure\\.com"]
+    },
+    {
+      "label": "removed external integration acronym",
+      "patternParts": ["(?i)\\b", "A", "DO", "\\b"]
+    },
+    {
+      "label": "removed external integration reference",
+      "patternParts": ["(?i)\\b", "data", "dog", "\\b|\\bmcp[_-]", "data", "dog", "\\b|\\bDD_", "(?:API|APP)_KEY\\b"]
+    },
+    {
+      "label": "removed external integration reference",
+      "patternParts": ["(?i)\\b", "sonar", "qube", "\\b|\\b", "sonar", "cloud\\b|\\b", "sonar", "-project\\.properties\\b|\\b", "SONAR", "_TOKEN\\b|\\bmcp[_-]", "sonar", "qube", "\\b"]
+    },
+    {
+      "label": "removed privacy catalog reference",
+      "patternParts": ["(?i)\\b", "L", "GPD\\b|\\bG", "DPR\\b|\\bD", "PIA\\b|\\bR", "OPA\\b|\\bdata", "\\s+subject\\s+request\\b|\\bprivacy", "\\s+impact\\s+assessment\\b"]
+    },
+    {
+      "label": "removed review catalog reference",
+      "patternParts": ["(?i)\\b", "pull", "[_ -]?", "request", "\\b|\\bP", "Rs?\\b|\\bmerge", "[_ -]?", "request", "\\b|\\breviewer", "\\s+vote\\b|\\bquality", "\\s+gate\\b"]
+    },
+    {
+      "label": "local absolute Windows path",
+      "patternParts": ["(?i)\\b[A-Z]:[\\\\/](?:Work", "space|Users[\\\\/]via", "mu|DoxieOS|github-private-catalog|github-repository)\\b"]
+    },
+    {
+      "label": "local absolute macOS/Linux path",
+      "patternParts": ["(?i)(?:/Users|/home)/[^\\s'\"<>]+/(?:DoxieOS|github-private-catalog|github-repository|DoxieOS-Public)\\b"]
+    },
+    {
+      "label": "local absolute WSL path",
+      "patternParts": ["(?i)/mnt/[a-z]/(?:Work", "space|Users/[^\\s'\"<>]+/(?:DoxieOS|github-private-catalog|github-repository|DoxieOS-Public))\\b"]
+    },
+    {
+      "label": "local private workspace reference",
+      "patternParts": ["(?i)[\\\\/](?:github-private-catalog|DoxieOS-Public)[\\\\/]"]
+    },
+    {
+      "label": "credential material",
+      "patternParts": ["(?i)\\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\\b|\\bgithub_pat_[A-Za-z0-9_]{20,}\\b|\\bglpat-[A-Za-z0-9_-]{20,}\\b"]
+    },
+    {
+      "label": "credential material",
+      "patternParts": ["(?i)\\b(?:sk-", "ant", "-[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|AIza[0-9A-Za-z_-]{35})\\b"]
+    },
+    {
+      "label": "credential material",
+      "patternParts": ["(?i)\\b(?:AKIA|ASIA)[0-9A-Z]{16}\\b|\\bxox[baprs]-[A-Za-z0-9-]{20,}\\b"]
+    },
+    {
+      "label": "credential material",
+      "patternParts": ["(?i)\\b(?:password|passwd|pwd|secret|token|api[_-]?key)\\s*[:=]\\s*['\"]?[A-Za-z0-9_./+=-]{16,}"]
+    },
+    {
+      "label": "credential material",
+      "patternParts": ["(?i)\\b[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|PRIVATE_KEY|CLIENT_SECRET)\\b\\s*[:=]\\s*['\"]?[A-Za-z0-9_./+=-]{16,}"]
+    },
+    {
+      "label": "private key material",
+      "patternParts": ["-----BEGIN [A-Z ]*PRIVATE KEY-----"]
+    },
+    {
+      "label": "JWT credential material",
+      "patternParts": ["\\beyJ[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{10,}\\b"]
+    }
+  ],
+  "includeExtensions": [
+    ".cs",
+    ".csproj",
+    ".razor",
+    ".css",
+    ".js",
+    ".json",
+    ".md",
+    ".yml",
+    ".yaml",
+    ".xml",
+    ".props",
+    ".targets",
+    ".slnx",
+    ".toml",
+    ".ps1",
+    ".py",
+    ".sh",
+    ".dockerignore",
+    ".gitignore",
+    ".webmanifest",
+    ".svg"
+  ],
+  "ignoredPathParts": [
+    "/.git/",
+    "/bin/",
+    "/obj/",
+    "/.claude/",
+    "/.codex/",
+    "/.agents/",
+    "/.doxie/index/"
+  ]
+}

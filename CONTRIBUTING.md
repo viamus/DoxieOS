@@ -6,7 +6,8 @@ Thanks for sending changes. This is a small repo with a handful of collaborators
 
 1. Clone anywhere on disk — DoxieOS resolves paths relative to whatever folder it's launched from.
 2. Install the .NET SDK pinned in `global.json` (currently .NET 10). [Download](https://dotnet.microsoft.com/).
-3. Build and test before pushing:
+3. Install Python 3 if your shell does not have PowerShell available. The versioned Git hooks use it as the cross-platform fallback.
+4. Build and test before pushing:
 
    ```sh
    dotnet build Solution.slnx -c Release
@@ -21,7 +22,7 @@ Enable the public content guard before your first commit:
 git config core.hooksPath .githooks
 ```
 
-The hook blocks company-specific, private-catalog, and local-machine references.
+The hook blocks company-specific, private-catalog, local-machine, and credential references. It runs with PowerShell when available and falls back to Python on Linux/macOS.
 
 ## Branch naming
 
