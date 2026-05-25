@@ -1,0 +1,202 @@
+@using Viamus.Doxie.Orchestrator.Services
+@inject RunFileBrowser Browser
+
+@*
+    Read-only explorer for run artefacts on disk. Two modes:
+      - RootKind="sandbox"      Identifier=<tag>     → browses .sandbox/<tag>/
+      - RootKind="workflow-run" Identifier=<runId>   → browses .runs/<runId>/
+
+    Tree on the left (folders first, then files), preview on the right
+    when a file is selected. All path resolution is delegated to the
+    RunFileBrowser service which guards against escaping the root.
+*@
+
+<MudPaper Elevation="0" Class="pa-3" Style="border: 1px solid var(--mud-palette-lines-default); border-radius: 6px;">
+    @if (_loadError is not null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">@_loadError</MudAlert>
+    }
+    else
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-2">
+            <MudTooltip Text="Up to parent folder">
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
+                               Size="Size.Small"
+                               Disabled="@(string.IsNullOrEmpty(_currentRelativePath) || _currentRelativePath == ".")"
+                               OnClick="NavigateUp" />
+            </MudTooltip>
+            <MudTooltip Text="Reload current folder">
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                               Size="Size.Small"
+                               OnClick="@(() => TryListAt(_currentRelativePath))" />
+            </MudTooltip>
+            <MudIcon Icon="@(RootKind == "workflow-run" ? Icons.Material.Filled.PlayCircle : Icons.Material.Filled.Folder)" Size="Size.Small" Color="Color.Primary" />
+            <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                @Identifier@(string.IsNullOrEmpty(_currentRelativePath) || _currentRelativePath == "." ? "" : "/" + _currentRelativePath)
+            </MudText>
+        </MudStack>
+
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudPaper Outlined="true" Class="pa-1" Style="height: 480px; overflow: auto;">
+                    @if (_listing is null || _listing.Entries.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="pa-3" Color="Color.Default">
+                            <em>(empty folder)</em>
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudList T="FileEntry" Dense="true">
+                            @foreach (var entry in _listing.Entries)
+                            {
+                                <MudListItem T="FileEntry"
+                                             Icon="@(entry.IsDirectory ? Icons.Material.Filled.Folder : Icons.Material.Filled.InsertDriveFile)"
+                                             IconColor="@(entry.IsDirectory ? Color.Primary : Color.Default)"
+                                             OnClick="@(() => OnEntryClicked(entry))">
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                        <MudText Typo="Typo.body2"
+                                                 Style="@(entry.IsDirectory ? "font-weight: 500;" : "")">
+                                            @entry.Name
+                                        </MudText>
+                                        <MudSpacer />
+                                        @if (!entry.IsDirectory && entry.Size is { } size)
+                                        {
+                                            <MudText Typo="Typo.caption" Color="Color.Default">@FormatBytes(size)</MudText>
+                                        }
+                                    </MudStack>
+                                </MudListItem>
+                            }
+                        </MudList>
+                    }
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12" md="8">
+                <MudPaper Outlined="true" Class="pa-3" Style="height: 480px; overflow: auto;">
+                    @if (_selectedFile is null)
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default">
+                            <em>Select a file on the left to preview it.</em>
+                        </MudText>
+                    }
+                    else if (_selectedFile.Text is null)
+                    {
+                        <MudStack Spacing="1">
+                            <MudText Typo="Typo.h6">@_selectedFile.Name</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default">
+                                @_selectedFile.ContentType · @FormatBytes(_selectedFile.Size)
+                            </MudText>
+                            <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-2">
+                                Preview unavailable — file is binary or larger than the 1 MB inline cap. Open the file directly from disk to inspect it.
+                            </MudAlert>
+                        </MudStack>
+                    }
+                    else
+                    {
+                        <MudStack Spacing="1">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudText Typo="Typo.h6">@_selectedFile.Name</MudText>
+                                <MudSpacer />
+                                <MudText Typo="Typo.caption" Color="Color.Default">
+                                    @_selectedFile.ContentType · @FormatBytes(_selectedFile.Size)
+                                </MudText>
+                            </MudStack>
+                            <pre style="margin: 0; padding: 12px; background: var(--mud-palette-background-grey); border-radius: 4px; overflow: auto; max-height: 400px; font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.85rem; line-height: 1.45; white-space: pre-wrap; word-break: break-word;"><code>@_selectedFile.Text</code></pre>
+                        </MudStack>
+                    }
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    }
+</MudPaper>
+
+@code {
+    /// <summary>
+    /// Root kind: "sandbox" (browses ./.sandbox/&lt;tag&gt;/) or
+    /// "workflow-run" (browses ./.runs/&lt;runId&gt;/).
+    /// </summary>
+    [Parameter, EditorRequired] public string RootKind { get; set; } = "sandbox";
+
+    /// <summary>
+    /// The sandbox tag (when RootKind="sandbox") or the workflow run id
+    /// (when RootKind="workflow-run").
+    /// </summary>
+    [Parameter, EditorRequired] public string Identifier { get; set; } = string.Empty;
+
+    private DirectoryListing? _listing;
+    private FileContent? _selectedFile;
+    private string? _loadError;
+    private string _currentRelativePath = string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        // Identifier or RootKind changed — reset state and re-list.
+        _selectedFile = null;
+        _currentRelativePath = string.Empty;
+        TryListAt(string.Empty);
+    }
+
+    private void OnEntryClicked(FileEntry entry)
+    {
+        if (entry.IsDirectory)
+        {
+            TryListAt(entry.RelativePath);
+            _selectedFile = null;
+        }
+        else
+        {
+            TryReadFile(entry.RelativePath);
+        }
+    }
+
+    private void NavigateUp()
+    {
+        if (string.IsNullOrEmpty(_currentRelativePath) || _currentRelativePath == ".") return;
+        var parts = _currentRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var parent = parts.Length <= 1 ? string.Empty : string.Join('/', parts.Take(parts.Length - 1));
+        TryListAt(parent);
+        _selectedFile = null;
+    }
+
+    private void TryListAt(string relativePath)
+    {
+        try
+        {
+            _listing = RootKind == "workflow-run"
+                ? Browser.ListWorkflowRun(Identifier, relativePath)
+                : Browser.ListSandbox(Identifier, relativePath);
+            _currentRelativePath = _listing.RelativePath;
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _listing = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private void TryReadFile(string relativePath)
+    {
+        try
+        {
+            _selectedFile = RootKind == "workflow-run"
+                ? Browser.ReadWorkflowRunFile(Identifier, relativePath)
+                : Browser.ReadSandboxFile(Identifier, relativePath);
+            _loadError = null;
+        }
+        catch (Exception ex)
+        {
+            _selectedFile = null;
+            _loadError = ex.Message;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:0.#} KB";
+        if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):0.##} MB";
+        return $"{bytes / (1024.0 * 1024 * 1024):0.##} GB";
+    }
+}

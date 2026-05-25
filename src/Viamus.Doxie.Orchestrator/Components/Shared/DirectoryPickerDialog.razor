@@ -1,0 +1,196 @@
+@using Viamus.Doxie.Orchestrator.Agents
+
+<MudDialog Class="directory-picker-dialog" Style="width: min(820px, 94vw);">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">@Title</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudTextField T="string"
+                          Label="Folder"
+                          Value="_pathText"
+                          ValueChanged="@(v => _pathText = v ?? string.Empty)"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          FullWidth="true"
+                          Adornment="Adornment.End"
+                          AdornmentIcon="@Icons.Material.Filled.ArrowForward"
+                          OnAdornmentClick="GoToTypedPath" />
+
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                <MudTooltip Text="Home">
+                    <MudIconButton Icon="@Icons.Material.Filled.Home" OnClick="GoHome" />
+                </MudTooltip>
+                <MudTooltip Text="Workspace root">
+                    <MudIconButton Icon="@Icons.Material.Filled.Workspaces" OnClick="GoWorkspaceRoot" />
+                </MudTooltip>
+                <MudTooltip Text="Parent folder">
+                    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
+                                   Disabled="@(!CanGoUp)"
+                                   OnClick="GoUp" />
+                </MudTooltip>
+                <MudTooltip Text="Refresh">
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" OnClick="RefreshCurrent" />
+                </MudTooltip>
+                <MudSpacer />
+                @foreach (var drive in _drives)
+                {
+                    <MudChip T="string"
+                             Size="Size.Small"
+                             Variant="Variant.Outlined"
+                             Icon="@Icons.Material.Filled.Storage"
+                             OnClick="@(() => NavigateTo(drive))">@drive</MudChip>
+                }
+            </MudStack>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">@_error</MudAlert>
+            }
+
+            <MudPaper Elevation="0" Class="directory-picker-list">
+                @if (_entries.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Default" Class="pa-3">
+                        No readable subfolders here. You can still select this folder.
+                    </MudText>
+                }
+                else
+                {
+                    <MudList T="DirectoryEntry" Dense="true" Class="pa-0">
+                        @foreach (var entry in _entries)
+                        {
+                            <MudListItem T="DirectoryEntry" Icon="@Icons.Material.Filled.Folder" OnClick="@(() => NavigateTo(entry.Path))">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.body2">@entry.Name</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Default"><code>@entry.Path</code></MudText>
+                                </MudStack>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            </MudPaper>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Check"
+                   Disabled="@(!CanSelect)"
+                   OnClick="SelectCurrent">
+            Select folder
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string Title { get; set; } = "Choose folder";
+    [Parameter] public string? InitialPath { get; set; }
+
+    private string _currentPath = string.Empty;
+    private string _pathText = string.Empty;
+    private string? _error;
+    private List<string> _drives = new();
+    private List<DirectoryEntry> _entries = new();
+
+    private bool CanSelect => Directory.Exists(_currentPath);
+    private bool CanGoUp => Directory.GetParent(_currentPath) is not null;
+
+    protected override void OnInitialized()
+    {
+        _drives = DriveInfo.GetDrives()
+            .Where(d => d.IsReady)
+            .Select(d => d.RootDirectory.FullName)
+            .OrderBy(d => d, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var start = ResolveInitialPath();
+        NavigateTo(start);
+    }
+
+    private string ResolveInitialPath()
+    {
+        if (!string.IsNullOrWhiteSpace(InitialPath))
+        {
+            var expanded = StorageOptions.ResolvePath(InitialPath);
+            if (Directory.Exists(expanded)) return expanded;
+        }
+
+        var workspaceRoot = StorageOptions.ResolvePath(".");
+        if (Directory.Exists(workspaceRoot)) return workspaceRoot;
+
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return Directory.Exists(profile) ? profile : Directory.GetCurrentDirectory();
+    }
+
+    private void NavigateTo(string path)
+    {
+        _error = null;
+        try
+        {
+            var resolved = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
+            if (!Directory.Exists(resolved))
+            {
+                _error = $"Folder does not exist: {resolved}";
+                return;
+            }
+
+            _currentPath = resolved;
+            _pathText = resolved;
+            _entries = Directory.EnumerateDirectories(resolved)
+                .Select(TryCreateEntry)
+                .Where(e => e is not null)
+                .Select(e => e!)
+                .OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(500)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or ArgumentException or NotSupportedException)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private static DirectoryEntry? TryCreateEntry(string path)
+    {
+        try
+        {
+            var info = new DirectoryInfo(path);
+            return new DirectoryEntry(info.Name, info.FullName);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void GoToTypedPath() => NavigateTo(_pathText);
+
+    private void GoHome()
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(profile)) NavigateTo(profile);
+    }
+
+    private void GoWorkspaceRoot() => NavigateTo(StorageOptions.ResolvePath("."));
+
+    private void GoUp()
+    {
+        var parent = Directory.GetParent(_currentPath);
+        if (parent is not null) NavigateTo(parent.FullName);
+    }
+
+    private void RefreshCurrent() => NavigateTo(_currentPath);
+
+    private void SelectCurrent() => MudDialog.Close(DialogResult.Ok(_currentPath));
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private sealed record DirectoryEntry(string Name, string Path);
+}

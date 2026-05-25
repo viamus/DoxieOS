@@ -1,0 +1,227 @@
+﻿@using Viamus.Doxie.Orchestrator.Services
+@using System.Text.Json
+@using System.Text.Json.Nodes
+
+<MudDialog Style="width: min(720px, 94vw);">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.Hub" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">@Title</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" md="4">
+                    <MudTextField T="string" Label="Id" @bind-Value="_id" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="5">
+                    <MudTextField T="string" Label="Name" @bind-Value="_name" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                </MudItem>
+                <MudItem xs="12" md="3">
+                    <MudSelect T="string" Label="Transport" @bind-Value="_transport" Variant="Variant.Outlined" Margin="Margin.Dense">
+                        <MudSelectItem T="string" Value="@("stdio")">stdio</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("http")">http</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+
+            @if (_transport == "http")
+            {
+                <MudTextField T="string" Label="URL" @bind-Value="_url" Variant="Variant.Outlined" Margin="Margin.Dense" FullWidth="true" Placeholder="http://mcp-example:3000" />
+            }
+            else
+            {
+                <MudTextField T="string" Label="Command" @bind-Value="_command" Variant="Variant.Outlined" Margin="Margin.Dense" FullWidth="true" Placeholder="npx" />
+                <MudTextField T="string" Label="Arguments" @bind-Value="_arguments" Variant="Variant.Outlined" Margin="Margin.Dense" FullWidth="true" Placeholder="-y package-name /workspace" />
+                @if (_hasStoredEnvironment && !_editEnvironment)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true">
+                        Secret environment values are configured and hidden.
+                        <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="@(() => _editEnvironment = true)">Replace secrets</MudButton>
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudTextField T="string"
+                                  Label="Environment / secrets"
+                                  @bind-Value="_environmentDraft"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  FullWidth="true"
+                                  InputType="InputType.Password"
+                                  Placeholder="TOKEN=..." />
+                }
+            }
+
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudCheckBox T="bool" @bind-Value="_enabled" Label="Enabled" Color="Color.Primary" Size="Size.Small" />
+                <MudCheckBox T="bool" @bind-Value="_claude" Label="Claude" Color="Color.Primary" Size="Size.Small" />
+                <MudCheckBox T="bool" @bind-Value="_codex" Label="Codex" Color="Color.Primary" Size="Size.Small" />
+                @if (_hasOtherExtra)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                        Provider metadata preserved
+                    </MudChip>
+                }
+            </MudStack>
+
+            <MudExpansionPanels Elevation="0" Dense="true">
+                <MudExpansionPanel Text="Headers">
+                    <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-2">
+                        HTTP header configuration is only shown here in the edit modal and never in the MCP list.
+                    </MudText>
+                    <MudTextField T="string"
+                                  Label="Headers JSON"
+                                  @bind-Value="_headersJson"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  FullWidth="true"
+                                  Lines="7"
+                                  Placeholder="{ &quot;Authorization&quot;: &quot;Bearer ...&quot; }" />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+
+            @if (!string.IsNullOrWhiteSpace(_error))
+            {
+                <MudAlert Severity="Severity.Error" Dense="true">@_error</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string Title { get; set; } = "MCP server";
+    [Parameter] public McpServerDefinition? Server { get; set; }
+
+    private string _id = string.Empty;
+    private string _name = string.Empty;
+    private string _transport = "stdio";
+    private string _command = string.Empty;
+    private string _arguments = string.Empty;
+    private string _url = string.Empty;
+    private string _environmentDraft = string.Empty;
+    private string _originalEnvironment = string.Empty;
+    private string _extraJson = string.Empty;
+    private string _headersJson = string.Empty;
+    private string _error = string.Empty;
+    private bool _hasStoredEnvironment;
+    private bool _editEnvironment;
+    private bool _enabled = true;
+    private bool _claude = true;
+    private bool _codex = true;
+    private bool _hasOtherExtra;
+
+    protected override void OnInitialized()
+    {
+        if (Server is null) return;
+
+        _id = Server.Id;
+        _name = Server.Name;
+        _transport = string.IsNullOrWhiteSpace(Server.Transport) ? "stdio" : Server.Transport;
+        _command = Server.Command ?? string.Empty;
+        _arguments = Server.Arguments ?? string.Empty;
+        _url = Server.Url ?? string.Empty;
+        _originalEnvironment = Server.Environment ?? string.Empty;
+        _hasStoredEnvironment = !string.IsNullOrWhiteSpace(Server.Environment);
+        _editEnvironment = !_hasStoredEnvironment;
+        _extraJson = Server.ExtraJson ?? string.Empty;
+        _headersJson = ExtractExtraJsonProperty(_extraJson, "headers");
+        _hasOtherExtra = HasOtherExtra(_extraJson);
+        _enabled = Server.Enabled;
+        _claude = Server.Providers.Contains("claude-code", StringComparer.OrdinalIgnoreCase);
+        _codex = Server.Providers.Contains("codex", StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void Save()
+    {
+        _error = string.Empty;
+        var providers = new List<string>();
+        if (_claude) providers.Add("claude-code");
+        if (_codex) providers.Add("codex");
+
+        string extraJson;
+        try
+        {
+            extraJson = MergeAdvancedJson(_extraJson, _headersJson);
+        }
+        catch (JsonException ex)
+        {
+            _error = $"Advanced JSON is invalid: {ex.Message}";
+            return;
+        }
+
+        MudDialog.Close(DialogResult.Ok(new McpServerDefinition(
+            _id,
+            _name,
+            _transport,
+            _command,
+            _arguments,
+            _url,
+            _editEnvironment ? _environmentDraft : _originalEnvironment,
+            providers.ToArray(),
+            _enabled,
+            extraJson)));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private static string ExtractExtraJsonProperty(string extraJson, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(extraJson)) return string.Empty;
+        try
+        {
+            if (JsonNode.Parse(extraJson) is not JsonObject obj ||
+                obj[propertyName] is not { } node)
+            {
+                return string.Empty;
+            }
+
+            return node.ToJsonString(JsonOptions());
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string MergeAdvancedJson(string extraJson, string headersJson)
+    {
+        var root = string.IsNullOrWhiteSpace(extraJson)
+            ? new JsonObject()
+            : JsonNode.Parse(extraJson) as JsonObject ?? new JsonObject();
+
+        root.Remove("headers");
+        if (!string.IsNullOrWhiteSpace(headersJson))
+        {
+            root["headers"] = JsonNode.Parse(headersJson);
+        }
+
+        return root.Count == 0 ? string.Empty : root.ToJsonString(JsonOptions());
+    }
+
+    private static bool HasOtherExtra(string extraJson)
+    {
+        if (string.IsNullOrWhiteSpace(extraJson)) return false;
+        try
+        {
+            return JsonNode.Parse(extraJson) is JsonObject obj
+                && obj.Any(kv =>
+                    !string.Equals(kv.Key, "headers", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static JsonSerializerOptions JsonOptions() => new()
+    {
+        WriteIndented = true,
+    };
+}

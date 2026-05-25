@@ -1,0 +1,93 @@
+.output-panel {
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: 13px;
+    background: rgba(0, 0, 0, 0.18);
+    padding: 10px 14px;
+    border-radius: 4px;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.output-loading {
+    min-height: 220px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.output-line {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    padding: 2px 0;
+}
+
+.output-line .ts {
+    color: var(--mud-palette-text-secondary);
+    flex-shrink: 0;
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.output-line .text {
+    flex: 1;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.output-line.stderr .text {
+    color: #D97757;
+}
+
+.output-line.compacted .text {
+    color: var(--mud-palette-text-secondary);
+    font-style: italic;
+}
+
+.doxie-empty {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 32px 14px;
+    min-height: 220px;
+    overflow: hidden;
+}
+
+.doxie {
+    position: absolute;
+    top: 10px;
+    left: 14px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 10px;
+    line-height: 1.1;
+    color: #D97757;
+    margin: 0;
+    opacity: 0.85;
+    white-space: pre;
+    pointer-events: none;
+}
+
+.doxie-welcome {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    text-align: center;
+}
+
+.doxie-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--mud-palette-text-primary);
+    letter-spacing: 0.02em;
+}
+
+.doxie-tag {
+    font-size: 12px;
+    color: var(--mud-palette-text-secondary);
+}

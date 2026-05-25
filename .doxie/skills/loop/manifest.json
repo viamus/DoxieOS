@@ -1,0 +1,43 @@
+{
+  "id": "loop",
+  "description": "For-each / repetition primitive. Reads an array-shaped payload from its upstream node and runs the body sub-graph once per element, with configurable concurrency. Body nodes are tagged with the loop's id; the loop aggregates each iteration's exit-node output into a JSON array on its own folder for downstream consumers.",
+  "displayName": "Loop",
+  "category": "Connector",
+  "requirements": [],
+  "modes": {
+    "iterate": {
+      "description": "Iterate the upstream array, running the body sub-graph once per element.",
+      "argumentsTemplate": "iterate --array-source {array_source} --array-path \"{array_path}\" --concurrency {concurrency} --on-failure {on_failure}",
+      "fields": [
+        {
+          "id": "array_source",
+          "label": "Array source filename",
+          "placeholder": "result.json",
+          "required": false,
+          "description": "Filename inside the upstream node's output folder containing the JSON array. Defaults to result.json."
+        },
+        {
+          "id": "array_path",
+          "label": "Array path (optional)",
+          "placeholder": "data.items",
+          "required": false,
+          "description": "Dotted JSON path to extract the array from the source file. Empty = root must be an array."
+        },
+        {
+          "id": "concurrency",
+          "label": "Max parallel iterations",
+          "placeholder": "4",
+          "required": false,
+          "description": "Hard cap on how many iterations run in parallel. Default 4."
+        },
+        {
+          "id": "on_failure",
+          "label": "On iteration failure",
+          "placeholder": "fail-fast",
+          "required": false,
+          "description": "fail-fast (default) — first failed iteration cancels the loop; continue — failed iterations are excluded from results.json, loop succeeds with warnings."
+        }
+      ]
+    }
+  }
+}

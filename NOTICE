@@ -1,0 +1,10 @@
+DoxieOS
+Copyright 2026 Viamus
+
+DoxieOS is a local-first operating layer for AI-assisted engineering work.
+It includes the DoxieOS product shell, orchestration runtime, documentation,
+and first-party Doxie catalog patterns developed by Viamus and contributors.
+
+If you redistribute DoxieOS or a derivative work, keep this NOTICE file or an
+equivalent readable attribution notice with the redistributed source,
+documentation, package, or generated third-party notices surface.

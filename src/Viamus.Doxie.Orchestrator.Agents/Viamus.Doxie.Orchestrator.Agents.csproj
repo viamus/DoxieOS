@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Viamus.Doxie.Orchestrator.Agents</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapper" Version="2.1.72" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Viamus.Doxie.Orchestrator.Common\Viamus.Doxie.Orchestrator.Common.csproj" />
+    <ProjectReference Include="..\Viamus.Doxie.Orchestrator.Context\Viamus.Doxie.Orchestrator.Context.csproj" />
+  </ItemGroup>
+
+</Project>

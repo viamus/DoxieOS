@@ -1,0 +1,61 @@
+@page "/workflows/new"
+
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IJSRuntime Js
+
+<PageTitle>New workflow — DoxieOS</PageTitle>
+
+<MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+
+<MudStack Row="true" Justify="Justify.FlexEnd" Class="mb-2">
+    <MudButton Variant="Variant.Outlined"
+               Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.AutoAwesome"
+               Href="/workflows/new/chat">
+        Switch to AI builder
+    </MudButton>
+</MudStack>
+
+<WorkflowForm OnSave="HandleCreate"
+              HeaderIcon="@Icons.Material.Filled.AddCircle"
+              HeaderText="New workflow"
+              SaveLabel="Save workflow"
+              CancelHref="/workflows" />
+
+@code {
+    private static readonly List<BreadcrumbItem> _breadcrumbs =
+    [
+        new BreadcrumbItem("Home", href: "/"),
+        new BreadcrumbItem("Workflows", href: "/workflows"),
+        new BreadcrumbItem("New", href: null, disabled: true),
+    ];
+
+    private async Task HandleCreate(WorkflowDefinition payload)
+    {
+        try
+        {
+            var result = await Js.InvokeAsync<SaveResult?>("doxieOs.createWorkflow", payload);
+            if (result is null)
+            {
+                Snackbar.Add("Save failed: no response from server.", Severity.Error);
+                return;
+            }
+            if (result.Ok)
+            {
+                Snackbar.Add($"Created workflow \"{payload.Name}\"", Severity.Success);
+                Nav.NavigateTo($"/workflows/{payload.Id}");
+            }
+            else
+            {
+                Snackbar.Add(string.IsNullOrEmpty(result.Message) ? $"Save failed: HTTP {result.Status}" : $"Save failed: {result.Message}", Severity.Error);
+            }
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private sealed record SaveResult(bool Ok, int Status, string? Message);
+}

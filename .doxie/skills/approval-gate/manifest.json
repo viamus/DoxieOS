@@ -1,0 +1,24 @@
+﻿{
+  "id": "approval-gate",
+  "description": "Workflow primitive that pauses the run and waits for a human to click Approve or Reject. Approve forwards the upstream payload downstream; Reject cancels the whole run with the captured comment. No subprocess \u2014 the runner handles the pause/resume in-process.",
+  "displayName": "Approval Gate",
+  "category": "Connector",
+  "requirements": [],
+  "modes": {
+    "wait": {
+      "fields": [
+        {
+          "id": "prompt",
+          "label": "Prompt to show the human",
+          "placeholder": "ex: Aprovar deploy pra produ\u00E7\u00E3o?",
+          "required": false
+        }
+      ],
+      "argumentsTemplate": "wait --prompt \u0022{prompt}\u0022",
+      "keepSessionAlive": false,
+      "hidden": false,
+      "description": "Pause the workflow at this node and wait for a human to click Approve or Reject in the run detail page. Approve forwards the upstream payload to downstream nodes; Reject cancels the whole run with the comment captured. The optional \u0027prompt\u0027 field is the question shown to the human.",
+      "requiresWorkspace": false
+    }
+  }
+}

@@ -1,0 +1,542 @@
+@inject IAgentCatalog AgentCatalog
+@inject IWorkspaceStore WorkspaceStore
+@inject IDoxieCatalogStore CatalogStore
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+
+@* Reusable workflow editor — used by both /workflows/new and
+   /workflows/{id}/edit. Owns its draft state and validation; the
+   host page provides what "Save" should do via the OnSave callback
+   and chooses the button label. When Existing is non-null the form
+   hydrates its drafts from that definition and locks the id field
+   (renaming a workflow would orphan its run history and on-disk
+   folder, so we treat id as immutable post-creation). *@
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+    <MudIcon Icon="@HeaderIcon" Color="Color.Primary" />
+    <MudText Typo="Typo.h3">@HeaderText</MudText>
+    <MudSpacer />
+    <MudButton Variant="Variant.Outlined"
+               Color="Color.Default"
+               StartIcon="@Icons.Material.Filled.Close"
+               Href="@CancelHref">Cancel</MudButton>
+    <MudButton Variant="Variant.Filled"
+               Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.Save"
+               OnClick="HandleSave"
+               Disabled="@_saving">@SaveLabel</MudButton>
+</MudStack>
+
+<MudGrid>
+    @* Left column: metadata + trigger + node editor *@
+    <MudItem xs="12" md="5">
+        <MudPaper Class="pa-4 mb-3" Elevation="2">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">Basics</MudText>
+
+            <MudTextField @bind-Value="_id"
+                          Label="Id (kebab-case)"
+                          Placeholder="my-workflow"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Disabled="@(Existing is not null)"
+                          HelperText="@(Existing is null ? "Lowercase, hyphens. Becomes the folder name on disk." : "Id is immutable once a workflow is created.")"
+                          FullWidth="true" />
+
+            <MudTextField @bind-Value="_name"
+                          Label="Display name"
+                          Placeholder="My Workflow"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          FullWidth="true"
+                          Class="mt-2" />
+
+            <MudTextField @bind-Value="_description"
+                          Label="Description"
+                          Placeholder="Why does this workflow exist?"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Lines="2"
+                          FullWidth="true"
+                          Class="mt-2" />
+
+            <MudSelect T="string"
+                       Label="Destination catalog"
+                       Value="_selectedCatalogId"
+                       ValueChanged="SetSelectedCatalog"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       Class="mt-2"
+                       Disabled="@(Existing is not null)"
+                       HelperText="Choose where this workflow folder is written. Custom catalogs are managed in Settings.">
+                @foreach (var catalog in _catalogs)
+                {
+                    <MudSelectItem T="string" Value="@catalog.Id">
+                        @catalog.Name
+                        <MudText Typo="Typo.caption" Inline="true" Color="Color.Default">&nbsp;(@catalog.Id)</MudText>
+                    </MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (_workspaces.Count > 0)
+            {
+                <MudSelect T="string"
+                           Label="Default workspace"
+                           Value="_workflowWorkspaceId"
+                           ValueChanged="OnWorkflowWorkspaceChanged"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Clearable="true"
+                           Class="mt-2"
+                           HelperText="Agents in this workflow inherit this workspace unless a step sets its own override. Workspace RAM, mounted libraries, and .env travel with the run.">
+                    @foreach (var ws in _workspaces)
+                    {
+                        <MudSelectItem T="string" Value="@ws.Id">@ws.Name <MudText Typo="Typo.caption" Inline="true" Color="Color.Default">&nbsp;(@ws.Id)</MudText></MudSelectItem>
+                    }
+                </MudSelect>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-2">
+                    No workspaces exist yet. Create one from <MudLink Href="/workspaces">Workspaces</MudLink> to attach workflow memory.
+                </MudAlert>
+            }
+        </MudPaper>
+
+        <MudPaper Class="pa-4 mb-3" Elevation="2">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">Trigger</MudText>
+
+            <MudSelect T="WorkflowTriggerKind"
+                       Label="Type"
+                       Value="_triggerKind"
+                       ValueChanged="OnTriggerKindChanged"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense">
+                <MudSelectItem Value="WorkflowTriggerKind.Manual">Manual</MudSelectItem>
+                <MudSelectItem Value="WorkflowTriggerKind.Cron">Cron</MudSelectItem>
+                <MudSelectItem Value="WorkflowTriggerKind.Event">Event</MudSelectItem>
+                <MudSelectItem Value="WorkflowTriggerKind.Webhook">Webhook</MudSelectItem>
+            </MudSelect>
+
+            @if (_triggerKind == WorkflowTriggerKind.Cron)
+            {
+                <MudTextField @bind-Value="_triggerCron"
+                              Label="Cron expression"
+                              Placeholder="0 8 * * *"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              HelperText="Standard 5-field cron. Persisted but not yet wired in the prototype."
+                              FullWidth="true"
+                              Class="mt-2" />
+            }
+            else if (_triggerKind == WorkflowTriggerKind.Event)
+            {
+                <MudTextField @bind-Value="_triggerEvent"
+                              Label="Event name"
+                              Placeholder="run-completed"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              FullWidth="true"
+                              Class="mt-2" />
+            }
+            else if (_triggerKind == WorkflowTriggerKind.Webhook)
+            {
+                <MudTextField @bind-Value="_triggerWebhook"
+                              Label="Webhook path"
+                              Placeholder="/hooks/build-success"
+                              Variant="Variant.Outlined"
+                              Margin="Margin.Dense"
+                              FullWidth="true"
+                              Class="mt-2" />
+            }
+
+            @* Trigger inputs — only meaningful for Manual triggers
+               (cron has nowhere to ask; event/webhook payloads are a
+               future story). The dashboard renders one MudTextField
+               per declared input inside the Run dialog before firing.
+               Use `{{trigger.<id>}}` inside any node's Inputs to
+               receive the value. *@
+            @if (_triggerKind == WorkflowTriggerKind.Manual)
+            {
+                <MudDivider Class="my-3" />
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.subtitle2">Trigger inputs</MudText>
+                    <MudSpacer />
+                    <MudButton Variant="Variant.Outlined"
+                               Color="Color.Primary"
+                               Size="Size.Small"
+                               StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="AddTriggerInput">Add input</MudButton>
+                </MudStack>
+                <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mb-2">
+                    Values the user supplies at Run time via a dialog. Reference inside any node's input as <code>@("{{trigger.<id>}}")</code>. Required fields block the run until filled.
+                </MudText>
+                @if (_triggerInputs.Count == 0)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block">
+                        No trigger inputs yet — the workflow fires immediately on click.
+                    </MudText>
+                }
+                @foreach (var ti in _triggerInputs)
+                {
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-1">
+                        <MudTextField T="string"
+                                      Value="@ti.Id"
+                                      ValueChanged="@(v => ti.Id = v ?? string.Empty)"
+                                      Placeholder="id (kebab-case)"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Style="font-family: 'Cascadia Code', Consolas, monospace; max-width: 180px;" />
+                        <MudTextField T="string"
+                                      Value="@ti.Label"
+                                      ValueChanged="@(v => ti.Label = v ?? string.Empty)"
+                                      Placeholder="Label (UI)"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense"
+                                      Style="max-width: 200px;" />
+                        <MudTextField T="string"
+                                      Value="@ti.Placeholder"
+                                      ValueChanged="@(v => ti.Placeholder = v ?? string.Empty)"
+                                      Placeholder="Placeholder (hint)"
+                                      Variant="Variant.Outlined"
+                                      Margin="Margin.Dense" />
+                        <MudCheckBox T="bool"
+                                     Value="@ti.Required"
+                                     ValueChanged="@(v => ti.Required = v)"
+                                     Label="Required"
+                                     Color="Color.Primary"
+                                     Size="Size.Small" />
+                        <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                       Size="Size.Small"
+                                       Color="Color.Error"
+                                       OnClick="@(() => _triggerInputs.Remove(ti))" />
+                    </MudStack>
+                }
+            }
+        </MudPaper>
+
+        <MudPaper Class="pa-4 mb-3" Elevation="2">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                <MudText Typo="Typo.subtitle1">Environment</MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add"
+                           OnClick="AddEnvVar">Add var</MudButton>
+            </MudStack>
+            <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mb-2">
+                Layered on top of the orchestrator's process env, the skill-local <code>.env</code>, and the workspace's <code>.env</code> (in that priority order). <strong>Plaintext storage</strong> — fine for local dev tokens, do not put production secrets here.
+            </MudText>
+
+            @if (_envVars.Count == 0)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block">No vars yet.</MudText>
+            }
+            @foreach (var ev in _envVars)
+            {
+                var sensitive = LooksSecretKey(ev.Key);
+                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-1">
+                    <MudTextField T="string"
+                                  Value="@ev.Key"
+                                  ValueChanged="@(v => ev.Key = v ?? string.Empty)"
+                                  Placeholder="KEY"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Style="font-family: 'Cascadia Code', Consolas, monospace; max-width: 200px;" />
+                    <MudTextField T="string"
+                                  Value="@ev.Value"
+                                  ValueChanged="@(v => ev.Value = v ?? string.Empty)"
+                                  Placeholder="value"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  InputType="@(sensitive ? InputType.Password : InputType.Text)"
+                                  Style="font-family: 'Cascadia Code', Consolas, monospace;" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                   Size="Size.Small"
+                                   Color="Color.Error"
+                                   OnClick="@(() => _envVars.Remove(ev))" />
+                </MudStack>
+            }
+        </MudPaper>
+
+        <MudPaper Class="pa-4" Elevation="2">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                <MudText Typo="Typo.subtitle1">Steps</MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Primary"
+                           Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.Add"
+                           OnClick="AddStep">Add step</MudButton>
+            </MudStack>
+
+            @if (_steps.Count == 0)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    No steps yet. The trigger node is implicit; add at least one agent to do real work.
+                </MudText>
+            }
+
+            @foreach (var step in _steps)
+            {
+                <MudPaper Class="pa-3 mb-2" Elevation="0" Style="border: 1px solid #D8D6CD; border-radius: 6px;">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-2">
+                        <MudIcon Icon="@Icons.Material.Filled.SmartToy" Color="Color.Primary" Size="Size.Small" />
+                        <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@step.Id</MudText>
+                        <MudSpacer />
+                        <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                       Size="Size.Small"
+                                       Color="Color.Error"
+                                       OnClick="@(() => RemoveStep(step))" />
+                    </MudStack>
+
+                    <MudTextField T="string"
+                                  Value="@step.Label"
+                                  ValueChanged="@(v => OnStepLabelChanged(step, v))"
+                                  Label="Label"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  FullWidth="true" />
+
+                    <MudSelect T="string"
+                               Label="Agent"
+                               Value="@step.AgentId"
+                               ValueChanged="@(v => OnStepAgentChanged(step, v))"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Class="mt-2"
+                               ToStringFunc="@(id => string.IsNullOrEmpty(id) ? "(pick an agent)" : (AgentCatalog.FindById(id)?.Name ?? id))">
+                        @foreach (var agent in _catalog)
+                        {
+                            <MudSelectItem T="string" Value="@agent.Id">
+                                @agent.Name
+                                <MudText Typo="Typo.caption" Color="Color.Default" Inline="true">&nbsp;· @agent.Id</MudText>
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @{ var modes = string.IsNullOrEmpty(step.AgentId) ? null : AgentCatalog.FindById(step.AgentId)?.Modes; }
+                    @if (modes is { Count: > 0 })
+                    {
+                        <MudSelect T="string"
+                                   Label="Mode"
+                                   Value="@step.Mode"
+                                   ValueChanged="@(v => OnStepModeChanged(step, v))"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   Class="mt-2">
+                            @foreach (var m in modes)
+                            {
+                                <MudSelectItem T="string" Value="@m.Id">@m.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+
+                        @if (modes.FirstOrDefault(m => m.Id == step.Mode)?.Fields is { Count: > 0 } fields)
+                        {
+                            @foreach (var field in fields)
+                            {
+                                <MudTextField T="string"
+                                              Label="@field.Label"
+                                              Placeholder="@field.Placeholder"
+                                              Value="@(step.Inputs.GetValueOrDefault(field.Id) ?? string.Empty)"
+                                              ValueChanged="@(v => SetStepInput(step, field.Id, v))"
+                                              Variant="Variant.Outlined"
+                                              Margin="Margin.Dense"
+                                              Required="@field.Required"
+                                              Class="mt-2" />
+                            }
+                        }
+                    }
+
+                    @{
+                        var modeForStep = string.IsNullOrEmpty(step.AgentId)
+                            ? null
+                            : AgentCatalog.FindById(step.AgentId)?.Modes?.FirstOrDefault(m => m.Id == step.Mode);
+                        var requiresWs = modeForStep?.RequiresWorkspace == true;
+                    }
+                    <MudSelect T="string"
+                               Label="@(requiresWs ? "Workspace override (required if no default)" : "Workspace override (optional)")"
+                               Value="@step.WorkspaceId"
+                               ValueChanged="@(v => OnStepWorkspaceChanged(step, v))"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Required="@(requiresWs && string.IsNullOrEmpty(_workflowWorkspaceId))"
+                               Clearable="true"
+                               Class="mt-2"
+                               HelperText="@StepWorkspaceHelperText(requiresWs)">
+                        @foreach (var ws in _workspaces)
+                        {
+                            <MudSelectItem T="string" Value="@ws.Id">@ws.Name <MudText Typo="Typo.caption" Inline="true" Color="Color.Default">&nbsp;(@ws.Id)</MudText></MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    <MudSelect T="string"
+                               Label="Runs after (depends on)"
+                               MultiSelection="true"
+                               SelectedValues="@step.DependsOn"
+                               SelectedValuesChanged="@(v => OnStepDependsChanged(step, v))"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Class="mt-2"
+                               MultiSelectionTextFunc="@(values => values is null || values.Count == 0 ? "(start when trigger fires)" : string.Join(", ", values))">
+                        @foreach (var other in _steps.Where(s => s.Id != step.Id))
+                        {
+                            <MudSelectItem T="string" Value="@other.Id">@other.Label (@other.Id)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudPaper>
+            }
+        </MudPaper>
+    </MudItem>
+
+    @* Right column: live preview of the graph using auto-layout *@
+    <MudItem xs="12" md="7">
+        <MudPaper Class="pa-0" Elevation="0"
+                  Style="height: calc(100vh - 240px); min-height: 540px; overflow: auto; background-color: #0E0F0D; background-image: linear-gradient(rgba(242,239,231,0.055) 1px, transparent 1px), linear-gradient(90deg, rgba(242,239,231,0.055) 1px, transparent 1px), linear-gradient(180deg, #151613 0%, #0E0F0D 100%); background-size: 32px 32px, 32px 32px, 100% 100%; border: 1px solid rgba(242,239,231,0.10); border-radius: 8px;">
+            @{
+                var (previewNodes, previewEdges) = BuildPreview();
+            }
+            <svg width="@CanvasWidth(previewNodes)" height="@CanvasHeight(previewNodes)"
+                 style="display: block; min-width: 100%; min-height: 100%; touch-action: none; user-select: none;"
+                 @onpointerdown="CloseNodeMenu"
+                 @onpointermove="DragPreviewNode"
+                 @onpointerup="EndPreviewNodeDrag"
+                 @onpointerleave="EndPreviewNodeDrag"
+                 xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                    <linearGradient id="workflow-preview-bg" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#151613" />
+                        <stop offset="100%" stop-color="#0E0F0D" />
+                    </linearGradient>
+                    <pattern id="workflow-preview-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+                        <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(242,239,231,0.055)" stroke-width="1" />
+                    </pattern>
+                    <filter id="workflow-preview-node-shadow" x="-20%" y="-30%" width="140%" height="170%">
+                        <feDropShadow dx="0" dy="10" stdDeviation="8" flood-color="#000000" flood-opacity="0.34" />
+                    </filter>
+                    <marker id="workflow-preview-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                        <path d="M 2 2 L 10 6 L 2 10 z" fill="#D97757" />
+                    </marker>
+                </defs>
+                <rect width="100%" height="100%" fill="url(#workflow-preview-bg)" />
+                <rect width="100%" height="100%" fill="url(#workflow-preview-grid)" />
+                @* Loop body containers — drawn first (behind edges + nodes
+                   in z-order) so the user can see at a glance which nodes
+                   are "inside" each Loop. Bounding box is derived from
+                   body-node positions; the box owner label reads from the
+                   Loop node's display label. *@
+                @foreach (var loopGroup in previewNodes
+                    .Where(n => !string.IsNullOrEmpty(n.LoopId))
+                    .GroupBy(n => n.LoopId!, StringComparer.OrdinalIgnoreCase))
+                {
+                    var bodyNodes = loopGroup.ToList();
+                    if (bodyNodes.Count == 0) continue;
+                    const int padX = 18;
+                    const int padTop = 30;
+                    const int padBottom = 14;
+                    var minX = bodyNodes.Min(n => n.X) - padX;
+                    var minY = bodyNodes.Min(n => n.Y) - padTop;
+                    var maxX = bodyNodes.Max(n => n.X) + WorkflowLayout.NodeWidth + padX;
+                    var maxY = bodyNodes.Max(n => n.Y) + WorkflowLayout.NodeHeight + padBottom;
+                    var loopOwner = previewNodes.FirstOrDefault(n =>
+                        string.Equals(n.Id, loopGroup.Key, StringComparison.OrdinalIgnoreCase));
+                    var loopLabel = loopOwner?.Label ?? loopGroup.Key;
+
+                    <g>
+                        <rect x="@minX" y="@minY"
+                              width="@(maxX - minX)" height="@(maxY - minY)"
+                              fill="rgba(217, 119, 87, 0.065)"
+                              stroke="rgba(217, 119, 87, 0.58)" stroke-dasharray="8 6" stroke-width="1.5"
+                              rx="16" ry="16" />
+                        <text x="@(minX + 14)" y="@(minY + 18)"
+                              font-size="10.5" font-weight="700" fill="#D97757"
+                              style="text-transform: uppercase; letter-spacing: 0;">
+                            Loop body - @Truncate(loopLabel, 32)
+                        </text>
+                    </g>
+                }
+
+                @foreach (var edge in previewEdges)
+                {
+                    var from = previewNodes.FirstOrDefault(n => n.Id == edge.FromNodeId);
+                    var to = previewNodes.FirstOrDefault(n => n.Id == edge.ToNodeId);
+                    if (from is null || to is null) continue;
+
+                    var x1 = from.X + WorkflowLayout.NodeWidth;
+                    var y1 = from.Y + WorkflowLayout.NodeHeight / 2;
+                    var x2 = to.X;
+                    var y2 = to.Y + WorkflowLayout.NodeHeight / 2;
+                    var midX = (x1 + x2) / 2;
+                    var d = $"M {x1} {y1} C {midX} {y1}, {midX} {y2}, {x2} {y2}";
+
+                    <path d="@d" stroke="rgba(242,239,231,0.075)" stroke-width="7" fill="none" stroke-linecap="round" />
+                    <path d="@d" stroke="#6F7168" stroke-width="2.4" fill="none" opacity="0.95" stroke-linecap="round" marker-end="url(#workflow-preview-arrow)" />
+                }
+
+                @foreach (var node in previewNodes)
+                {
+                    var effKind = EffectiveKindForRender(node);
+                    var stroke = NodeStroke(effKind);
+                    var ws = WorkspaceForBadge(node);
+                    <g transform="@($"translate({node.X},{node.Y})")"
+                       style="@($"cursor: {PreviewNodeCursor(node.Id)}; touch-action: none; user-select: none;")"
+                       @onpointerdown="@((PointerEventArgs e) => BeginPreviewNodeDrag(node, e))"
+                       @onpointerdown:stopPropagation="true"
+                       @oncontextmenu="@(() => OpenNodeMenu(node))"
+                       @oncontextmenu:preventDefault="true"
+                       @oncontextmenu:stopPropagation="true">
+                        <rect width="@WorkflowLayout.NodeWidth" height="@WorkflowLayout.NodeHeight"
+                              rx="12" ry="12" fill="#171816" stroke="@stroke" stroke-width="1.5" filter="url(#workflow-preview-node-shadow)" />
+                        <rect x="1" y="1" width="@(WorkflowLayout.NodeWidth - 2)" height="6"
+                              rx="12" ry="12" fill="@stroke" opacity="0.85" />
+                        <rect x="12" y="14" width="78" height="20"
+                              rx="10" ry="10" fill="@stroke" opacity="0.13" />
+                        <text x="23" y="28" font-size="10" font-weight="700" fill="@stroke"
+                              style="text-transform: uppercase; letter-spacing: 0;">@KindLabel(effKind)</text>
+                        <text x="14" y="50" font-size="13" font-weight="700" fill="#F2EFE7">@Truncate(node.Label, 24)</text>
+                        <text x="14" y="66" font-size="10.5" fill="#A9A39A" font-family="Cascadia Code, Consolas, monospace">
+                            @SubLine(node)
+                        </text>
+                        <circle cx="0" cy="@(WorkflowLayout.NodeHeight / 2)" r="4" fill="#0E0F0D" stroke="@stroke" stroke-width="2" />
+                        <circle cx="@WorkflowLayout.NodeWidth" cy="@(WorkflowLayout.NodeHeight / 2)" r="4" fill="#0E0F0D" stroke="@stroke" stroke-width="2" />
+                        @if (!string.IsNullOrEmpty(ws))
+                        {
+                            <g>
+                                <rect x="@(WorkflowLayout.NodeWidth - 104)" y="@(WorkflowLayout.NodeHeight - 22)" width="92" height="18" rx="9" ry="9"
+                                      fill="rgba(217,119,87,0.12)" stroke="rgba(217,119,87,0.55)" stroke-width="1" />
+                                <text x="@(WorkflowLayout.NodeWidth - 94)" y="@(WorkflowLayout.NodeHeight - 10)" font-size="9.5" fill="#D97757" font-weight="700">WS @Truncate(ws, 11)</text>
+                            </g>
+                        }
+                    </g>
+                }
+
+                @if (_nodeMenu is { } menu)
+                {
+                    var agentName = AgentCatalog.FindById(menu.AgentId)?.Name ?? menu.AgentId;
+                    <g transform="@($"translate({menu.X},{menu.Y})")"
+                       style="filter: drop-shadow(0 16px 26px rgba(0,0,0,0.45));">
+                        <rect width="176" height="74" rx="10" ry="10"
+                              fill="#171816" stroke="rgba(242,239,231,0.16)" stroke-width="1" />
+                        <text x="14" y="22" font-size="10" font-weight="700" fill="#D97757"
+                              style="text-transform: uppercase; letter-spacing: 0;">Agent</text>
+                        <text x="14" y="40" font-size="12" font-weight="700" fill="#F2EFE7">
+                            @Truncate(agentName, 22)
+                        </text>
+                        <g transform="translate(0,46)"
+                           style="cursor: pointer;"
+                           @onclick="@(() => NavigateToAgent(menu.AgentId))"
+                           @onclick:stopPropagation="true"
+                           @onpointerdown:stopPropagation="true">
+                            <rect x="8" y="0" width="160" height="22" rx="6" ry="6" fill="rgba(242,239,231,0.055)" />
+                            <text x="18" y="15" font-size="11" font-weight="700" fill="#F2EFE7">Open agent</text>
+                        </g>
+                    </g>
+                }
+            </svg>
+        </MudPaper>
+        <MudText Typo="Typo.caption" Color="Color.Default" Class="mt-2">
+            Preview auto-positions nodes by depth — leftmost columns run first, siblings within a column run in parallel.
+        </MudText>
+    </MudItem>
+</MudGrid>

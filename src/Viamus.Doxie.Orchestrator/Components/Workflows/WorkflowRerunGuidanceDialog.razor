@@ -1,0 +1,39 @@
+<MudDialog>
+    <TitleContent>
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudIcon Icon="@Icons.Material.Filled.Replay" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Run from "@NodeLabel"</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+            Reuse previous upstream outputs and rerun this step plus downstream steps. Add optional guidance for the agent before it starts.
+        </MudText>
+        <MudTextField @bind-Value="_guidance"
+                      Label="Guidance (optional)"
+                      Placeholder="Tell this step what to adjust, retry, or avoid..."
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Lines="4"
+                      FullWidth="true" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.Replay"
+                   OnClick="Submit">Run from here</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string NodeLabel { get; set; } = "step";
+
+    private string _guidance = string.Empty;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Submit() => MudDialog.Close(DialogResult.Ok(_guidance.Trim()));
+}

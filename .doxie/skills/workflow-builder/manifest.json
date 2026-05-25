@@ -1,0 +1,6 @@
+{
+  "id": "workflow-builder",
+  "description": "Interactive guide for authoring a new DoxieOS workflow (a composition of agents wired into a graph). Runs inside a builder sandbox at ./.sandbox/builder-workflow-N/ allocated by the DoxieOS Workflow Builder UI, writes the in-progress workflow definition to ./.draft/manifest.json so the right pane in the UI renders it live. Can also create brand-new agents on the side (./.draft/new-agents/<id>.json) when the workflow needs an agent the catalog doesn't yet have. When the user clicks Save in the UI, the orchestrator promotes any new agents into the catalog first, then the workflow into .workflows/<id>/.",
+  "displayName": "Workflow Builder",
+  "category": "Doxie"
+}

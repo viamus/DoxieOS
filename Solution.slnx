@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Viamus.Doxie.Orchestrator/Viamus.Doxie.Orchestrator.csproj" />
+    <Project Path="src/Viamus.Doxie.Orchestrator.Common/Viamus.Doxie.Orchestrator.Common.csproj" />
+    <Project Path="src/Viamus.Doxie.Orchestrator.Agents/Viamus.Doxie.Orchestrator.Agents.csproj" />
+    <Project Path="src/Viamus.Doxie.Orchestrator.Context/Viamus.Doxie.Orchestrator.Context.csproj" />
+    <Project Path="src/Viamus.Doxie.Orchestrator.Workflows/Viamus.Doxie.Orchestrator.Workflows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Viamus.Doxie.Orchestrator.Common.Tests/Viamus.Doxie.Orchestrator.Common.Tests.csproj" />
+    <Project Path="tests/Viamus.Doxie.Orchestrator.Agents.Tests/Viamus.Doxie.Orchestrator.Agents.Tests.csproj" />
+    <Project Path="tests/Viamus.Doxie.Orchestrator.Context.Tests/Viamus.Doxie.Orchestrator.Context.Tests.csproj" />
+    <Project Path="tests/Viamus.Doxie.Orchestrator.Workflows.Tests/Viamus.Doxie.Orchestrator.Workflows.Tests.csproj" />
+  </Folder>
+</Solution>

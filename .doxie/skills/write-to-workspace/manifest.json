@@ -1,0 +1,30 @@
+{
+  "id": "write-to-workspace",
+  "description": "Final-stage workflow node that writes the accumulated payload as a markdown file into a user-owned workspace under ./.workspace/\u003Cid\u003E/. Used as the terminal step in compositions where parallel agents fan out, an aggregate joins their results, and the brief gets delivered to a project folder a human can pick up from.",
+  "displayName": "Write to Workspace",
+  "category": "Connector",
+  "requirements": [],
+  "modes": {
+    "deliver": {
+      "fields": [
+        {
+          "id": "workspace",
+          "label": "Target workspace id",
+          "placeholder": "sample-product-pss",
+          "required": true
+        },
+        {
+          "id": "filename",
+          "label": "File name (optional)",
+          "placeholder": "daily-brief.md",
+          "required": false
+        }
+      ],
+      "argumentsTemplate": "deliver --workspace {workspace} --filename {filename}",
+      "keepSessionAlive": false,
+      "hidden": false,
+      "description": "Write the workflow\u0027s accumulated payload as a markdown file inside an existing user-owned Workspace.",
+      "requiresWorkspace": false
+    }
+  }
+}

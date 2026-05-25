@@ -1,0 +1,235 @@
+@implements IAsyncDisposable
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
+
+@* DoxieOS voice-to-text affordance for any PTY-backed terminal.
+
+   Self-contained: hand it the JS mountId of the xterm container and
+   the component does the rest — listens via the Web Speech API, types
+   final transcripts into the PTY via `terminals.sendInput`, and shows
+   an interim banner so the user can see what's being recognised in
+   real time. No auto-Enter — the user reviews the transcribed line
+   in claude's input box and submits manually, exactly like typing.
+
+   Browser support: Chrome, Edge, Safari. Firefox / Brave (default
+   config) don't ship the Web Speech API; the button hides itself in
+   those cases instead of showing a broken icon. *@
+
+<MudTooltip Text="@_tooltip" Placement="Placement.Bottom">
+    <span style="position: relative; display: inline-flex; align-items: center;">
+        <MudIconButton Icon="@(_listening ? Icons.Material.Filled.MicNone : Icons.Material.Filled.Mic)"
+                       Size="Size.Small"
+                       Color="@(_listening ? Color.Error : Color.Default)"
+                       Style="@($"transition: color .15s; {(_listening ? "animation: doxie-mic-pulse 1.4s infinite ease-in-out;" : string.Empty)}")"
+                       OnClick="Toggle"
+                       Disabled="@(!_supported || Disabled)" />
+        @if (_listening && !string.IsNullOrEmpty(_interim))
+        {
+            @* Interim transcript floats below the mic, doesn't block layout. *@
+            <span style="position: absolute; top: 100%; right: 0; margin-top: 4px; padding: 4px 8px; background: rgba(0,0,0,0.85); color: #f0f0f0; font-size: 0.72rem; border-radius: 4px; max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 5; pointer-events: none;">
+                @_interim
+            </span>
+        }
+    </span>
+</MudTooltip>
+
+<style>
+    @@keyframes doxie-mic-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+    }
+</style>
+
+@code {
+    /// <summary>
+    /// JS mountId of the target xterm — the same value passed to
+    /// <c>doxieOs.terminals.attach</c>. Final transcripts are typed
+    /// into that PTY via <c>doxieOs.terminals.sendInput</c>.
+    /// </summary>
+    [Parameter] public string MountId { get; set; } = string.Empty;
+
+    [Parameter] public EventCallback<string> OnFinalText { get; set; }
+
+    [Parameter] public EventCallback<string> OnInterimText { get; set; }
+
+    [Parameter] public EventCallback<bool> OnListeningChanged { get; set; }
+
+    [Parameter] public EventCallback<string> OnInputText { get; set; }
+
+    [Parameter] public string InputSelector { get; set; } = string.Empty;
+
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// BCP-47 language tag for recognition. Default <c>pt-BR</c> with
+    /// reasonable code-switching tolerance for inline English terms.
+    /// </summary>
+    [Parameter] public string Lang { get; set; } = "pt-BR";
+
+    private DotNetObjectReference<VoiceInputButton>? _ref;
+    private bool _supported = true;
+    private bool _listening;
+    private bool _checked;
+    private string _interim = string.Empty;
+    private readonly string _id = "voice-" + Guid.NewGuid().ToString("N")[..8];
+
+    private string _tooltip => !_supported
+        ? "Voice not supported in this browser (try Chrome or Edge)"
+        : _listening
+            ? "Listening — click to stop"
+            : "Speak instead of type (pt-BR)";
+
+    protected override void OnInitialized()
+    {
+        _ref = DotNetObjectReference.Create(this);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _checked) return;
+        _checked = true;
+        try
+        {
+            _supported = await Js.InvokeAsync<bool>("doxieOs.voice.isSupported");
+            if (!_supported) StateHasChanged();
+        }
+        catch (Microsoft.JSInterop.JSException) { _supported = false; StateHasChanged(); }
+    }
+
+    private async Task Toggle()
+    {
+        if (Disabled
+            || (string.IsNullOrEmpty(MountId)
+                && !OnFinalText.HasDelegate
+                && string.IsNullOrWhiteSpace(InputSelector))) return;
+
+        if (_listening)
+        {
+            try { await Js.InvokeVoidAsync("doxieOs.voice.stop", _id); }
+            catch (Microsoft.JSInterop.JSException) { }
+            await SetListeningAsync(false);
+            _interim = string.Empty;
+            return;
+        }
+
+        try
+        {
+            var ok = string.IsNullOrWhiteSpace(InputSelector)
+                ? await Js.InvokeAsync<bool>("doxieOs.voice.start", _id, _ref, Lang)
+                : await Js.InvokeAsync<bool>("doxieOs.voice.startIntoInput", _id, _ref, Lang, InputSelector);
+            if (!ok)
+            {
+                _supported = false;
+                Snackbar.Add("Voice recognition couldn't start — your browser may not support the Web Speech API.", Severity.Warning);
+                return;
+            }
+            await SetListeningAsync(true);
+            _interim = string.Empty;
+        }
+        catch (Microsoft.JSInterop.JSException ex)
+        {
+            Snackbar.Add($"Could not start voice input: {ex.Message}", Severity.Error);
+        }
+    }
+
+    /// <summary>
+    /// Called from JS for every interim (non-final) chunk. Pure UX —
+    /// shows what the recogniser is hearing without committing it to
+    /// the PTY yet.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnInterimResult(string text)
+    {
+        _interim = text;
+        if (OnInterimText.HasDelegate)
+        {
+            await OnInterimText.InvokeAsync(text);
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>
+    /// Called from JS when a chunk is recognised as final. We type it
+    /// straight into the PTY (no auto-Enter) so the user sees the line
+    /// appear inside claude's input box exactly as if they'd typed it.
+    /// </summary>
+    [JSInvokable]
+    public async Task OnFinalResult(string text)
+    {
+        _interim = string.Empty;
+        if (string.IsNullOrEmpty(text)) return;
+        try
+        {
+            if (OnFinalText.HasDelegate)
+            {
+                await OnFinalText.InvokeAsync(text);
+            }
+            else
+            {
+                await Js.InvokeVoidAsync("doxieOs.terminals.sendInput", MountId, text);
+            }
+        }
+        catch (Microsoft.JSInterop.JSException) { /* page tearing down */ }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnRecognitionEnd()
+    {
+        await SetListeningAsync(false);
+        _interim = string.Empty;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnInputUpdated(string text)
+    {
+        if (OnInputText.HasDelegate)
+        {
+            await OnInputText.InvokeAsync(text);
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public async Task OnRecognitionError(string error)
+    {
+        await SetListeningAsync(false);
+        _interim = string.Empty;
+        // Silence "no-speech" — that's just the recogniser timing out
+        // when the user paused too long, not a real error.
+        if (!string.Equals(error, "no-speech", StringComparison.Ordinal)
+            && !string.Equals(error, "aborted", StringComparison.Ordinal))
+        {
+            Snackbar.Add($"Voice error: {FriendlyError(error)}", Severity.Warning);
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SetListeningAsync(bool listening)
+    {
+        if (_listening == listening) return;
+        _listening = listening;
+        if (OnListeningChanged.HasDelegate)
+        {
+            await OnListeningChanged.InvokeAsync(listening);
+        }
+    }
+
+    private static string FriendlyError(string code) => code switch
+    {
+        "not-allowed" => "microphone permission was denied — enable it in your browser's site settings",
+        "audio-capture" => "no microphone detected",
+        "network" => "couldn't reach the speech-to-text service",
+        "service-not-allowed" => "speech service blocked by the browser",
+        _ => code,
+    };
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await Js.InvokeVoidAsync("doxieOs.voice.stop", _id); }
+        catch (Microsoft.JSInterop.JSException) { }
+        catch (Microsoft.JSInterop.JSDisconnectedException) { }
+        _ref?.Dispose();
+    }
+}

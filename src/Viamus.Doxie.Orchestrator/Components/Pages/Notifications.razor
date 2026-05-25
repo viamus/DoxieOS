@@ -1,0 +1,207 @@
+@page "/notifications"
+@using System.Text.Encodings.Web
+
+@inject NotificationsBus Bus
+@inject NavigationManager Nav
+@implements IDisposable
+
+<PageTitle>Notifications — DoxieOS</PageTitle>
+
+<MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+    <MudIcon Icon="@Icons.Material.Filled.Notifications" Color="Color.Primary" />
+    <MudText Typo="Typo.h3">Notifications</MudText>
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@_items.Count</MudChip>
+</MudStack>
+<MudText Typo="Typo.subtitle1" Class="mb-4">
+    Everything an agent has reported back since DoxieOS started — most recent first. Live-updates as new ones arrive (capped at @NotificationsBus.MaxHistory in memory; older ones are dropped).
+</MudText>
+
+@if (_items.Count == 0)
+{
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.body2" Color="Color.Default">
+            No notifications yet. Agents POST these to <code>/api/notifications</code> at meaningful moments — when something noisy happens you'll see them surface here (and as a toast in the corner).
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    @* Capped height + scroll so a flood of notifications doesn't push
+       the rest of the page out of reach. The list itself is already
+       capped at NotificationsBus.MaxHistory, but on small viewports
+       even that is enough to scroll. *@
+    <MudPaper Elevation="2" Style="max-height: calc(100vh - 280px); overflow-y: auto;">
+        @foreach (var n in _items)
+        {
+            var (color, icon) = StyleFor(n.Severity);
+            var clickable = !string.IsNullOrWhiteSpace(n.Href);
+            <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2"
+                      Style="@($"padding: 12px 16px; border-bottom: 1px solid #E8E6DD;{(clickable ? " cursor: pointer;" : string.Empty)}")"
+                      @onclick="@(() => Navigate(n.Href))">
+                <MudIcon Icon="@icon" Color="@color" />
+                <MudStack Spacing="0" Style="flex: 1;">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <MudText Typo="Typo.subtitle2">@n.Title</MudText>
+                        @if (!string.IsNullOrEmpty(n.AgentId))
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.7rem;">@n.AgentId</MudChip>
+                        }
+                        @if (clickable)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.OpenInNew" Size="Size.Small" Color="Color.Default" />
+                        }
+                        <MudSpacer />
+                        <MudText Typo="Typo.caption" Color="Color.Default">@FormatTime(n.Timestamp)</MudText>
+                    </MudStack>
+                    @if (!string.IsNullOrEmpty(n.Body))
+                    {
+                        <MudText Typo="Typo.body2" Color="Color.Default" Class="mt-1">@n.Body</MudText>
+                    }
+                    @if (HasPreview(n))
+                    {
+                        <MudExpansionPanels Elevation="0" Dense="true" Class="mt-2">
+                            <MudExpansionPanel Text="@PreviewTitle(n)">
+                                @if (IsHtmlPreview(n))
+                                {
+                                    <iframe class="notification-preview-frame"
+                                            sandbox=""
+                                            srcdoc="@(n.Content ?? string.Empty)"
+                                            title="@PreviewTitle(n)"></iframe>
+                                }
+                                else
+                                {
+                                    <div class="notification-preview">
+                                        @RenderPreview(n)
+                                    </div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(n.SourcePath))
+                                {
+                                    <MudText Typo="Typo.caption"
+                                             Color="Color.Default"
+                                             Class="mt-2"
+                                             Style="display: block; font-family: 'Cascadia Code', Consolas, monospace;">
+                                        @n.SourcePath
+                                    </MudText>
+                                }
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+                </MudStack>
+            </MudStack>
+        }
+    </MudPaper>
+}
+
+@code {
+    private static readonly List<BreadcrumbItem> _breadcrumbs =
+    [
+        new BreadcrumbItem("Home", href: "/"),
+        new BreadcrumbItem("Notifications", href: null, disabled: true),
+    ];
+
+    private IReadOnlyList<Notification> _items = Array.Empty<Notification>();
+
+    protected override void OnInitialized()
+    {
+        Reload();
+        // First sight clears the unread cursor — the bell badge zeros
+        // out as soon as the user opens the page. New notifications
+        // that arrive WHILE we're on the page count as unread again
+        // (Changed event triggers a re-render which picks up the count).
+        Bus.MarkAllRead();
+        Bus.Changed += OnBusChanged;
+    }
+
+    public void Dispose()
+    {
+        Bus.Changed -= OnBusChanged;
+    }
+
+    private async void OnBusChanged()
+    {
+        Reload();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Reload()
+    {
+        _items = Bus.ListRecent();
+    }
+
+    /// <summary>
+    /// Click handler for a notification row. External URLs (anything
+    /// starting with http/https) open in a new tab so the user doesn't
+    /// lose the dashboard. Internal routes (/agents, /workflows, ...)
+    /// navigate in-place.
+    /// </summary>
+    private void Navigate(string? href)
+    {
+        if (string.IsNullOrWhiteSpace(href)) return;
+        if (href.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || href.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo(href, forceLoad: true);
+        }
+        else
+        {
+            Nav.NavigateTo(href);
+        }
+    }
+
+    private static (Color Color, string Icon) StyleFor(string severity) => severity?.ToLowerInvariant() switch
+    {
+        "success" => (Color.Success, Icons.Material.Filled.CheckCircle),
+        "warning" => (Color.Warning, Icons.Material.Filled.Warning),
+        "error" => (Color.Error, Icons.Material.Filled.Error),
+        _ => (Color.Info, Icons.Material.Filled.Info),
+    };
+
+    private static string FormatTime(DateTimeOffset? ts)
+    {
+        if (ts is null) return "—";
+        var when = ts.Value.ToLocalTime();
+        var delta = DateTimeOffset.UtcNow - ts.Value;
+        if (delta.TotalSeconds < 60) return "just now";
+        if (delta.TotalMinutes < 60) return $"{(int)delta.TotalMinutes}m ago · {when:HH:mm:ss}";
+        if (delta.TotalHours < 24) return $"{(int)delta.TotalHours}h ago · {when:HH:mm}";
+        return when.ToString("yyyy-MM-dd HH:mm");
+    }
+
+    private static bool HasPreview(Notification notification) =>
+        !string.IsNullOrWhiteSpace(notification.Content);
+
+    private static bool IsHtmlPreview(Notification notification) =>
+        string.Equals(notification.ContentFormat?.Trim(), "html", StringComparison.OrdinalIgnoreCase);
+
+    private static string PreviewTitle(Notification notification)
+    {
+        var source = string.IsNullOrWhiteSpace(notification.SourcePath)
+            ? "Output preview"
+            : Path.GetFileName(notification.SourcePath);
+        var format = string.IsNullOrWhiteSpace(notification.ContentFormat)
+            ? "text"
+            : notification.ContentFormat;
+        return $"{source} · {format}";
+    }
+
+    private static MarkupString RenderPreview(Notification notification)
+    {
+        var content = notification.Content ?? string.Empty;
+        var format = notification.ContentFormat?.Trim().ToLowerInvariant();
+        return format switch
+        {
+            "markdown" or "md" => new MarkupString(Markdig.Markdown.ToHtml(content)),
+            "html" => Pre(content),
+            "json" or "yaml" or "yml" => Pre(content),
+            _ => Pre(content),
+        };
+    }
+
+    private static MarkupString Pre(string content)
+    {
+        var html = $"<pre>{HtmlEncoder.Default.Encode(content)}</pre>";
+        return new MarkupString(html);
+    }
+}

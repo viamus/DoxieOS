@@ -1,0 +1,296 @@
+@inherits LayoutComponentBase
+@using Viamus.Doxie.Orchestrator.ReleaseNotes
+@using Viamus.Doxie.Orchestrator.Components.Shared
+@inject Viamus.Doxie.Orchestrator.Notifications.NotificationsBus NotificationsBus
+@inject MudBlazor.ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IReleaseNotesService ReleaseNotesService
+@inject Viamus.Doxie.Orchestrator.Agents.IKeyValueSettingsStore SettingsStore
+@inject IAgentProviderResolver ProviderResolver
+@inject IConsoleSessionStore ConsoleStore
+@inject MudBlazor.IDialogService DialogService
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@implements IDisposable
+
+<MudThemeProvider Theme="OrchestratorTheme.Instance" IsDarkMode="true" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="0" Class="doxie-appbar">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu"
+                       Color="Color.Inherit"
+                       Edge="Edge.Start"
+                       OnClick="ToggleDrawer" />
+        <div class="doxie-brand">
+            <DoxieLogoIcon Size="28" Class="doxie-brand-icon" />
+            <MudText Typo="Typo.h6">DoxieOS</MudText>
+        </div>
+        <MudSpacer />
+        <div class="doxie-topbar-context" aria-label="Runtime status">
+            <span class="doxie-context-pill">
+                <MudIcon Icon="@Icons.Material.Filled.Memory" Size="Size.Small" />
+                @ProviderResolver.Resolve().DisplayName
+            </span>
+            <span class="doxie-context-pill">
+                <MudIcon Icon="@Icons.Material.Filled.Terminal" Size="Size.Small" />
+                @_liveConsoleCount @Lang["App.Live"]
+            </span>
+        </div>
+        <div class="doxie-topbar-action">
+            <MudIconButton Icon="@Icons.Material.Filled.Notifications"
+                           Color="Color.Inherit"
+                           OnClick="@(() => Nav.NavigateTo("/notifications"))"
+                           title="@($"{_unreadCount} unread notification{(_unreadCount == 1 ? "" : "s")}")" />
+            @if (_unreadCount > 0)
+            {
+                <span class="doxie-topbar-badge">@(_unreadCount > 99 ? "99+" : _unreadCount.ToString())</span>
+            }
+        </div>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen"
+               ClipMode="DrawerClipMode.Always"
+               Elevation="0"
+               Class="@DrawerClass"
+               Variant="DrawerVariant.Mini">
+        <div class="doxie-drawer-hover-region"
+             @onmouseenter="HandleDrawerMouseEnter"
+             @onmouseleave="HandleDrawerMouseLeave">
+            <NavMenu />
+        </div>
+    </MudDrawer>
+
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.False" Class="doxie-shell">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+
+    <footer class="doxie-footer" aria-label="DoxieOS footer">
+        <div class="doxie-footer-inner">
+            <button type="button"
+                    class="doxie-footer-link doxie-footer-release"
+                    title="@Lang["App.ReleaseNotes"]"
+                    aria-label="@Lang["App.ReleaseNotes"]"
+                    @onclick="OpenReleaseNotesModal">
+                <MudIcon Icon="@Icons.Material.Filled.NewReleases" Size="Size.Small" />
+                <span class="doxie-footer-version">v@(ReleaseNotesService.Latest()?.Version ?? "1.0.0")</span>
+                @if (_unreadReleaseCount > 0)
+                {
+                    <span class="doxie-footer-badge" title="@($"{_unreadReleaseCount} {Lang["App.UnreadReleaseNotes"]}")">@(_unreadReleaseCount > 99 ? "99+" : _unreadReleaseCount.ToString())</span>
+                }
+            </button>
+        </div>
+    </footer>
+</MudLayout>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">X</span>
+</div>
+
+@code {
+    private bool _drawerOpen = true;
+    private bool _drawerHovering;
+    private CancellationTokenSource? _drawerHoverLeaveCts;
+    private int _unreadCount;
+    private int _unreadReleaseCount;
+    private int _liveConsoleCount;
+
+    private void ToggleDrawer()
+    {
+        _drawerOpen = !_drawerOpen;
+        _drawerHovering = false;
+        _drawerHoverLeaveCts?.Cancel();
+    }
+
+    protected override void OnInitialized()
+    {
+        NotificationsBus.Received += OnNotificationReceived;
+        NotificationsBus.Changed += OnBusChanged;
+        ConsoleStore.SessionCreated += OnConsoleChanged;
+        ConsoleStore.SessionRemoved += OnConsoleChanged;
+        ConsoleStore.SessionUpdated += OnConsoleChanged;
+        Lang.Changed += OnLanguageChanged;
+        _unreadCount = NotificationsBus.UnreadCount;
+        RefreshLiveConsoleCount();
+        RefreshReleaseBadge();
+    }
+
+    private void RefreshReleaseBadge()
+    {
+        var lastSeen = SettingsStore.Get("ui.lastSeenReleaseVersion");
+        _unreadReleaseCount = ReleaseNotesService.Unseen(lastSeen).Count;
+    }
+
+    private async Task OpenReleaseNotesModal()
+    {
+        var dialog = await DialogService.ShowAsync<ReleaseNotesModal>(
+            Lang["App.ReleaseNotes"],
+            new MudBlazor.DialogParameters
+            {
+                ["OnMarkAllRead"] = EventCallback.Factory.Create<string>(this, OnReleaseMarkRead),
+            },
+            new MudBlazor.DialogOptions { MaxWidth = MudBlazor.MaxWidth.Large, FullWidth = true, CloseButton = false });
+        await dialog.Result;
+    }
+
+    private void OnReleaseMarkRead(string version)
+    {
+        SettingsStore.Set("ui.lastSeenReleaseVersion", version);
+        RefreshReleaseBadge();
+        StateHasChanged();
+    }
+
+    private bool _autoPopupChecked;
+
+    private string DrawerClass
+    {
+        get
+        {
+            if (_drawerOpen) return "doxie-drawer doxie-drawer-expanded";
+
+            return _drawerHovering
+                ? "doxie-drawer doxie-drawer-collapsed doxie-drawer-hover"
+                : "doxie-drawer doxie-drawer-collapsed";
+        }
+    }
+
+    private void HandleDrawerMouseEnter()
+    {
+        if (_drawerOpen) return;
+
+        _drawerHoverLeaveCts?.Cancel();
+        _drawerHovering = true;
+    }
+
+    private async Task HandleDrawerMouseLeave()
+    {
+        if (_drawerOpen) return;
+
+        _drawerHoverLeaveCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _drawerHoverLeaveCts = cts;
+
+        try
+        {
+            await Task.Delay(120, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (cts.IsCancellationRequested) return;
+
+        _drawerHovering = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _autoPopupChecked) return;
+        _autoPopupChecked = true;
+
+        var lastSeen = SettingsStore.Get("ui.lastSeenReleaseVersion");
+        var unseen = ReleaseNotesService.Unseen(lastSeen);
+        if (unseen.Count == 0) return;
+
+        var focus = unseen[0].Version;
+        var dialog = await DialogService.ShowAsync<ReleaseNotesModal>(
+            "What's new",
+            new MudBlazor.DialogParameters
+            {
+                ["FocusVersion"] = focus,
+                ["OnMarkAllRead"] = EventCallback.Factory.Create<string>(this, OnAutoPopupMarkRead),
+            },
+            new MudBlazor.DialogOptions { MaxWidth = MudBlazor.MaxWidth.Large, FullWidth = true, CloseButton = false });
+        await dialog.Result;
+    }
+
+    private void OnAutoPopupMarkRead(string version)
+    {
+        SettingsStore.Set("ui.lastSeenReleaseVersion", version);
+        RefreshReleaseBadge();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        NotificationsBus.Received -= OnNotificationReceived;
+        NotificationsBus.Changed -= OnBusChanged;
+        ConsoleStore.SessionCreated -= OnConsoleChanged;
+        ConsoleStore.SessionRemoved -= OnConsoleChanged;
+        ConsoleStore.SessionUpdated -= OnConsoleChanged;
+        Lang.Changed -= OnLanguageChanged;
+        _drawerHoverLeaveCts?.Cancel();
+        _drawerHoverLeaveCts?.Dispose();
+    }
+
+    private void RefreshLiveConsoleCount()
+    {
+        _liveConsoleCount = ConsoleStore.ListAll()
+            .Count(s => s.Status == ConsoleSessionStatus.Running && s.Kind == ConsoleSessionKind.Workspace);
+    }
+
+    private async void OnConsoleChanged(ConsoleSession? _)
+    {
+        RefreshLiveConsoleCount();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void OnBusChanged()
+    {
+        _unreadCount = NotificationsBus.UnreadCount;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void OnLanguageChanged()
+    {
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void OnNotificationReceived(Viamus.Doxie.Orchestrator.Notifications.Notification notification)
+    {
+        var severity = notification.Severity?.ToLowerInvariant() switch
+        {
+            "success" => MudBlazor.Severity.Success,
+            "warning" => MudBlazor.Severity.Warning,
+            "error" => MudBlazor.Severity.Error,
+            "info" => MudBlazor.Severity.Info,
+            _ => MudBlazor.Severity.Normal,
+        };
+
+        var body = string.IsNullOrWhiteSpace(notification.AgentId)
+            ? $"{notification.Title} - {notification.Body}"
+            : $"{notification.Title} ({notification.AgentId}) - {notification.Body}";
+        if (!string.IsNullOrWhiteSpace(notification.Content))
+        {
+            body += " · preview available";
+        }
+
+        await InvokeAsync(() => Snackbar.Add(body, severity, options =>
+        {
+            if (!string.IsNullOrWhiteSpace(notification.Href))
+            {
+                options.OnClick = _ =>
+                {
+                    var href = notification.Href!;
+                    if (href.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                        || href.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Nav.NavigateTo(href, forceLoad: true);
+                    }
+                    else
+                    {
+                        Nav.NavigateTo(href);
+                    }
+                    return Task.CompletedTask;
+                };
+            }
+        }));
+    }
+}

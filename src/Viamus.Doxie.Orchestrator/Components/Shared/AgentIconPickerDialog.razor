@@ -1,0 +1,99 @@
+<MudDialog Class="agent-icon-picker-dialog" Style="min-width: min(680px, 92vw);">
+    <TitleContent>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudIcon Icon="@Icons.Material.Filled.Widgets" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">@Title</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+            Pick the visual marker used in the agent list, detail page, and workflow surfaces.
+        </MudText>
+        <MudTextField @bind-Value="_search"
+                      Placeholder="Search Material icon name, label, or role..."
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Clearable="true"
+                      Immediate="true"
+                      DebounceInterval="100"
+                      Class="mb-3" />
+        <div class="agent-icon-picker-grid">
+            @foreach (var choice in FilteredChoices)
+            {
+                var selected = string.Equals(choice.Key, _selectedKey, StringComparison.OrdinalIgnoreCase);
+                <button type="button"
+                        class="agent-icon-picker-option @(selected ? "selected" : null)"
+                        @onclick="@(() => Select(choice.Key))"
+                        title="@choice.Label">
+                    <MudIcon Icon="@choice.Icon" Size="Size.Medium" Color="@(selected ? Color.Primary : Color.Default)" />
+                    <span>@choice.Label</span>
+                    <small>@choice.Key</small>
+                </button>
+            }
+        </div>
+        @if (FilteredChoices.Count == 0)
+        {
+            <MudPaper Class="pa-4 mt-3 doxie-empty-state" Elevation="0">
+                <MudText Typo="Typo.body2" Color="Color.Default">
+                    No icons match <strong>@_search</strong>. Try a Material name such as <code>Code</code>, <code>Storage</code>, or <code>Rocket</code>.
+                </MudText>
+            </MudPaper>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Clear" StartIcon="@Icons.Material.Filled.Restore">
+            Use category default
+        </MudButton>
+        <MudSpacer />
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Check"
+                   Disabled="@(!CanApply)"
+                   OnClick="Apply">
+            Apply
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string Title { get; set; } = "Choose agent icon";
+    [Parameter] public string? CurrentIcon { get; set; }
+
+    private string? _selectedKey;
+    private string? _search;
+
+    private bool CanApply =>
+        string.IsNullOrWhiteSpace(_selectedKey) || AgentIconPalette.Contains(_selectedKey);
+
+    private IReadOnlyList<AgentIconChoice> FilteredChoices
+    {
+        get
+        {
+            var query = _search?.Trim();
+            if (string.IsNullOrWhiteSpace(query)) return AgentIconPalette.Choices;
+
+            return AgentIconPalette.Choices
+                .Where(c => c.Key.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || c.Label.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        _selectedKey = AgentIconPalette.Contains(CurrentIcon) ? CurrentIcon?.Trim() : null;
+    }
+
+    private void Select(string key) => _selectedKey = key;
+
+    private void Clear() => _selectedKey = null;
+
+    private void Apply() => MudDialog.Close(DialogResult.Ok(_selectedKey));
+
+    private void Cancel() => MudDialog.Cancel();
+}

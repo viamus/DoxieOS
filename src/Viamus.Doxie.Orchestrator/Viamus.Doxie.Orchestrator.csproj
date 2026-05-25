@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <!-- The orchestrator is Windows-only by design (Job Object child-process containment). -->
+    <!-- MUD0002: false positives from MudBlazor 9.4's analyzer on attributes
+         that ARE PascalCase (InputData / InputLabels / XAxisLabels on MudChart,
+         OnClickStopPropagation on MudIconButton). The analyzer mis-flags them
+         as lowercase pattern even when written correctly; the runtime accepts
+         them and the chart renders fine. Drop when MudBlazor ships a fix. -->
+    <NoWarn>$(NoWarn);CA1416;MUD0002</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.1.3" />
+    <PackageReference Include="MudBlazor" Version="9.4.0" />
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+  </ItemGroup>
+
+  <!-- Release notes ship inside the assembly so deployments don't depend on
+       a separate docs/ directory next to the binary. The companion Lottie
+       JSON files stay in wwwroot/ and are served as static files. -->
+  <ItemGroup>
+    <EmbeddedResource Include="docs\release-notes\v*.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Viamus.Doxie.Orchestrator.Workflows.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Viamus.Doxie.Orchestrator.Common\Viamus.Doxie.Orchestrator.Common.csproj" />
+    <ProjectReference Include="..\Viamus.Doxie.Orchestrator.Agents\Viamus.Doxie.Orchestrator.Agents.csproj" />
+    <ProjectReference Include="..\Viamus.Doxie.Orchestrator.Context\Viamus.Doxie.Orchestrator.Context.csproj" />
+    <ProjectReference Include="..\Viamus.Doxie.Orchestrator.Workflows\Viamus.Doxie.Orchestrator.Workflows.csproj" />
+  </ItemGroup>
+
+</Project>

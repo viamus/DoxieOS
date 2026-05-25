@@ -1,0 +1,6 @@
+.doxie-logo-icon {
+    display: block;
+    color: var(--mud-palette-primary, #D97757);
+    flex-shrink: 0;
+    overflow: visible;
+}

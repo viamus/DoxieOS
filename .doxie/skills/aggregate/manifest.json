@@ -1,0 +1,13 @@
+{
+  "id": "aggregate",
+  "description": "Joins outputs from N upstream workflow nodes into a single payload that downstream nodes can consume. Acts as a synchronization barrier — the workflow engine waits for every upstream node to succeed before this node fires, then forwards the merged result to its dependents.",
+  "displayName": "Aggregate",
+  "category": "Connector",
+  "requirements": [],
+  "modes": {
+    "merge": {
+      "description": "Wait for every upstream node to succeed, then forward a merged payload to dependents. No fields — the engine wires the upstream nodes via the workflow's edges.",
+      "argumentsTemplate": "merge"
+    }
+  }
+}

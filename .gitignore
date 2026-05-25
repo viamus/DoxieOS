@@ -1,27 +1,73 @@
-# OS / editor
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
+# Agent-allocated sandboxes (transient scratch work)
+.sandbox/
 
-# Logs
-*.log
-logs/
+# User-owned workspaces (persistent local project folders)
+.workspace/
 
-# Environment
-.env
-.env.*
-!.env.example
+# Legacy workflow location kept ignored for old local checkouts.
+.workflows/
 
-# Dependencies / build outputs
-node_modules/
-dist/
-build/
-out/
-bin/
-obj/
+# Per-run scratch folders for workflow execution.
+.runs/
 
-# Temporary files
-tmp/
-temp/
-.cache/
+# Old layout (pre-2026-05 sandbox naming), kept ignored for safety.
+workspace_*/
+
+# Runtime locks / state
+.claude/scheduled_tasks.lock
+
+# Local private directory for user-owned files and experiments.
+.private/
+
+# Visual Studio cache (created next to the .slnx)
+.vs/
+
+# .NET build artifacts (any project under the workspace)
+**/bin/
+**/obj/
+**/*.user
+
+# Canonical authoring layer (.doxie/) - DoxieOS reads this folder at
+# runtime; provider shims are regenerated from it.
+#
+# The public repository ships only the core Doxie kit. Custom skills,
+# agents, libraries, and workflows stay local by default.
+.doxie/libraries/*
+.doxie/workflows/*
+.doxie/skills/*
+!.doxie/skills/agent-builder/
+!.doxie/skills/agent-builder/**
+!.doxie/skills/aggregate/
+!.doxie/skills/aggregate/**
+!.doxie/skills/approval-gate/
+!.doxie/skills/approval-gate/**
+!.doxie/skills/library/
+!.doxie/skills/library/**
+!.doxie/skills/loop/
+!.doxie/skills/loop/**
+!.doxie/skills/prompt/
+!.doxie/skills/prompt/**
+!.doxie/skills/sandbox/
+!.doxie/skills/sandbox/**
+!.doxie/skills/workflow-builder/
+!.doxie/skills/workflow-builder/**
+!.doxie/skills/workflow-output-contract-designer/
+!.doxie/skills/workflow-output-contract-designer/**
+!.doxie/skills/write-to-workspace/
+!.doxie/skills/write-to-workspace/**
+.doxie/private/
+
+# Provider shims - entirely derived from .doxie/, never tracked.
+/AGENTS.md
+.claude/
+.codex/
+.agents/
+.mcp.json
+
+# Local dev launcher scripts (personal convenience, not project policy)
+run-*.bat
+run-*.ps1
+run-*.sh
+
+# Doxie runtime evidence index (local workspace memory, never versioned)
+.doxie/index/

@@ -1,0 +1,6 @@
+{
+  "id": "sandbox",
+  "description": "Manage transient sandboxes under ./.sandbox/ that agents allocate for one-shot scratch work (cloning a branch, materialising research clones, etc.). Subcommands - `new` creates a fresh sandbox folder on demand (named after a tag if `--tag <slug>` is given, else a monotonic integer), `list` shows all sandboxes with state, `clean` removes finished sandboxes (supports `--tag` filter). Distinct from user-owned Workspaces (which live elsewhere and are not managed by this skill).",
+  "displayName": "Sandbox",
+  "category": "Doxie"
+}

@@ -1,0 +1,414 @@
+@page "/workspaces/{WorkspaceId}/files"
+@page "/workspaces/{WorkspaceId}/files/{*FilePath}"
+@inject IWorkspaceStore WorkspaceStore
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@using Viamus.Doxie.Orchestrator.Context
+@using Markdig
+@using System.Web
+
+<PageTitle>@(_workspace?.Name ?? WorkspaceId) - @Lang["Common.Files"] - DoxieOS</PageTitle>
+
+@* Outer wrapper — when fullscreen, position: fixed covers the entire
+   viewport (above MudBlazor's AppBar / Drawer z-indices), giving the
+   user the whole document for the file viewer without invoking the
+   browser's Fullscreen API. tabindex makes ESC keydown reachable. *@
+<div class="@(_isFullscreen ? "doxie-fullscreen" : null)"
+     tabindex="-1"
+     @onkeydown="@(e => { if (_isFullscreen && e.Key == "Escape") ToggleFullscreen(); })">
+
+@if (!_isFullscreen)
+{
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+}
+
+@if (_workspace is null)
+{
+    <MudText Typo="Typo.h3" GutterBottom="true">@WorkspaceNotFoundTitle()</MudText>
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.body2">@WorkspaceNotFoundBody() <code>@WorkspaceId</code>.</MudText>
+        <MudButton Class="mt-3" Variant="Variant.Outlined" Href="/workspaces" StartIcon="@Icons.Material.Filled.ArrowBack">
+            @BackToWorkspacesLabel()
+        </MudButton>
+    </MudPaper>
+}
+else
+{
+    @if (!_isFullscreen)
+    {
+        <MudText Typo="Typo.h3" GutterBottom="true">@_workspace.Name</MudText>
+        <MudText Typo="Typo.subtitle1" Class="mb-4">
+            @BrowsingFilesLabel() <code>@_workspace.Path</code>.
+        </MudText>
+    }
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudSwitch T="bool" @bind-Value="_showHidden" Color="Color.Primary" Label="@ShowHiddenLabel()" />
+        <MudSpacer />
+        @if (_currentFile is not null)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.InsertDriveFile">
+                @(_currentRelativePath ?? _currentFile.Name)
+            </MudChip>
+        }
+        <MudTooltip Text="@(_isFullscreen ? Lang["Consoles.ExitFullscreen"] : Lang["Consoles.Fullscreen"])">
+            <MudIconButton Icon="@(_isFullscreen ? Icons.Material.Filled.FullscreenExit : Icons.Material.Filled.Fullscreen)"
+                           Size="Size.Small"
+                           Color="Color.Default"
+                           OnClick="ToggleFullscreen" />
+        </MudTooltip>
+    </MudStack>
+
+    <MudGrid>
+        <MudItem xs="12" md="4">
+            <MudPaper Elevation="2" Class="pa-2" Style="@($"height: {(_isFullscreen ? "calc(100vh - 96px)" : "75vh")}; overflow: auto;")">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="px-2 py-1">
+                    <MudIcon Icon="@Icons.Material.Filled.AccountTree" Color="Color.Primary" Size="Size.Small" />
+                    <MudText Typo="Typo.subtitle2">@Lang["Common.Files"]</MudText>
+                </MudStack>
+                <MudDivider Class="mb-1" />
+                @if (_rootError is not null)
+                {
+                    <MudAlert Severity="Severity.Error" Class="ma-2">@_rootError</MudAlert>
+                }
+                else
+                {
+                    <FileTreeNode Folder="_root"
+                                  RelativePath=""
+                                  Depth="0"
+                                  ExpandedFolders="_expandedFolders"
+                                  ShowHidden="_showHidden"
+                                  WorkspaceRoot="@_workspace.Path"
+                                  CurrentRelativePath="@_currentRelativePath"
+                                  OnFileClick="OnFileSelected"
+                                  OnFolderToggle="OnFolderToggle" />
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="8">
+            <MudPaper Elevation="2" Class="pa-0" Style="@($"height: {(_isFullscreen ? "calc(100vh - 96px)" : "75vh")}; overflow: hidden; display: flex; flex-direction: column;")">
+                @if (_currentFile is null && _currentError is null)
+                {
+                    <div class="d-flex flex-column align-center justify-center" style="flex: 1; opacity: 0.6;">
+                        <MudIcon Icon="@Icons.Material.Filled.Description" Size="Size.Large" />
+                        <MudText Typo="Typo.body2" Class="mt-2">@SelectFileLabel()</MudText>
+                    </div>
+                }
+                else if (_currentError is not null)
+                {
+                    <MudAlert Severity="Severity.Error" Class="ma-3">@_currentError</MudAlert>
+                }
+                else
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="px-3 py-2"
+                              Style="border-bottom: 1px solid var(--mud-palette-divider);">
+                        <MudIcon Icon="@IconForKind(_currentFile!.Kind)" Color="Color.Primary" Size="Size.Small" />
+                        <MudText Typo="Typo.subtitle1" Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                            @_currentFile.Name
+                        </MudText>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                            @FormatBytes(_currentFile.SizeBytes)
+                        </MudChip>
+                        @if (!string.IsNullOrEmpty(_currentFile.Language))
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                                @_currentFile.Language
+                            </MudChip>
+                        }
+                        @if (_currentFile.Truncated && _currentFile.Kind != "binary")
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning">
+                                showing first @WorkspaceFileBrowser.TruncatedLineCount lines
+                            </MudChip>
+                        }
+                        <MudSpacer />
+                        <MudTooltip Text="@DownloadFileLabel()">
+                            <MudIconButton Icon="@Icons.Material.Filled.Download"
+                                           Size="Size.Small"
+                                           Href="@DownloadUrl(_currentRelativePath!)"
+                                           Target="_blank" />
+                        </MudTooltip>
+                    </MudStack>
+
+                    <div style="flex: 1; overflow: auto;">
+                        @if (_currentFile!.Kind == "binary")
+                        {
+                            <div class="pa-6 d-flex flex-column align-center" style="opacity: 0.85;">
+                                <MudIcon Icon="@Icons.Material.Filled.DataObject" Size="Size.Large" Color="Color.Default" />
+                                <MudText Typo="Typo.h6" Class="mt-3">
+                                    @(_currentFile.Truncated ? FileTooLargeLabel() : BinaryFileLabel())
+                                </MudText>
+                                <MudText Typo="Typo.body2" Class="mt-1" Style="opacity: 0.8;">
+                                    @FormatBytes(_currentFile.SizeBytes) - @DownloadInspectLabel()
+                                </MudText>
+                                <MudButton Class="mt-3"
+                                           Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Download"
+                                           Href="@DownloadUrl(_currentRelativePath!)"
+                                           Target="_blank">
+                                    @DownloadLabel()
+                                </MudButton>
+                            </div>
+                        }
+                        else if (_currentFile.Kind == "markdown")
+                        {
+                            <div class="markdown-body pa-4">
+                                @((MarkupString)_renderedMarkdown!)
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="code-view">
+                                <pre><code @ref="_codeRef" class="@CodeClass(_currentFile.Language)">@_currentFile.Content</code></pre>
+                            </div>
+                        }
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+</div>
+
+@code {
+    [Parameter] public string WorkspaceId { get; set; } = string.Empty;
+    [Parameter] public string? FilePath { get; set; }
+
+    private static readonly MarkdownPipeline _mdPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .DisableHtml() // strip raw <script>/<iframe> from workspace markdown
+        .Build();
+
+    private Workspace? _workspace;
+    private string? _rootError;
+    private List<BreadcrumbItem> _breadcrumbs = new();
+
+    // Tree state — _root is the eagerly-loaded listing of the workspace
+    // root; descendants are loaded lazily into the cache below as the user
+    // expands folders. Map key = forward-slash relative path from root.
+    private WorkspaceFileBrowser.TreeListing? _root;
+    private readonly HashSet<string> _expandedFolders = new(StringComparer.Ordinal);
+    private bool _showHidden;
+
+    // Right-pane state for the currently selected file.
+    private WorkspaceFileBrowser.FileContent? _currentFile;
+    private string? _currentRelativePath;
+    private string? _currentError;
+    private string? _renderedMarkdown;
+    private ElementReference _codeRef;
+
+    // True when the page wrapper covers the entire viewport (CSS-only,
+    // no Fullscreen API). Toggled from the icon button or ESC keydown
+    // when the wrapper has focus.
+    private bool _isFullscreen;
+    private bool _shouldHighlight;
+
+    private string WorkspaceNotFoundTitle() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Área de trabalho não encontrada",
+        "es" => "Espacio de trabajo no encontrado",
+        _ => "Workspace not found",
+    };
+
+    private string WorkspaceNotFoundBody() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Nenhuma área de trabalho com id",
+        "es" => "No hay espacio de trabajo con id",
+        _ => "No workspace with id",
+    };
+
+    private string BackToWorkspacesLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Voltar para áreas de trabalho",
+        "es" => "Volver a espacios de trabajo",
+        _ => "Back to Workspaces",
+    };
+
+    private string BrowsingFilesLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Navegando arquivos em",
+        "es" => "Explorando archivos en",
+        _ => "Browsing files under",
+    };
+
+    private string ShowHiddenLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Mostrar ocultos / pastas de build",
+        "es" => "Mostrar ocultos / carpetas de build",
+        _ => "Show hidden / build folders",
+    };
+
+    private string SelectFileLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Selecione um arquivo para ver o conteúdo",
+        "es" => "Selecciona un archivo para ver su contenido",
+        _ => "Select a file to view its content",
+    };
+
+    private string DownloadFileLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Baixar arquivo",
+        "es" => "Descargar archivo",
+        _ => "Download file",
+    };
+
+    private string FileTooLargeLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Arquivo grande demais para embutir",
+        "es" => "Archivo demasiado grande para mostrar inline",
+        _ => "File too large to inline",
+    };
+
+    private string BinaryFileLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Arquivo binário",
+        "es" => "Archivo binario",
+        _ => "Binary file",
+    };
+
+    private string DownloadInspectLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "baixe para inspecionar localmente.",
+        "es" => "descárgalo para inspeccionarlo localmente.",
+        _ => "download to inspect locally.",
+    };
+
+    private string DownloadLabel() => Lang.CurrentLanguage switch
+    {
+        "pt-BR" => "Baixar",
+        "es" => "Descargar",
+        _ => "Download",
+    };
+
+    protected override void OnInitialized()
+    {
+        _workspace = WorkspaceStore.GetById(WorkspaceId);
+        if (_workspace is null) return;
+
+        var (listing, error) = WorkspaceFileBrowser.ListFolder(_workspace.Path, null, _showHidden);
+        _root = listing;
+        _rootError = error;
+
+        _breadcrumbs =
+        [
+            new BreadcrumbItem(Lang["Common.Home"], href: "/"),
+            new BreadcrumbItem(Lang["Workspaces.Title"], href: "/workspaces"),
+            new BreadcrumbItem(_workspace.Name, href: $"/workspaces/{_workspace.Id}/files"),
+            new BreadcrumbItem(Lang["Common.Files"], href: null, disabled: true),
+        ];
+
+        // Deep-link: if the route includes a file path, expand its parent
+        // folders and pre-load the file into the right pane.
+        if (!string.IsNullOrEmpty(FilePath))
+        {
+            ExpandAncestors(FilePath);
+            LoadFile(FilePath);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Re-trigger highlight.js after every render where a code file
+        // is selected — Blazor reuses the <code> element across content
+        // changes, so we need to re-run the colorizer.
+        if (_shouldHighlight && _currentFile is not null && _currentFile.Kind == "code")
+        {
+            _shouldHighlight = false;
+            try { await Js.InvokeVoidAsync("doxieOs.highlightCode", _codeRef); }
+            catch { /* hljs not yet loaded — fine, refresh will catch it */ }
+        }
+    }
+
+    private void ToggleFullscreen()
+    {
+        _isFullscreen = !_isFullscreen;
+    }
+
+    private void OnFolderToggle(string relativePath)
+    {
+        if (!_expandedFolders.Add(relativePath))
+        {
+            _expandedFolders.Remove(relativePath); // toggle off
+        }
+    }
+
+    private async Task OnFileSelected(string relativePath)
+    {
+        LoadFile(relativePath);
+        // Update URL without forcing a reload, so deep-links share cleanly.
+        var encoded = string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString));
+        Nav.NavigateTo($"/workspaces/{WorkspaceId}/files/{encoded}", forceLoad: false);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void LoadFile(string relativePath)
+    {
+        if (_workspace is null) return;
+
+        _currentError = null;
+        _currentFile = null;
+        _renderedMarkdown = null;
+        _currentRelativePath = relativePath;
+
+        var (content, error) = WorkspaceFileBrowser.ReadFile(_workspace.Path, relativePath);
+        if (error is not null)
+        {
+            _currentError = error;
+            return;
+        }
+        _currentFile = content;
+
+        if (content is { Kind: "markdown", Content: not null })
+        {
+            _renderedMarkdown = Markdown.ToHtml(content.Content, _mdPipeline);
+        }
+        else if (content is { Kind: "code" })
+        {
+            _shouldHighlight = true; // OnAfterRenderAsync will trigger hljs
+        }
+    }
+
+    private void ExpandAncestors(string relativePath)
+    {
+        // For a path "src/Foo/Bar.cs" expand "src" and "src/Foo" so the
+        // tree opens up to the file when arriving via deep link.
+        var parts = relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var acc = string.Empty;
+        for (int i = 0; i < parts.Length - 1; i++)
+        {
+            acc = acc.Length == 0 ? parts[i] : $"{acc}/{parts[i]}";
+            _expandedFolders.Add(acc);
+        }
+    }
+
+    private string DownloadUrl(string relativePath)
+    {
+        var encoded = HttpUtility.UrlEncode(relativePath);
+        return $"/api/workspaces/{WorkspaceId}/download?path={encoded}";
+    }
+
+    private static string CodeClass(string? language) =>
+        string.IsNullOrEmpty(language) ? "hljs" : $"language-{language} hljs";
+
+    private static string IconForKind(string kind) => kind switch
+    {
+        "markdown" => Icons.Material.Filled.Article,
+        "code" => Icons.Material.Filled.Code,
+        "binary" => Icons.Material.Filled.DataObject,
+        _ => Icons.Material.Filled.InsertDriveFile,
+    };
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        double n = bytes;
+        string[] units = ["KB", "MB", "GB"];
+        int u = -1;
+        do { n /= 1024; u++; } while (n >= 1024 && u < units.Length - 1);
+        return $"{n:0.#} {units[u]}";
+    }
+}

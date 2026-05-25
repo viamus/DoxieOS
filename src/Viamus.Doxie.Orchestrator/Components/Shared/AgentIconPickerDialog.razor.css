@@ -1,0 +1,42 @@
+.agent-icon-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 8px;
+}
+
+.agent-icon-picker-option {
+    min-height: 88px;
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 6px;
+    background: var(--mud-palette-surface);
+    color: var(--mud-palette-text-primary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    cursor: pointer;
+    transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.agent-icon-picker-option:hover {
+    border-color: var(--mud-palette-primary);
+    background: rgba(217, 119, 87, 0.06);
+}
+
+.agent-icon-picker-option.selected {
+    border-color: var(--mud-palette-primary);
+    background: rgba(217, 119, 87, 0.1);
+    box-shadow: inset 0 0 0 1px var(--mud-palette-primary);
+}
+
+.agent-icon-picker-option span {
+    font-size: 0.875rem;
+    line-height: 1.1;
+}
+
+.agent-icon-picker-option small {
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.72rem;
+    line-height: 1;
+}

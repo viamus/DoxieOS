@@ -1,0 +1,648 @@
+@page "/workspaces"
+@inject IWorkspaceStore WorkspaceStore
+@inject ILibraryStore LibraryStore
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IRequestLocalityService Locality
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@using Viamus.Doxie.Orchestrator.Runtime
+
+<PageTitle>@Lang["Workspaces.Title"] - DoxieOS</PageTitle>
+
+<MudBreadcrumbs Items="Breadcrumbs" Class="px-0 mb-2" />
+
+<div class="doxie-page">
+<div class="doxie-page-header">
+    <div>
+        <div class="doxie-page-title">
+            <span class="doxie-page-title-icon">
+                <MudIcon Icon="@Icons.Material.Filled.Folder" Size="Size.Small" />
+            </span>
+            <MudText Typo="Typo.h3">@Lang["Workspaces.Title"]</MudText>
+        </div>
+        <MudText Typo="Typo.subtitle1" Class="doxie-page-subtitle">
+            @Lang["Workspaces.Subtitle"]
+        </MudText>
+    </div>
+    <div class="doxie-page-actions">
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.Add"
+                   OnClick="OpenCreateDialog">
+            @Lang["Workspaces.New"]
+        </MudButton>
+    </div>
+</div>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+    <MudTextField @bind-Value="_searchText"
+                  @bind-Value:after="@OnSearchChanged"
+                  Placeholder="@Lang["Workspaces.SearchPlaceholder"]"
+                  Variant="Variant.Outlined"
+                  Margin="Margin.Dense"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Clearable="true"
+                  Immediate="true"
+                  DebounceInterval="150"
+                  Style="max-width: 360px;" />
+</MudStack>
+
+@if (_workspaces.Count == 0)
+{
+    <MudPaper Class="pa-6 doxie-empty-state" Elevation="0">
+        <MudText Typo="Typo.body2" Color="Color.Default">
+            @Lang["Workspaces.Empty"]
+        </MudText>
+    </MudPaper>
+}
+else if (_filteredWorkspaces.Count == 0)
+{
+    <MudPaper Class="pa-6 doxie-empty-state" Elevation="0">
+        <MudText Typo="Typo.body2" Color="Color.Default">
+            No workspaces match <strong>"@_searchText"</strong>. Clear the search to see all @_workspaces.Count workspace@(_workspaces.Count == 1 ? "" : "s").
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudExpansionPanels MultiExpansion="true" Elevation="0" Class="doxie-surface">
+        @foreach (var ws in _filteredWorkspaces)
+        {
+            <MudExpansionPanel>
+                <TitleContent>
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Color="Color.Primary" />
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.h6">@ws.Name</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace;">@ws.Id</MudText>
+                        </MudStack>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                            @LibraryCountLabel(ws.MountedLibraryIds.Count)
+                        </MudChip>
+                        <span @onclick:stopPropagation="true">
+                            @if (_isLocal)
+                            {
+                                <MudTooltip Text="Open folder in Explorer">
+                                    <MudIconButton Icon="@Icons.Material.Filled.FolderOpen"
+                                                   Size="Size.Small"
+                                                   Color="Color.Default"
+                                                   OnClick="@(() => OpenWorkspace(ws, "folder"))" />
+                                </MudTooltip>
+                            }
+                            else
+                            {
+                                @* Remote browser: navigate the user to the in-app
+                                   file browser. Same tab — the page has its own
+                                   "fullscreen" toggle if the user wants the viewer
+                                   to take over the document. *@
+                                <MudTooltip Text="Browse files">
+                                    <MudIconButton Icon="@Icons.Material.Filled.FolderOpen"
+                                                   Size="Size.Small"
+                                                   Color="Color.Default"
+                                                   Href="@($"/workspaces/{ws.Id}/files")" />
+                                </MudTooltip>
+                            }
+                        </span>
+                        <span @onclick:stopPropagation="true">
+                            <MudTooltip Text="Start interactive Claude console here (in DoxieOS)">
+                                <MudIconButton Icon="@Icons.Material.Filled.SmartToy"
+                                               Size="Size.Small"
+                                               Color="Color.Primary"
+                                               OnClick="@(() => StartConsole(ws))" />
+                            </MudTooltip>
+                        </span>
+                        <span @onclick:stopPropagation="true">
+                            <MudTooltip Text="Delete workspace">
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                               Size="Size.Small"
+                                               Color="Color.Error"
+                                               OnClick="@(() => DeleteWorkspace(ws))" />
+                            </MudTooltip>
+                        </span>
+                    </MudStack>
+                </TitleContent>
+                <ChildContent>
+                    <MudGrid Class="mb-3">
+                        <MudItem xs="12" md="8">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-1">
+                                <MudIcon Icon="@Icons.Material.Filled.Notes" Color="Color.Primary" Size="Size.Small" />
+                                <MudText Typo="Typo.subtitle2">@Lang["Workspaces.Why"]</MudText>
+                            </MudStack>
+                            @if (string.IsNullOrWhiteSpace(ws.Description))
+                            {
+                                <MudText Typo="Typo.body2" Color="Color.Default" Style="font-style: italic;">
+                                    (no description set — add one when you create the next workspace so future-you knows what this is for)
+                                </MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2">@ws.Description</MudText>
+                            }
+                        </MudItem>
+                        <MudItem xs="12" md="4">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-1">
+                                <MudIcon Icon="@Icons.Material.Filled.Schedule" Color="Color.Primary" Size="Size.Small" />
+                                <MudText Typo="Typo.subtitle2">@Lang["Workspaces.When"]</MudText>
+                            </MudStack>
+                            <MudText Typo="Typo.body2">@RelativeTime(ws.CreatedAt)</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default">@ws.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                        <MudIcon Icon="@Icons.Material.Filled.MenuBook" Color="Color.Primary" Size="Size.Small" />
+                        <MudText Typo="Typo.subtitle2">@Lang["Workspaces.MountedLibraries"]</MudText>
+                    </MudStack>
+
+                    @if (ws.MountedLibraryIds.Count == 0)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Default" Class="mb-2 d-block">
+                            @Lang["Workspaces.NoMountedLibraries"]
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudStack Row="true" Spacing="1" Class="flex-wrap mb-2">
+                            @foreach (var libId in ws.MountedLibraryIds)
+                            {
+                                var lib = _librariesById.GetValueOrDefault(libId);
+                                <MudChip T="string"
+                                         Size="Size.Small"
+                                         Variant="Variant.Outlined"
+                                         Color="@(lib is null ? Color.Warning : Color.Primary)"
+                                         Icon="@Icons.Material.Filled.MenuBook"
+                                         OnClose="@(() => UnmountLibrary(ws, libId))">
+                                    @(lib?.Name ?? libId)@(lib is null ? " (missing)" : $" · {lib.CatalogName}")
+                                </MudChip>
+                            }
+                        </MudStack>
+                    }
+
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-2">
+                        <MudSelect T="string"
+                                   Label="@Lang["Workspaces.MountAnotherLibrary"]"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   Value="@_pendingMountByWs.GetValueOrDefault(ws.Id)"
+                                   ValueChanged="@(v => _pendingMountByWs[ws.Id] = v)"
+                                   Style="min-width: 280px;">
+                            @foreach (var lib in _libraries.Where(l => !ws.MountedLibraryIds.Contains(l.Id, StringComparer.OrdinalIgnoreCase)))
+                            {
+                                <MudSelectItem Value="@lib.Id">@lib.Name <MudText Typo="Typo.caption" Color="Color.Default" Inline="true">@($" ({lib.Id} · {lib.CatalogName})")</MudText></MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Add"
+                                   OnClick="@(() => MountLibrary(ws))"
+                                   Disabled="@string.IsNullOrEmpty(_pendingMountByWs.GetValueOrDefault(ws.Id))">
+                            @Lang["Workspaces.Mount"]
+                        </MudButton>
+                    </MudStack>
+
+                    <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-3" Style="font-family: 'Cascadia Code', Consolas, monospace; word-break: break-all;">@ws.Path</MudText>
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
+}
+
+</div>
+
+@if (_showCreateDialog)
+{
+    <MudOverlay Visible="true" DarkBackground="true" Absolute="false">
+        <MudPaper Class="pa-5" Elevation="8" Style="min-width: 460px; max-width: 560px;">
+            <MudText Typo="Typo.h6" Class="mb-3">@Lang["Workspaces.New"]</MudText>
+
+            <MudTextField @bind-Value="_createId"
+                          Label="@Lang["Workspaces.IdLabel"]"
+                          Placeholder="my-project"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          HelperText="Lowercase letters, digits, hyphens. Becomes the folder name on disk."
+                          FullWidth="true" />
+
+            <MudTextField @bind-Value="_createName"
+                          Label="@Lang["Workspaces.DisplayNameLabel"]"
+                          Placeholder="My Project"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          HelperText="Falls back to title-cased id if left empty."
+                          FullWidth="true"
+                          Class="mt-3" />
+
+            <MudTextField @bind-Value="_createDescription"
+                          Label="@Lang["Workspaces.DescriptionLabel"]"
+                          Placeholder="What is this workspace for?"
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Lines="2"
+                          FullWidth="true"
+                          Class="mt-3" />
+
+            <MudSelect T="string"
+                       Label="@Lang["Workspaces.MountLibrariesLabel"]"
+                       MultiSelection="true"
+                       SelectedValues="_createSelectedLibraries"
+                       SelectedValuesChanged="@(v => _createSelectedLibraries = v?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase))"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       MultiSelectionTextFunc="@(values => values is null || values.Count == 0 ? "(none)" : $"{values.Count} selected")"
+                       FullWidth="true"
+                       Class="mt-3"
+                       HelperText="Their memories become part of this workspace's context. Can change later.">
+                @foreach (var lib in _libraries)
+                {
+                    <MudSelectItem T="string" Value="@lib.Id">@lib.Name <MudText Typo="Typo.caption" Color="Color.Default" Inline="true">@($" ({lib.CatalogName})")</MudText></MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (!string.IsNullOrEmpty(_createError))
+            {
+                <MudAlert Severity="Severity.Error" Class="mt-3">@_createError</MudAlert>
+            }
+
+            <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="2" Class="mt-4">
+                <MudButton Variant="Variant.Text" OnClick="CancelCreateDialog">@Lang["Common.Cancel"]</MudButton>
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           OnClick="SubmitCreate"
+                           Disabled="_creating">@Lang["Common.Create"]</MudButton>
+            </MudStack>
+        </MudPaper>
+    </MudOverlay>
+}
+
+@code {
+    private List<BreadcrumbItem> Breadcrumbs =>
+    [
+        new BreadcrumbItem(Lang["Common.Home"], href: "/"),
+        new BreadcrumbItem(Lang["Workspaces.Title"], href: null, disabled: true),
+    ];
+
+    private IReadOnlyList<Workspace> _workspaces = Array.Empty<Workspace>();
+    private IReadOnlyList<Workspace> _filteredWorkspaces = Array.Empty<Workspace>();
+    private string _searchText = string.Empty;
+    private IReadOnlyList<Library> _libraries = Array.Empty<Library>();
+    private Dictionary<string, Library> _librariesById = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _pendingMountByWs = new();
+    // True when the request to /workspaces is coming from the same machine
+    // as the orchestrator (so we can launch explorer.exe). False when the
+    // user is reaching DoxieOS over the network and needs the in-browser
+    // file browser instead. Cached at OnInitialized.
+    private bool _isLocal = true;
+
+    private bool _showCreateDialog;
+    private string _createId = string.Empty;
+    private string _createName = string.Empty;
+    private string _createDescription = string.Empty;
+    private HashSet<string> _createSelectedLibraries = new(StringComparer.OrdinalIgnoreCase);
+    private string _createError = string.Empty;
+    private bool _creating;
+
+    protected override void OnInitialized()
+    {
+        _isLocal = Locality.IsLocalRequest();
+        Reload();
+    }
+
+    private void Reload()
+    {
+        _workspaces = WorkspaceStore.ListAll();
+        _libraries = LibraryStore.ListAll();
+        _librariesById = _libraries.ToDictionary(l => l.Id, StringComparer.OrdinalIgnoreCase);
+        ApplySearch();
+    }
+
+    private string LibraryCountLabel(int count)
+    {
+        if (count == 0)
+        {
+            return Lang.CurrentLanguage switch
+            {
+                "pt-BR" => "sem bibliotecas",
+                "es" => "sin bibliotecas",
+                _ => "no libraries",
+            };
+        }
+
+        return Lang.CurrentLanguage switch
+        {
+            "pt-BR" or "es" => $"{count} biblioteca{(count == 1 ? "" : "s")}",
+            _ => $"{count} librar{(count == 1 ? "y" : "ies")}",
+        };
+    }
+
+    private void OnSearchChanged() => ApplySearch();
+
+    private void ApplySearch()
+    {
+        if (string.IsNullOrWhiteSpace(_searchText))
+        {
+            _filteredWorkspaces = _workspaces;
+            return;
+        }
+
+        // Match against the three fields the user actually sees on the
+        // collapsed panel header — display name, kebab id, and the
+        // free-text description (so a user who only remembers "the one
+        // for the migration thing" can still find it).
+        var needle = _searchText.Trim();
+        _filteredWorkspaces = _workspaces
+            .Where(w =>
+                w.Name.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+                w.Id.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+                (w.Description?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToList();
+    }
+
+    private void OpenCreateDialog()
+    {
+        _createId = string.Empty;
+        _createName = string.Empty;
+        _createDescription = string.Empty;
+        _createSelectedLibraries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _createError = string.Empty;
+        _showCreateDialog = true;
+    }
+
+    private void CancelCreateDialog()
+    {
+        _showCreateDialog = false;
+    }
+
+    private async Task SubmitCreate()
+    {
+        _createError = string.Empty;
+        var rawId = (_createId ?? string.Empty).Trim();
+        var normalisedId = NormaliseId(rawId);
+        if (string.IsNullOrEmpty(normalisedId))
+        {
+            _createError = "Id is required (lowercase letters, digits, hyphens).";
+            return;
+        }
+
+        var payload = new
+        {
+            id = normalisedId,
+            name = string.IsNullOrWhiteSpace(_createName) ? null : _createName.Trim(),
+            description = string.IsNullOrWhiteSpace(_createDescription) ? null : _createDescription.Trim(),
+            libraries = _createSelectedLibraries.ToList(),
+        };
+
+        _creating = true;
+        try
+        {
+            CreateResult? result;
+            try
+            {
+                result = await Js.InvokeAsync<CreateResult?>("doxieOs.createWorkspace", payload);
+            }
+            catch (JSException ex)
+            {
+                _createError = $"Create failed: {ex.Message}";
+                return;
+            }
+
+            if (result is null)
+            {
+                _createError = "Create failed: no response from server.";
+                return;
+            }
+
+            if (result.Ok)
+            {
+                Snackbar.Add($"Created workspace \"{result.Name ?? normalisedId}\"", Severity.Success);
+                _showCreateDialog = false;
+                Reload();
+            }
+            else
+            {
+                _createError = string.IsNullOrWhiteSpace(result.Message)
+                    ? $"HTTP {result.Status}"
+                    : result.Message!;
+            }
+        }
+        finally
+        {
+            _creating = false;
+        }
+    }
+
+    private async Task DeleteWorkspace(Workspace ws)
+    {
+        var prompt = $"Permanently delete workspace \"{ws.Name}\"?\n\nThe folder {ws.Path} will be removed from disk. This cannot be undone.";
+
+        bool confirmed;
+        try
+        {
+            confirmed = await Js.InvokeAsync<bool>("doxieOs.confirm", prompt);
+        }
+        catch (JSException)
+        {
+            confirmed = false;
+        }
+        if (!confirmed) return;
+
+        DeleteResult? result;
+        try
+        {
+            result = await Js.InvokeAsync<DeleteResult?>("doxieOs.deleteWorkspace", ws.Id);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (result is null)
+        {
+            Snackbar.Add("Delete failed: no response from server.", Severity.Error);
+            return;
+        }
+
+        if (result.Ok)
+        {
+            Snackbar.Add($"Deleted workspace \"{ws.Name}\"", Severity.Success);
+            Reload();
+        }
+        else
+        {
+            var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
+            Snackbar.Add($"Could not delete workspace: {detail}", Severity.Error);
+        }
+    }
+
+    private async Task MountLibrary(Workspace ws)
+    {
+        if (!_pendingMountByWs.TryGetValue(ws.Id, out var libId) || string.IsNullOrEmpty(libId)) return;
+
+        var newSet = ws.MountedLibraryIds.ToList();
+        if (!newSet.Contains(libId, StringComparer.OrdinalIgnoreCase))
+        {
+            newSet.Add(libId);
+        }
+        await PersistMountedLibraries(ws, newSet, $"Mounted \"{_librariesById.GetValueOrDefault(libId)?.Name ?? libId}\" into {ws.Name}");
+        _pendingMountByWs.Remove(ws.Id);
+    }
+
+    private async Task UnmountLibrary(Workspace ws, string libId)
+    {
+        var newSet = ws.MountedLibraryIds.Where(x => !string.Equals(x, libId, StringComparison.OrdinalIgnoreCase)).ToList();
+        await PersistMountedLibraries(ws, newSet, $"Unmounted \"{_librariesById.GetValueOrDefault(libId)?.Name ?? libId}\" from {ws.Name}");
+    }
+
+    private async Task PersistMountedLibraries(Workspace ws, IReadOnlyList<string> libraryIds, string successMessage)
+    {
+        SetLibrariesResult? result;
+        try
+        {
+            result = await Js.InvokeAsync<SetLibrariesResult?>("doxieOs.setWorkspaceLibraries", ws.Id, libraryIds);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not update libraries: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (result is null)
+        {
+            Snackbar.Add("Could not update libraries: no response from server.", Severity.Error);
+            return;
+        }
+
+        if (result.Ok)
+        {
+            Snackbar.Add(successMessage, Severity.Success);
+            Reload();
+        }
+        else
+        {
+            var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
+            Snackbar.Add($"Could not update libraries: {detail}", Severity.Error);
+        }
+    }
+
+    private async Task StartConsole(Workspace ws)
+    {
+        CreateConsoleResult? result;
+        try
+        {
+            result = await Js.InvokeAsync<CreateConsoleResult?>("doxieOs.createConsole", ws.Id);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not start console: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (result is null)
+        {
+            Snackbar.Add("Could not start console: no response from server.", Severity.Error);
+            return;
+        }
+
+        if (result.Ok && !string.IsNullOrEmpty(result.Id))
+        {
+            Nav.NavigateTo($"/consoles?id={Uri.EscapeDataString(result.Id)}");
+        }
+        else
+        {
+            var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
+            Snackbar.Add($"Could not start console: {detail}", Severity.Error);
+        }
+    }
+
+    private async Task OpenWorkspace(Workspace ws, string target)
+    {
+        OpenResult? result;
+        try
+        {
+            result = await Js.InvokeAsync<OpenResult?>("doxieOs.openWorkspace", ws.Id, target);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not open: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (result is null)
+        {
+            Snackbar.Add("Could not open: no response from server.", Severity.Error);
+            return;
+        }
+
+        if (result.Ok)
+        {
+            // No success snackbar — the new window is feedback enough.
+        }
+        else
+        {
+            var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
+            Snackbar.Add($"Could not open {target}: {detail}", Severity.Error);
+        }
+    }
+
+    // Friendly "X ago" rendering for the workspace creation timestamp.
+    // Future timestamps (clock skew or test fixtures) just say "just now"
+    // rather than rendering an awkward negative duration.
+    private static string RelativeTime(DateTime utcWhen)
+    {
+        var delta = DateTime.UtcNow - utcWhen;
+        if (delta.TotalSeconds < 60) return "just now";
+        if (delta.TotalMinutes < 60) return $"{(int)delta.TotalMinutes} min ago";
+        if (delta.TotalHours < 24)
+        {
+            var hours = (int)delta.TotalHours;
+            return $"{hours} hour{(hours == 1 ? "" : "s")} ago";
+        }
+        if (delta.TotalDays < 7)
+        {
+            var days = (int)delta.TotalDays;
+            return $"{days} day{(days == 1 ? "" : "s")} ago";
+        }
+        if (delta.TotalDays < 30)
+        {
+            var weeks = (int)(delta.TotalDays / 7);
+            return $"{weeks} week{(weeks == 1 ? "" : "s")} ago";
+        }
+        if (delta.TotalDays < 365)
+        {
+            var months = (int)(delta.TotalDays / 30);
+            return $"{months} month{(months == 1 ? "" : "s")} ago";
+        }
+        var years = (int)(delta.TotalDays / 365);
+        return $"{years} year{(years == 1 ? "" : "s")} ago";
+    }
+
+    private static string NormaliseId(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return string.Empty;
+        var lower = raw.ToLowerInvariant();
+        var chars = new System.Text.StringBuilder(lower.Length);
+        foreach (var ch in lower)
+        {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))
+            {
+                chars.Append(ch);
+            }
+            else if (ch == '-' || char.IsWhiteSpace(ch))
+            {
+                chars.Append('-');
+            }
+        }
+        var collapsed = System.Text.RegularExpressions.Regex.Replace(chars.ToString(), "-+", "-");
+        return collapsed.Trim('-');
+    }
+
+    private sealed record CreateResult(bool Ok, int Status, string? Name, string? Message);
+    private sealed record DeleteResult(bool Ok, int Status, string? Message);
+    private sealed record SetLibrariesResult(bool Ok, int Status, string? Message);
+    private sealed record OpenResult(bool Ok, int Status, string? Message);
+    private sealed record CreateConsoleResult(bool Ok, int Status, string? Id, string? Label, string? Message);
+}

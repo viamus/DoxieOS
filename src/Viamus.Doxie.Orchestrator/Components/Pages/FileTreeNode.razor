@@ -1,0 +1,122 @@
+@using Viamus.Doxie.Orchestrator.Context
+
+@* Recursive tree node used by WorkspaceFiles.razor. Renders one folder
+   plus, when expanded, its immediate children — folders click-to-expand
+   into nested FileTreeNode instances, files click-to-load into the right
+   pane. Children are loaded synchronously from the in-memory store via
+   WorkspaceFileBrowser.ListFolder (no HTTP roundtrip needed since the
+   page lives in the same process). *@
+
+@if (Folder is null)
+{
+    <MudText Typo="Typo.caption" Color="Color.Default" Class="px-2">
+        (no entries)
+    </MudText>
+}
+else
+{
+    @foreach (var entry in Folder.Entries)
+    {
+        var childPath = string.IsNullOrEmpty(RelativePath) ? entry.Name : $"{RelativePath}/{entry.Name}";
+        var isExpanded = entry.IsDir && ExpandedFolders.Contains(childPath);
+        var isSelected = !entry.IsDir && string.Equals(childPath, CurrentRelativePath, StringComparison.Ordinal);
+
+        <div class="d-flex align-center"
+             style="@($"padding-left: {Depth * 16 + 4}px; cursor: pointer; user-select: none; border-radius: 4px;{(isSelected ? " background: var(--mud-palette-primary-hover);" : "")}")"
+             @onclick="@(() => OnEntryClick(entry, childPath))">
+            @if (entry.IsDir)
+            {
+                <MudIcon Icon="@(isExpanded ? Icons.Material.Filled.ArrowDropDown : Icons.Material.Filled.ArrowRight)"
+                         Size="Size.Small"
+                         Style="opacity: 0.7;" />
+                <MudIcon Icon="@(isExpanded ? Icons.Material.Filled.FolderOpen : Icons.Material.Filled.Folder)"
+                         Color="Color.Primary"
+                         Size="Size.Small"
+                         Class="me-1" />
+            }
+            else
+            {
+                <span style="width: 20px; display: inline-block;"></span>
+                <MudIcon Icon="@Icons.Material.Filled.InsertDriveFile" Size="Size.Small" Class="me-1" Style="opacity: 0.7;" />
+            }
+            <MudText Typo="Typo.body2"
+                     Style="@($"font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.82rem;{(isSelected ? " font-weight: 600;" : "")}")">
+                @entry.Name
+            </MudText>
+        </div>
+
+        @if (entry.IsDir && isExpanded)
+        {
+            @if (!_loadedChildren.TryGetValue(childPath, out var sub))
+            {
+                sub = LoadChildren(childPath);
+                _loadedChildren[childPath] = sub;
+            }
+            <FileTreeNode Folder="sub.Listing"
+                          RelativePath="@childPath"
+                          Depth="@(Depth + 1)"
+                          ExpandedFolders="ExpandedFolders"
+                          ShowHidden="ShowHidden"
+                          WorkspaceRoot="@WorkspaceRoot"
+                          CurrentRelativePath="@CurrentRelativePath"
+                          OnFileClick="OnFileClick"
+                          OnFolderToggle="OnFolderToggle" />
+            @if (sub.Error is not null)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="ma-1" Style="@($"margin-left: {(Depth + 1) * 16}px;")">
+                    @sub.Error
+                </MudAlert>
+            }
+        }
+    }
+    @if (Folder.Truncated)
+    {
+        <div style="@($"padding-left: {Depth * 16 + 4}px; opacity: 0.7;")">
+            <MudText Typo="Typo.caption">… (folder has more entries — showing first @WorkspaceFileBrowser.MaxEntriesPerFolder)</MudText>
+        </div>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public WorkspaceFileBrowser.TreeListing? Folder { get; set; }
+    [Parameter, EditorRequired] public string RelativePath { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public int Depth { get; set; }
+    [Parameter, EditorRequired] public HashSet<string> ExpandedFolders { get; set; } = new();
+    [Parameter, EditorRequired] public bool ShowHidden { get; set; }
+    [Parameter, EditorRequired] public string WorkspaceRoot { get; set; } = string.Empty;
+    [Parameter] public string? CurrentRelativePath { get; set; }
+    [Parameter] public EventCallback<string> OnFileClick { get; set; }
+    [Parameter] public EventCallback<string> OnFolderToggle { get; set; }
+
+    // Per-instance cache of children listings — avoids re-enumerating the
+    // filesystem every time Blazor re-renders the parent. Re-keyed when
+    // ShowHidden flips so toggling that switch refreshes everything.
+    private readonly Dictionary<string, (WorkspaceFileBrowser.TreeListing? Listing, string? Error)> _loadedChildren = new(StringComparer.Ordinal);
+    private bool _lastShowHidden;
+
+    protected override void OnParametersSet()
+    {
+        if (_lastShowHidden != ShowHidden)
+        {
+            _lastShowHidden = ShowHidden;
+            _loadedChildren.Clear();
+        }
+    }
+
+    private async Task OnEntryClick(WorkspaceFileBrowser.TreeEntry entry, string childPath)
+    {
+        if (entry.IsDir)
+        {
+            await OnFolderToggle.InvokeAsync(childPath);
+        }
+        else
+        {
+            await OnFileClick.InvokeAsync(childPath);
+        }
+    }
+
+    private (WorkspaceFileBrowser.TreeListing? Listing, string? Error) LoadChildren(string folderPath)
+    {
+        return WorkspaceFileBrowser.ListFolder(WorkspaceRoot, folderPath, ShowHidden);
+    }
+}

@@ -1,0 +1,577 @@
+@page "/libraries"
+@inject ILibraryStore LibraryStore
+@inject IDoxieCatalogStore CatalogStore
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+@using Viamus.Doxie.Orchestrator.Common
+
+<PageTitle>@Lang["Libraries.Title"] - DoxieOS</PageTitle>
+
+<div class="doxie-page libraries-page">
+<MudBreadcrumbs Items="Breadcrumbs" Class="px-0" />
+
+<div class="doxie-page-header libraries-header">
+    <div>
+        <div class="doxie-page-title">
+            <span class="doxie-page-title-icon">
+                <MudIcon Icon="@Icons.Material.Filled.MenuBook" Size="Size.Small" />
+            </span>
+            <MudText Typo="Typo.h3">@Lang["Libraries.Title"]</MudText>
+        </div>
+        <MudText Typo="Typo.subtitle1" Class="doxie-page-subtitle">
+            @Lang["Libraries.Subtitle"]
+        </MudText>
+    </div>
+    <div class="libraries-metrics" aria-label="Library summary">
+        <div class="libraries-metric">
+            <span>@libraries.Count</span>
+            <label>@Lang["Libraries.Title"]</label>
+        </div>
+        <div class="libraries-metric">
+            <span>@libraries.Sum(l => l.Memories.Count)</span>
+            <label>@Lang["Common.Memories"]</label>
+        </div>
+        <div class="libraries-metric">
+            <span>@libraries.Sum(FileCount)</span>
+            <label>@Lang["Common.Files"]</label>
+        </div>
+    </div>
+</div>
+
+@if (libraries.Count > 0)
+{
+    <div class="libraries-toolbar doxie-surface">
+        <MudTextField @bind-Value="_searchText"
+                      @bind-Value:after="@OnSearchChanged"
+                      Placeholder="@Lang["Libraries.SearchPlaceholder"]"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Clearable="true"
+                      Immediate="true"
+                      DebounceInterval="150"
+                      Class="libraries-toolbar-control" />
+        @if (_catalogs.Count > 1)
+        {
+            <MudSelect T="string"
+                       Value="_selectedCatalogId"
+                       ValueChanged="OnCatalogChanged"
+                       Variant="Variant.Outlined"
+                       Dense="true"
+                       Margin="Margin.Dense"
+                       Placeholder="@Lang["Common.AllCatalogs"]"
+                       Adornment="Adornment.Start"
+                       AdornmentIcon="@Icons.Material.Filled.FolderSpecial"
+                       Class="libraries-toolbar-control">
+                <MudSelectItem T="string" Value="@AllCatalogs">@Lang["Common.AllCatalogs"]</MudSelectItem>
+                @foreach (var catalog in _catalogs)
+                {
+                    <MudSelectItem T="string" Value="@catalog.Id">@catalog.Name</MudSelectItem>
+                }
+            </MudSelect>
+        }
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.UploadFile"
+                   Class="libraries-import"
+                   OnClick="ImportLibrary">
+            @Lang["Libraries.Import"]
+        </MudButton>
+    </div>
+}
+
+@if (libraries.Count == 0)
+{
+    <MudPaper Class="pa-6 doxie-empty-state libraries-empty" Elevation="0">
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-4">
+            @Lang["Libraries.Empty"]
+        </MudText>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.UploadFile"
+                       OnClick="ImportLibrary">
+                @Lang["Libraries.Import"]
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+}
+else
+{
+    @if (FilteredLibraries.Count == 0)
+    {
+        <MudPaper Class="pa-6 doxie-empty-state" Elevation="0">
+            <MudText Typo="Typo.body2" Color="Color.Default">
+                @if (!string.IsNullOrWhiteSpace(_searchText))
+                {
+                    @Lang["Libraries.NoMatch"]
+                }
+                else
+                {
+                    @Lang["Libraries.NoMatch"]
+                }
+            </MudText>
+        </MudPaper>
+    }
+    else
+    {
+    <MudExpansionPanels MultiExpansion="true" Elevation="0" Dense="false" Class="libraries-list">
+        @foreach (var library in FilteredLibraries)
+        {
+            <MudExpansionPanel Class="library-panel">
+                <TitleContent>
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="library-panel-title">
+                        <span class="library-avatar">
+                            <MudIcon Icon="@Icons.Material.Filled.MenuBook" Size="Size.Small" />
+                        </span>
+                        <MudStack Spacing="0" Class="library-title-copy">
+                            <MudText Typo="Typo.h6">@library.Name</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default" Class="doxie-mono">@library.Id</MudText>
+                        </MudStack>
+                        <MudSpacer />
+                        <div class="library-chips">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Article">@library.Memories.Count memor@(library.Memories.Count == 1 ? "y" : "ies")</MudChip>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.InsertDriveFile">@FileCount(library) file@(FileCount(library) == 1 ? "" : "s")</MudChip>
+                        </div>
+                        @if (_catalogs.Count > 1)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.FolderSpecial">@library.CatalogName</MudChip>
+                        }
+                        <span @onclick:stopPropagation="true">
+                            <MudTooltip Text="@Lang["Libraries.ExportZip"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.FileDownload"
+                                               Size="Size.Small"
+                                               Color="Color.Default"
+                                               Href="@($"/api/libraries/{library.Id}/export?catalogId={Uri.EscapeDataString(library.CatalogId)}")" />
+                            </MudTooltip>
+                        </span>
+                        <span @onclick:stopPropagation="true">
+                            <MudTooltip Text="@Lang["Libraries.Delete"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                               Size="Size.Small"
+                                               Color="Color.Error"
+                                               OnClick="@(() => DeleteLibrary(library))" />
+                            </MudTooltip>
+                        </span>
+                    </MudStack>
+                </TitleContent>
+                <ChildContent>
+                    <div class="library-panel-body">
+                        @if (!string.IsNullOrWhiteSpace(library.Description))
+                        {
+                            <MudText Typo="Typo.body2" Class="library-description">@library.Description</MudText>
+                        }
+
+                        <div class="library-detail-grid">
+                            <section class="library-detail-section">
+                                <div class="library-section-heading">
+                                    <MudIcon Icon="@Icons.Material.Filled.Article" Color="Color.Primary" Size="Size.Small" />
+                                    <MudText Typo="Typo.subtitle2">@Lang["Common.Memories"]</MudText>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@library.Memories.Count</MudChip>
+                                </div>
+
+                                @if (library.Memories.Count == 0)
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Default">@Lang["Libraries.NoMemoryFiles"]</MudText>
+                                }
+                                else
+                                {
+                                    @foreach (var typeGroup in library.Memories.GroupBy(m => m.Type).OrderBy(g => g.Key))
+                                    {
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="library-type-heading">
+                                            <MudIcon Icon="@TypeIcon(typeGroup.Key)" Color="Color.Primary" Size="Size.Small" />
+                                            <MudText Typo="Typo.subtitle2">@TypeLabel(typeGroup.Key)</MudText>
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@typeGroup.Count()</MudChip>
+                                        </MudStack>
+
+                                        <MudExpansionPanels MultiExpansion="true" Elevation="0" Dense="true" Class="library-memory-list">
+                                            @foreach (var memory in typeGroup)
+                                            {
+                                                <MudExpansionPanel Class="library-memory-panel">
+                                                    <TitleContent>
+                                                        <MudStack Spacing="0">
+                                                            <MudText Typo="Typo.body1">@memory.Name</MudText>
+                                                            @if (!string.IsNullOrWhiteSpace(memory.Description))
+                                                            {
+                                                                <MudText Typo="Typo.caption" Color="Color.Default">@memory.Description</MudText>
+                                                            }
+                                                        </MudStack>
+                                                    </TitleContent>
+                                                    <ChildContent>
+                                                        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="memory-command-row">
+                                                            <MudText Typo="Typo.caption" Color="Color.Default" Class="doxie-mono">@memory.FileName</MudText>
+                                                            <MudStack Row="true" Spacing="1">
+                                                                <MudTooltip Text="Copy memory markdown">
+                                                                    <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                                                                   Size="Size.Small"
+                                                                                   Color="Color.Default"
+                                                                                   OnClick="@(() => CopyMemory(memory))" />
+                                                                </MudTooltip>
+                                                                <MudTooltip Text="Download memory markdown">
+                                                                    <MudIconButton Icon="@Icons.Material.Filled.Download"
+                                                                                   Size="Size.Small"
+                                                                                   Color="Color.Default"
+                                                                                   OnClick="@(() => DownloadMemory(memory))" />
+                                                                </MudTooltip>
+                                                            </MudStack>
+                                                        </MudStack>
+                                                        <pre class="memory-body">@memory.Content</pre>
+                                                    </ChildContent>
+                                                </MudExpansionPanel>
+                                            }
+                                        </MudExpansionPanels>
+                                    }
+                                }
+                            </section>
+
+                            <section class="library-detail-section">
+                                <div class="library-section-heading">
+                                    <MudIcon Icon="@Icons.Material.Filled.AccountTree" Color="Color.Primary" Size="Size.Small" />
+                                    <MudText Typo="Typo.subtitle2">@Lang["Common.Files"]</MudText>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@FileCount(library)</MudChip>
+                                    @if (FolderCount(library) > 0)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@FolderCount(library) folder@(FolderCount(library) == 1 ? "" : "s")</MudChip>
+                                    }
+                                </div>
+
+                                @if (library.Files.Count == 0)
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Default">@Lang["Libraries.NoFiles"]</MudText>
+                                }
+                                else
+                                {
+                                    <div class="library-files-table">
+                            <div class="library-tree-header">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                    <MudText Typo="Typo.caption" Color="Color.Default" Style="flex: 1; padding-left: 24px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">@Lang["Common.Name"]</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Default" Class="library-col-kind" Style="font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">@Lang["Common.Type"]</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Default" Class="library-col-size" Style="font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">@Lang["Common.Size"]</MudText>
+                                    <div class="library-col-action" />
+                                </MudStack>
+                            </div>
+                            @foreach (var file in library.Files)
+                            {
+                                var key = $"{library.Id}/{file.RelativePath}";
+                                var isExpanded = _expandedFiles.Contains(key);
+                                <div>
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="library-tree-row" Style="@IndentStyle(file)">
+                                        <MudIcon Icon="@FileIcon(file)" Size="Size.Small" Color="@(file.IsDirectory ? Color.Primary : Color.Default)" Style="flex-shrink: 0;" />
+                                        <MudText Typo="Typo.body2" Class="library-file-path" Style="flex: 1; min-width: 0;">@file.Name</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Default" Class="library-col-kind">@FileKind(file)</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Default" Class="library-col-size">@FormatSize(file.SizeBytes)</MudText>
+                                        @if (file.Content is not null)
+                                        {
+                                            <MudTooltip Text="@(isExpanded ? "Collapse" : "View content")">
+                                                <MudIconButton Icon="@(isExpanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                               Size="Size.Small"
+                                                               Color="Color.Default"
+                                                               Class="library-col-action"
+                                                               OnClick="@(() => ToggleFileExpand(key))" />
+                                            </MudTooltip>
+                                        }
+                                        else
+                                        {
+                                            <div class="library-col-action" />
+                                        }
+                                    </MudStack>
+                                    @if (isExpanded && file.Content is not null)
+                                    {
+                                        <div style="@ContentIndentStyle(file)">
+                                            <pre class="memory-body">@file.Content</pre>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                                }
+                            </section>
+                        </div>
+                    </div>
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
+    }
+}
+</div>
+
+@code {
+    private List<BreadcrumbItem> Breadcrumbs =>
+    [
+        new BreadcrumbItem(Lang["Common.Home"], href: "/"),
+        new BreadcrumbItem(Lang["Libraries.Title"], href: null, disabled: true),
+    ];
+
+    private IReadOnlyList<Library> libraries = Array.Empty<Library>();
+    private IReadOnlyList<DoxieCatalogRoot> _catalogs = Array.Empty<DoxieCatalogRoot>();
+    private string _importCatalogId = DoxieCatalogStore.DefaultCatalogId;
+    private string _selectedCatalogId = AllCatalogs;
+    private string _searchText = string.Empty;
+    private const string AllCatalogs = "__all";
+
+    private IReadOnlyList<Library> FilteredLibraries =>
+        libraries
+            .Where(MatchesCatalog)
+            .Where(MatchesSearch)
+            .ToList();
+
+    protected override void OnInitialized()
+    {
+        _catalogs = CatalogStore.ListCatalogs();
+        libraries = LibraryStore.ListAll();
+    }
+
+    private void OnCatalogChanged(string value)
+    {
+        _selectedCatalogId = string.IsNullOrWhiteSpace(value) ? AllCatalogs : value;
+    }
+
+    private void OnSearchChanged()
+    {
+    }
+
+    private bool MatchesCatalog(Library library) =>
+        string.Equals(_selectedCatalogId, AllCatalogs, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(library.CatalogId, _selectedCatalogId, StringComparison.OrdinalIgnoreCase);
+
+    private bool MatchesSearch(Library library)
+    {
+        var needle = _searchText?.Trim();
+        if (string.IsNullOrWhiteSpace(needle)) return true;
+
+        return library.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || library.Id.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || library.CatalogName.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || library.CatalogId.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || (library.Description?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+            || library.Memories.Any(m =>
+                m.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || m.FileName.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || (m.Description?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false))
+            || library.Files.Any(f =>
+                f.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || f.RelativePath.Contains(needle, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string TypeIcon(MemoryType type) => type switch
+    {
+        MemoryType.User => Icons.Material.Filled.PersonOutline,
+        MemoryType.Feedback => Icons.Material.Filled.Tune,
+        MemoryType.Project => Icons.Material.Filled.Folder,
+        MemoryType.Reference => Icons.Material.Filled.Link,
+        _ => Icons.Material.Filled.HelpOutline,
+    };
+
+    private static string TypeLabel(MemoryType type) => type switch
+    {
+        MemoryType.User => "User",
+        MemoryType.Feedback => "Feedback",
+        MemoryType.Project => "Project",
+        MemoryType.Reference => "Reference",
+        _ => "Unknown",
+    };
+
+    private static int FileCount(Library library) => library.Files.Count(f => !f.IsDirectory);
+
+    private static int FolderCount(Library library) => library.Files.Count(f => f.IsDirectory);
+
+    private readonly HashSet<string> _expandedFiles = new(StringComparer.Ordinal);
+
+    private void ToggleFileExpand(string key)
+    {
+        if (!_expandedFiles.Remove(key))
+            _expandedFiles.Add(key);
+    }
+
+    private static string IndentStyle(LibraryFileEntry file)
+    {
+        var depth = file.RelativePath.Count(c => c == '/');
+        return depth == 0 ? string.Empty : $"padding-left: {depth * 18}px;";
+    }
+
+    private static string ContentIndentStyle(LibraryFileEntry file)
+    {
+        var depth = file.RelativePath.Count(c => c == '/');
+        return $"padding: 0 8px 8px {depth * 18 + 28}px;";
+    }
+
+    private static string FileIcon(LibraryFileEntry file)
+    {
+        if (file.IsDirectory) return Icons.Material.Filled.Folder;
+        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+        return ext switch
+        {
+            ".json" => Icons.Material.Filled.DataObject,
+            ".md" or ".markdown" => Icons.Material.Filled.Article,
+            ".yml" or ".yaml" => Icons.Material.Filled.Settings,
+            ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".svg" => Icons.Material.Filled.Image,
+            ".zip" or ".gz" or ".tar" or ".7z" => Icons.Material.Filled.Inventory2,
+            _ => Icons.Material.Filled.InsertDriveFile,
+        };
+    }
+
+    private static string FileKind(LibraryFileEntry file)
+    {
+        if (file.IsDirectory) return "folder";
+        var ext = Path.GetExtension(file.Name);
+        return string.IsNullOrWhiteSpace(ext) ? "file" : ext.TrimStart('.').ToLowerInvariant();
+    }
+
+    private static string FormatSize(long? bytes)
+    {
+        if (bytes is null) return "";
+        var value = (double)bytes.Value;
+        string[] units = ["B", "KB", "MB", "GB"];
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return unit == 0 ? $"{bytes.Value} B" : $"{value:0.#} {units[unit]}";
+    }
+
+    private static string ReconstructMarkdown(MemoryEntry memory)
+    {
+        var typeStr = memory.Type.ToString().ToLowerInvariant();
+        return $"---\nname: {memory.Name}\ndescription: {memory.Description}\ntype: {typeStr}\n---\n\n{memory.Content}";
+    }
+
+    private async Task CopyMemory(MemoryEntry memory)
+    {
+        var content = ReconstructMarkdown(memory);
+        try
+        {
+            var ok = await Js.InvokeAsync<bool>("doxieOs.copyText", content);
+            Snackbar.Add(
+                ok ? $"Copied {memory.FileName} to clipboard" : $"Could not copy {memory.FileName}",
+                ok ? Severity.Success : Severity.Warning);
+        }
+        catch (JSException)
+        {
+            Snackbar.Add($"Could not copy {memory.FileName}", Severity.Warning);
+        }
+    }
+
+    private async Task DownloadMemory(MemoryEntry memory)
+    {
+        var content = ReconstructMarkdown(memory);
+        try
+        {
+            await Js.InvokeVoidAsync("doxieOs.downloadText", memory.FileName, content);
+        }
+        catch (JSException)
+        {
+            Snackbar.Add($"Could not download {memory.FileName}", Severity.Warning);
+        }
+    }
+
+    private async Task ImportLibrary()
+    {
+        var catalogId = await ChooseImportCatalog();
+        if (string.IsNullOrWhiteSpace(catalogId)) return;
+        _importCatalogId = catalogId;
+
+        UploadResult? result;
+        try
+        {
+            result = await Js.InvokeAsync<UploadResult?>("doxieOs.pickAndUploadLibrary", false, catalogId);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Library import failed: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (result is null) return;
+
+        if (result.Ok)
+        {
+            Snackbar.Add($"Imported library from {result.Filename}", Severity.Success);
+            _catalogs = CatalogStore.ListCatalogs();
+            libraries = LibraryStore.ListAll();
+            StateHasChanged();
+        }
+        else
+        {
+            var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
+            Snackbar.Add($"Library import failed: {detail}", Severity.Error);
+        }
+    }
+
+    private async Task<string?> ChooseImportCatalog()
+    {
+        if (_catalogs.Count <= 1)
+        {
+            return _catalogs.FirstOrDefault()?.Id ?? DoxieCatalogStore.DefaultCatalogId;
+        }
+
+        var parameters = new DialogParameters<LibraryImportDialog>
+        {
+            { x => x.Catalogs, _catalogs },
+            { x => x.CurrentCatalogId, _importCatalogId },
+        };
+        var dialog = await DialogService.ShowAsync<LibraryImportDialog>(
+            "Import library",
+            parameters,
+            new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Small, FullWidth = true });
+        var result = await dialog.Result;
+        return result is { Canceled: false, Data: string selected } ? selected : null;
+    }
+
+    private async Task DeleteLibrary(Library library)
+    {
+        var memoriesNote = library.Memories.Count == 1 ? "1 memory" : $"{library.Memories.Count} memories";
+        var prompt = $"Permanently delete \"{library.Name}\" ({memoriesNote})?\n\nThe folder .doxie/libraries/{library.Id}/ will be removed from disk. This cannot be undone.";
+
+        bool confirmed;
+        try
+        {
+            confirmed = await Js.InvokeAsync<bool>("doxieOs.confirm", prompt);
+        }
+        catch (JSException)
+        {
+            confirmed = false;
+        }
+        if (!confirmed) return;
+
+        DeleteResult? result;
+        try
+        {
+            result = await Js.InvokeAsync<DeleteResult?>("doxieOs.deleteLibrary", library.Id, library.CatalogId);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (result is null)
+        {
+            Snackbar.Add("Delete failed: no response from server", Severity.Error);
+            return;
+        }
+
+        if (result.Ok)
+        {
+            Snackbar.Add($"Deleted library \"{library.Name}\"", Severity.Success);
+            _catalogs = CatalogStore.ListCatalogs();
+            libraries = LibraryStore.ListAll();
+            StateHasChanged();
+        }
+        else
+        {
+            var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
+            Snackbar.Add($"Could not delete library: {detail}", Severity.Error);
+        }
+    }
+
+    private sealed record DeleteResult(bool Ok, int Status, string? Message);
+
+    private sealed record UploadResult(bool Ok, int Status, string Filename, string? Message);
+}

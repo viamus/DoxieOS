@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#D97757" />
+    <meta name="application-name" content="DoxieOS" />
+    <meta name="apple-mobile-web-app-title" content="DoxieOS" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="_content/MudBlazor/MudBlazor.min.css" />
+    <link rel="stylesheet" href="@Assets["Viamus.Doxie.Orchestrator.styles.css"]" />
+    <link rel="stylesheet" href="release-notes.css" />
+    <!-- xterm.js — pinned versions, served from jsdelivr. Used by /consoles
+         to render a real terminal in the browser. CSS first, JS at body
+         end so the term reference is ready when our terminals.js attaches. -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@@xterm/xterm@5.5.0/css/xterm.min.css" />
+    <!-- highlight.js — used by /workspaces/{id}/files to syntax-color code
+         files in the right pane. Pinned to v11.9.0; the "github" theme
+         matches MudBlazor's default light look. -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+    <ImportMap />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <ReconnectModal />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+    <!-- highlight.js — single bundle that includes the engine plus all
+         supported languages (~700 KB). Used by /workspaces/{id}/files to
+         color code files; doxieos.highlightCode() calls
+         hljs.highlightElement on the rendered <pre><code>. -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <!-- lottie-player — registers <lottie-player> as a custom element so
+         the Release Notes modal can render Lottie JSON animations
+         directly without JS interop boilerplate. Pinned to 2.0.13. -->
+    <script src="https://unpkg.com/@@lottiefiles/lottie-player@2.0.13/dist/lottie-player.js"></script>
+    <script src="js/doxieos.js"></script>
+    <script src="js/terminals.js"></script>
+    <script src="js/voice.js"></script>
+</body>
+
+</html>

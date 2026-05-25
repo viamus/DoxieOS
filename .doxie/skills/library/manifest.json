@@ -1,0 +1,62 @@
+{
+  "id": "library",
+  "description": "Build reusable DoxieOS libraries (memory packs) under .doxie/libraries/\u003Cid\u003E/. Subcommands - \u0060from-files\u0060 ingests N source files, \u0060from-current\u0060 snapshots the running workspace\u0027s memories, \u0060interactive\u0060 walks the user through authoring. The skill validates args, builds a JSON input, and dispatches the \u0060library\u0060 agent (a leaf worker) which is the only writer to disk. Output is always a folder containing one library.json manifest plus N memory .md files with valid YAML frontmatter.",
+  "displayName": "Library",
+  "category": "Doxie",
+  "requirements": [],
+  "modes": {
+    "from-files": {
+      "fields": [
+        {
+          "id": "id",
+          "label": "Library ID",
+          "placeholder": "personal-prefs",
+          "required": true
+        },
+        {
+          "id": "context",
+          "label": "Intro prompt",
+          "placeholder": "Library of .NET conventions used across the organization client projects; consumer is a dev bootstrapping a new repo.",
+          "required": false
+        },
+        {
+          "id": "paths",
+          "label": "Source paths (files or folders)",
+          "placeholder": "C:/path/notes.md C:/path/folder/",
+          "required": true
+        }
+      ],
+      "argumentsTemplate": "from-files --id {id} --context \u0022{context}\u0022 {paths}",
+      "keepSessionAlive": false,
+      "hidden": false,
+      "description": "Synthesise a new library from arbitrary source files or directories. Folders are walked recursively for .md and .txt files. Provide an intro prompt to bias classification and naming.",
+      "requiresWorkspace": false
+    },
+    "from-current": {
+      "fields": [
+        {
+          "id": "id",
+          "label": "Library ID",
+          "placeholder": "snapshot-2026-05",
+          "required": true
+        },
+        {
+          "id": "context",
+          "label": "Intro prompt",
+          "placeholder": "Snapshot of my preferred tooling defaults for a fresh workspace.",
+          "required": false
+        }
+      ],
+      "argumentsTemplate": "from-current --id {id} --context \u0022{context}\u0022",
+      "keepSessionAlive": false,
+      "hidden": false,
+      "description": "Snapshot the running workspace\u0027s auto-memory directory into a reusable library. Optional intro prompt biases the manifest description.",
+      "requiresWorkspace": false
+    },
+    "interactive": {
+      "keepSessionAlive": false,
+      "hidden": true,
+      "requiresWorkspace": false
+    }
+  }
+}

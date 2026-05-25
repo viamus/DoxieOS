@@ -1,0 +1,19 @@
+<Project>
+  <!--
+    Pty.Net 0.1.16-pre ships Windows native helpers under lib/netstandard2.0.
+    NuGet therefore exposes them as compile/runtime assets, and MSBuild's
+    ResolveAssemblyReference tries to inspect them as managed assemblies,
+    producing MSB3246 ("PE image does not have metadata"). Keep Pty.Net.dll as
+    a normal reference, but remove the native helpers from the managed
+    reference item list before RAR runs.
+  -->
+  <Target Name="RemovePtyNetNativeHelpersFromManagedReferences"
+          BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)"
+                 Condition="'%(Reference.NuGetPackageId)' == 'Pty.Net'
+                            and ('%(Reference.Filename)' == 'winpty'
+                                 or '%(Reference.Filename)' == 'winpty-agent')" />
+    </ItemGroup>
+  </Target>
+</Project>

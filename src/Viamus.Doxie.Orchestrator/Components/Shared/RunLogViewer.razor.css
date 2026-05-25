@@ -1,0 +1,121 @@
+.run-log-viewer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.run-log-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.run-log-search {
+    flex: 1 1 260px;
+    min-width: 180px;
+}
+
+.run-log-summary {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.run-log-panel {
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0)),
+        #151513;
+    color: #E8E6DD;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.45;
+}
+
+.run-log-line {
+    display: grid;
+    grid-template-columns: 54px 58px 38px minmax(0, 1fr);
+    column-gap: 10px;
+    align-items: start;
+    padding: 6px 9px;
+    border-left: 3px solid transparent;
+    border-radius: 4px;
+}
+
+.run-log-line + .run-log-line {
+    margin-top: 3px;
+}
+
+.run-log-line-stdout:nth-child(odd) {
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.run-log-line-stderr {
+    border-left-color: #D97757;
+    background: rgba(217, 119, 87, 0.09);
+}
+
+.run-log-line-system {
+    border-left-color: #7CB7A3;
+    background: rgba(124, 183, 163, 0.08);
+}
+
+.run-log-line-structural {
+    margin-top: 8px;
+}
+
+.run-log-line-compacted {
+    color: rgba(232, 230, 221, 0.7);
+    font-style: italic;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.run-log-number,
+.run-log-time,
+.run-log-meta {
+    color: rgba(232, 230, 221, 0.48);
+    user-select: none;
+    white-space: nowrap;
+}
+
+.run-log-meta {
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
+
+.run-log-text {
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.run-log-text mark {
+    color: #151513;
+    background: #F3C36B;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+@media (max-width: 720px) {
+    .run-log-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .run-log-summary {
+        white-space: normal;
+    }
+
+    .run-log-line {
+        grid-template-columns: 48px 54px minmax(0, 1fr);
+        row-gap: 2px;
+    }
+
+    .run-log-meta {
+        display: none;
+    }
+}

@@ -1,0 +1,431 @@
+@page "/agents/new"
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject IWorkspaceStore WorkspaceStore
+@inject IAgentCatalog AgentCatalog
+@inject IDoxieCatalogStore CatalogStore
+@inject IDialogService DialogService
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@implements IAsyncDisposable
+
+@* DoxieOS Agent Builder — interactive PTY console of `claude` running
+   inside an allocated builder sandbox, with a live preview of the
+   draft manifest the conversation produces.
+
+   Architecture:
+   - Left pane: xterm bound to a real ConsoleSession (Kind=Builder)
+     via the existing /hubs/console SignalR bridge. The /agent-builder
+     skill runs inside the PTY and writes ./.draft/manifest.json.
+   - Right pane: polls /api/builder/{sessionId}/manifest every ~1.5s
+     and re-renders the manifest fields. Shows friendly empty / invalid
+     states while the user gets going.
+   - Save: POSTs /api/builder/{sessionId}/save which promotes the
+     manifest into the canonical agents catalog and redirects.
+
+   No mock data. No fake chat. Closing the page leaves the underlying
+   console session alive (visible in this page's "Resume" sidebar on
+   next visit). *@
+
+<PageTitle>Build an agent — DoxieOS</PageTitle>
+
+<MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+
+@* Top bar: title on the left, action buttons on the right. The H3
+   and every button get nowrap + flex-shrink:0 so the row never
+   squashes their text. Long session metadata (sandbox tag, attached
+   workspace, edit marker) lives on its own row below so chips can
+   wrap freely without competing with the title for horizontal space. *@
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2"
+          Style="flex-wrap: nowrap;">
+    <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Color="Color.Primary" />
+    <MudText Typo="Typo.h3" Style="white-space: nowrap; flex-shrink: 0;">Build an agent</MudText>
+    <MudSpacer />
+    <MudButton Variant="Variant.Outlined"
+               Color="Color.Default"
+               StartIcon="@Icons.Material.Filled.Close"
+               Href="/agents"
+               Style="white-space: nowrap; flex-shrink: 0;">Cancel</MudButton>
+    @if (_session is not null)
+    {
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Error"
+                   StartIcon="@Icons.Material.Filled.DeleteOutline"
+                   OnClick="HandleDiscard"
+                   Disabled="@_discarding"
+                   Style="white-space: nowrap; flex-shrink: 0;">
+            @(_discarding ? "Ending…" : "End session")
+        </MudButton>
+    }
+    <MudButton Variant="Variant.Filled"
+               Color="Color.Primary"
+               StartIcon="@Icons.Material.Filled.Save"
+               Disabled="@(!CanSave())"
+               OnClick="HandleSave"
+               Style="white-space: nowrap; flex-shrink: 0;">@(_saving ? "Saving…" : "Save agent")</MudButton>
+</MudStack>
+
+@if (_session is not null)
+{
+    <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-3 flex-wrap">
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                 Style="font-family: 'Cascadia Code', Consolas, monospace;">@_session.SandboxTag</MudChip>
+        @if (!string.IsNullOrEmpty(_session.AttachedWorkspaceId))
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                     Icon="@Icons.Material.Filled.Folder">@_session.AttachedWorkspaceId</MudChip>
+        }
+        @if (!string.IsNullOrEmpty(_session.EditAgentId))
+        {
+            <MudTooltip Text="@($"Editing existing agent: {_session.EditAgentId}")">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning"
+                         Icon="@Icons.Material.Filled.EditNote">editing · @TruncateMid(_session.EditAgentId!, 28)</MudChip>
+            </MudTooltip>
+        }
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                 Icon="@Icons.Material.Filled.FolderSpecial">@SelectedCatalogLabel()</MudChip>
+    </MudStack>
+}
+
+@if (_session is null)
+{
+    @* Empty state — pick from existing sessions or start a new one. *@
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudStack Spacing="3" AlignItems="AlignItems.Center">
+            <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Color="Color.Primary"
+                     Style="font-size: 56px;" />
+            @if (!string.IsNullOrEmpty(EditAgentId))
+            {
+                <MudText Typo="Typo.h4" Align="Align.Center">Edit <code>@EditAgentId</code></MudText>
+                <MudText Typo="Typo.body2" Color="Color.Default" Align="Align.Center" Style="max-width: 540px;">
+                    Allocates a fresh sandbox, pre-seeds <code>./.draft/manifest.json</code> from the existing agent, and tells Claude to enrich it from the original <code>SKILL.md</code> before iterating with you. <strong>Save will overwrite</strong> the existing agent.
+                </MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.h4" Align="Align.Center">Start a builder session</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Default" Align="Align.Center" Style="max-width: 540px;">
+                    Allocates a fresh sandbox under <code>./.sandbox/builder-agent-N/</code>, spawns a real <code>claude</code> in it, and auto-loads the <code>/agent-builder</code> skill. Tell Claude what you want and watch the draft fill in on the right.
+                </MudText>
+            }
+
+            @* Optional workspace attach. When set, the workspace's path
+               + its provider context files (mounted libraries) ship
+               with the session so claude can ground its proposal in real
+               project context. Leave at "none" for a fully isolated
+               builder session. *@
+            <MudPaper Elevation="0" Class="pa-3" Style="border: 1px solid var(--mud-palette-divider); border-radius: 6px; max-width: 540px; width: 100%;">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                    <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Default" Size="Size.Small" />
+                    <MudText Typo="Typo.subtitle2">@AttachWorkspaceLabel()</MudText>
+                </MudStack>
+                <MudText Typo="Typo.caption" Color="Color.Default" Class="mb-2 d-block">
+                    @AttachWorkspaceDescription()
+                </MudText>
+                @if (_workspaces.Count == 0)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Default" Style="font-style: italic;">
+                        @Lang["Consoles.NoWorkspaces"] <MudLink Href="/workspaces">@Lang["Consoles.CreateWorkspaceFirst"]</MudLink>.
+                    </MudText>
+                }
+                else
+                {
+                    <MudSelect T="string"
+                               Value="_attachWorkspaceId"
+                               ValueChanged="@(v => _attachWorkspaceId = v ?? string.Empty)"
+                               Label="@Lang["Consoles.Workspace"]"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Clearable="true"
+                               FullWidth="true">
+                        @foreach (var ws in _workspaces)
+                        {
+                            <MudSelectItem T="string" Value="@ws.Id">
+                                @ws.Name
+                                <MudText Typo="Typo.caption" Inline="true" Color="Color.Default">&nbsp;(@ws.Id)</MudText>
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+            </MudPaper>
+
+            <MudPaper Elevation="0" Class="pa-3" Style="border: 1px solid var(--mud-palette-divider); border-radius: 6px; max-width: 540px; width: 100%;">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                    <MudIcon Icon="@Icons.Material.Filled.FolderSpecial" Color="Color.Default" Size="Size.Small" />
+                    <MudText Typo="Typo.subtitle2">Destination catalog</MudText>
+                </MudStack>
+                <MudSelect T="string"
+                           Value="_selectedCatalogId"
+                           ValueChanged="SetSelectedCatalog"
+                           Label="Save to"
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           FullWidth="true">
+                    @foreach (var catalog in _catalogs)
+                    {
+                        <MudSelectItem T="string" Value="@catalog.Id">
+                            @catalog.Name
+                            <MudText Typo="Typo.caption" Inline="true" Color="Color.Default">&nbsp;(@catalog.Id)</MudText>
+                        </MudSelectItem>
+                    }
+                </MudSelect>
+            </MudPaper>
+
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.PlayCircle"
+                       Size="Size.Large"
+                       OnClick="StartNewSession"
+                       Disabled="@_starting">
+                @(_starting ? "Allocating sandbox…" : "Start a new builder session")
+            </MudButton>
+
+            @if (_existingSessions.Count > 0)
+            {
+                <MudDivider Class="my-3" />
+                <MudText Typo="Typo.subtitle2" Color="Color.Default">Or resume an open session:</MudText>
+                <MudStack Spacing="1" Style="width: 100%; max-width: 540px;">
+                    @foreach (var s in _existingSessions)
+                    {
+                        <MudPaper Elevation="0" Class="pa-3"
+                                  Style="border: 1px solid var(--mud-palette-divider); border-radius: 6px; cursor: pointer;"
+                                  @onclick="@(() => ResumeSession(s))">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudIcon Icon="@Icons.Material.Filled.Terminal" Color="Color.Primary" Size="Size.Small" />
+                                <MudStack Spacing="0" Style="flex: 1;">
+                                    <MudText Typo="Typo.body2"><strong>@s.Label</strong></MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Default"
+                                             Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                                        @s.SandboxTag · started @RelativeTime(s.StartedAt)
+                                    </MudText>
+                                </MudStack>
+                                <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Color="Color.Default" Size="Size.Small" />
+                            </MudStack>
+                        </MudPaper>
+                    }
+                </MudStack>
+            }
+        </MudStack>
+    </MudPaper>
+}
+else
+{
+    <MudGrid Spacing="2" Style="height: calc(100vh - 220px); min-height: 600px;">
+
+        @* Left: real PTY console *@
+        <MudItem xs="12" md="6" Style="height: 100%;">
+            <MudPaper Elevation="2" Class="d-flex flex-column"
+                      Style="height: 100%; min-height: 0; background: #1e1e1e; overflow: hidden;">
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2"
+                          Class="px-3 py-2"
+                          Style="border-bottom: 1px solid rgba(255,255,255,0.08); background: rgba(0,0,0,0.2);">
+                    <MudIcon Icon="@Icons.Material.Filled.Terminal" Style="color: #d97757;" Size="Size.Small" />
+                    <MudText Typo="Typo.subtitle2" Style="color: #e6e6e6;">@_session.Label</MudText>
+                    <MudText Typo="Typo.caption"
+                             Style="color: rgba(255,255,255,0.45); font-family: 'Cascadia Code', Consolas, monospace; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        @_session.SandboxTag
+                    </MudText>
+                    <VoiceInputButton MountId="@_mountId" />
+                </MudStack>
+
+                <div @key="_session.SessionId" id="@_mountId"
+                     style="flex: 1; min-height: 0; padding: 6px;"></div>
+            </MudPaper>
+        </MudItem>
+
+        @* Right: live preview of the draft manifest *@
+        <MudItem xs="12" md="6" Style="height: 100%;">
+            <MudPaper Elevation="2" Class="d-flex flex-column"
+                      Style="height: 100%; min-height: 0; overflow: hidden;">
+
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2"
+                          Class="px-4 py-2"
+                          Style="border-bottom: 1px solid var(--mud-palette-divider);">
+                    <MudIcon Icon="@Icons.Material.Filled.SmartToy" Color="Color.Primary" Size="Size.Small" />
+                    <MudText Typo="Typo.subtitle2">Draft manifest</MudText>
+                    <MudSpacer />
+                    @if (_manifestPresent && _manifestValid && _manifestErrors.Count > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                 Color="Color.Error"
+                                 Icon="@Icons.Material.Filled.ReportProblem">@($"{_manifestErrors.Count} issue{(_manifestErrors.Count == 1 ? "" : "s")}")</MudChip>
+                    }
+                    else if (_manifestPresent && _manifestValid)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                 Color="Color.Warning"
+                                 Icon="@Icons.Material.Filled.EditNote">unsaved</MudChip>
+                    }
+                    else if (_manifestPresent && !_manifestValid)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                 Color="Color.Error"
+                                 Icon="@Icons.Material.Filled.ReportProblem">invalid JSON</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="Color.Default"
+                                 Icon="@Icons.Material.Filled.HourglassEmpty">waiting</MudChip>
+                    }
+                </MudStack>
+
+                <div class="flex-grow-1" style="overflow-y: auto; padding: 16px 18px;">
+                    @if (!_manifestPresent)
+                    {
+                        <MudStack Spacing="3" AlignItems="AlignItems.Center" Class="pa-6"
+                                  Style="height: 100%; justify-content: center;">
+                            <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Color="Color.Primary"
+                                     Style="font-size: 48px; opacity: 0.6;" />
+                            <MudText Typo="Typo.h6" Align="Align.Center">Aguardando primeiro draft…</MudText>
+                            <MudText Typo="Typo.body2" Color="Color.Default" Align="Align.Center" Style="max-width: 380px;">
+                                Conte ao Claude o que esse agente novo deveria fazer. Quando ele propuser algo, o draft aparece aqui.
+                            </MudText>
+                        </MudStack>
+                    }
+                    else if (!_manifestValid)
+                    {
+                        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+                            <MudText Typo="Typo.body2">@(_manifestError ?? "Manifest inválido — corrija o JSON na conversa à esquerda.")</MudText>
+                        </MudAlert>
+                    }
+                    else if (_manifest is not null)
+                    {
+                        @if (_manifestErrors.Count > 0)
+                        {
+                            <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3"
+                                      Icon="@Icons.Material.Filled.ReportProblem">
+                                <MudText Typo="Typo.subtitle2" Class="mb-1">
+                                    Manifest tem @_manifestErrors.Count problema@(_manifestErrors.Count == 1 ? "" : "s") — Save bloqueado até corrigir:
+                                </MudText>
+                                <ul style="margin: 4px 0 0 18px; padding: 0;">
+                                    @foreach (var msg in _manifestErrors)
+                                    {
+                                        <li><MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@msg</MudText></li>
+                                    }
+                                </ul>
+                            </MudAlert>
+                        }
+                        <MudPaper Elevation="0" Class="pa-4 mb-3"
+                                  Style="border: 1px solid var(--mud-palette-divider); border-left: 4px solid var(--mud-palette-primary); border-radius: 6px;">
+                            <MudStack Spacing="1">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                    <MudIcon Icon="@AgentManifestIcon(_manifest)" Color="Color.Primary" />
+                                    <MudText Typo="Typo.h5">@(_manifest.Name ?? "—")</MudText>
+                                    @if (!string.IsNullOrWhiteSpace(_manifest.Category))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Color="Color.Default" Icon="@Icons.Material.Filled.RuleFolder">
+                                            @_manifest.Category
+                                        </MudChip>
+                                    }
+                                    <MudSpacer />
+                                    <MudButton Variant="Variant.Outlined"
+                                               Color="Color.Default"
+                                               Size="Size.Small"
+                                               StartIcon="@Icons.Material.Filled.Widgets"
+                                               OnClick="OpenDraftIconPickerAsync">
+                                        Icon
+                                    </MudButton>
+                                </MudStack>
+                                <MudText Typo="Typo.caption" Color="Color.Default"
+                                         Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                                    id · @(_manifest.Id ?? "—")  ·  /@(_manifest.SkillName ?? _manifest.Id ?? "—")
+                                </MudText>
+                                @if (!string.IsNullOrWhiteSpace(_manifest.Description))
+                                {
+                                    <MudText Typo="Typo.body2" Class="mt-2">@_manifest.Description</MudText>
+                                }
+                            </MudStack>
+                        </MudPaper>
+
+                        @if (_manifest.Tools is { Count: > 0 })
+                        {
+                            <MudText Typo="Typo.overline" Color="Color.Default" Class="mb-1 d-block">Tool surface</MudText>
+                            <MudPaper Elevation="0" Class="pa-3 mb-3"
+                                      Style="border: 1px solid var(--mud-palette-divider); border-radius: 6px;">
+                                <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                                    @foreach (var t in _manifest.Tools)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Color="Color.Default"
+                                                 Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                                            @t
+                                        </MudChip>
+                                    }
+                                </MudStack>
+                            </MudPaper>
+                        }
+
+                        @if (_manifest.Modes is { Count: > 0 })
+                        {
+                            <MudText Typo="Typo.overline" Color="Color.Default" Class="mb-1 d-block">Modes</MudText>
+                            <MudPaper Elevation="0" Class="pa-3 mb-3"
+                                      Style="border: 1px solid var(--mud-palette-divider); border-radius: 6px;">
+                                @foreach (var m in _manifest.Modes)
+                                {
+                                    <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2" Class="mb-2">
+                                        <MudIcon Icon="@Icons.Material.Filled.PlayCircleOutline"
+                                                 Color="Color.Primary" Size="Size.Small" Style="margin-top: 2px;" />
+                                        <MudStack Spacing="0" Style="flex: 1;">
+                                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                                                <MudText Typo="Typo.body2"><strong>@(m.Name ?? m.Id ?? "—")</strong></MudText>
+                                                <MudText Typo="Typo.caption" Color="Color.Default"
+                                                         Style="font-family: 'Cascadia Code', Consolas, monospace;">@(m.Id ?? "—")</MudText>
+                                                @if (m.RequiresWorkspace)
+                                                {
+                                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                             Color="Color.Primary"
+                                                             Icon="@Icons.Material.Filled.Folder">workspace</MudChip>
+                                                }
+                                            </MudStack>
+                                            @if (!string.IsNullOrWhiteSpace(m.Description))
+                                            {
+                                                <MudText Typo="Typo.caption" Color="Color.Default">@m.Description</MudText>
+                                            }
+                                        </MudStack>
+                                    </MudStack>
+                                }
+                            </MudPaper>
+                        }
+
+                        @if (_manifest.Requirements is { Count: > 0 })
+                        {
+                            <MudText Typo="Typo.overline" Color="Color.Default" Class="mb-1 d-block">Requirements</MudText>
+                            <MudPaper Elevation="0" Class="pa-3 mb-3"
+                                      Style="border: 1px solid var(--mud-palette-divider); border-radius: 6px;">
+                                @foreach (var r in _manifest.Requirements)
+                                {
+                                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-1">
+                                        <MudIcon Icon="@RequirementIcon(r.Kind)" Color="Color.Default" Size="Size.Small" />
+                                        <MudText Typo="Typo.body2"><strong>@(r.Name ?? "—")</strong></MudText>
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Color="@(r.Required ? Color.Warning : Color.Default)">
+                                            @(r.Required ? "required" : "optional")
+                                        </MudChip>
+                                        <MudText Typo="Typo.caption" Color="Color.Default">@r.Purpose</MudText>
+                                    </MudStack>
+                                }
+                            </MudPaper>
+                        }
+
+                        @if (!string.IsNullOrWhiteSpace(_manifest.SystemPrompt))
+                        {
+                            <MudText Typo="Typo.overline" Color="Color.Default" Class="mb-1 d-block">System prompt</MudText>
+                            <MudPaper Elevation="0" Class="pa-3"
+                                      Style="border: 1px solid var(--mud-palette-divider); border-radius: 6px; background: var(--mud-palette-background);">
+                                <MudText Typo="Typo.body2"
+                                         Style="font-family: 'Cascadia Code', Consolas, monospace; white-space: pre-wrap; line-height: 1.55;">
+                                    @_manifest.SystemPrompt
+                                </MudText>
+                            </MudPaper>
+                        }
+                    }
+                </div>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}

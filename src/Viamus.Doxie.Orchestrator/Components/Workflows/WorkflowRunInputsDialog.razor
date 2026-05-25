@@ -1,0 +1,230 @@
+@*
+   Modal that collects values for a workflow's Trigger.Inputs before
+   firing a manual run. Returns either the populated dictionary
+   (DialogResult.Data) or null on cancel. The caller passes the
+   workflow definition so this component renders one input per declared
+   field with the right labels / placeholders / required marks.
+*@
+@inject IWorkspaceStore WorkspaceStore
+
+<MudDialog>
+    <TitleContent>
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudIcon Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Run "@(Workflow?.Name ?? "workflow")"</MudText>
+        </MudStack>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+            This workflow needs a few inputs before it fires. Required fields are marked with *.
+        </MudText>
+        @if (Workflow?.Trigger?.Inputs is { Count: > 0 } fields)
+        {
+            @foreach (var f in fields)
+            {
+                if (IsWorkspaceField(f))
+                {
+                    <MudSelect T="string"
+                               Label="@f.Label"
+                               Placeholder="@f.Placeholder"
+                               Required="@f.Required"
+                               Value="@GetValue(f.Id)"
+                               ValueChanged="@(EventCallback.Factory.Create<string>(this, v => SetValue(f.Id, v)))"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               FullWidth="true"
+                               Clearable="@(!f.Required)"
+                               Error="@(_attemptedSubmit && f.Required && string.IsNullOrWhiteSpace(GetValue(f.Id)))"
+                               ErrorText="@WorkspaceErrorText(f)"
+                               HelperText="@WorkspaceHelperText(f)"
+                               Adornment="Adornment.Start"
+                               AdornmentIcon="@Icons.Material.Filled.Workspaces"
+                               Class="mb-2">
+                        @if (!f.Required)
+                        {
+                            <MudSelectItem T="string" Value="@(string.Empty)">(none - project root)</MudSelectItem>
+                        }
+                        @foreach (var ws in _workspaces)
+                        {
+                            <MudSelectItem T="string" Value="@ws.Id">@WorkspaceLabel(ws)</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+                else if (IsSelectField(f))
+                {
+                    <MudSelect T="string"
+                               Label="@f.Label"
+                               Placeholder="@f.Placeholder"
+                               Required="@f.Required"
+                               Value="@GetValue(f.Id)"
+                               ValueChanged="@(EventCallback.Factory.Create<string>(this, v => SetValue(f.Id, v)))"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               FullWidth="true"
+                               Clearable="@(!f.Required)"
+                               Error="@(_attemptedSubmit && f.Required && string.IsNullOrWhiteSpace(GetValue(f.Id)))"
+                               ErrorText="@(_attemptedSubmit && f.Required && string.IsNullOrWhiteSpace(GetValue(f.Id)) ? "Required" : null)"
+                               Class="mb-2">
+                        @foreach (var option in SelectOptions(f))
+                        {
+                            <MudSelectItem T="string" Value="@option">@option</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+                else
+                {
+                    <MudTextField T="string"
+                                  Label="@f.Label"
+                                  Placeholder="@f.Placeholder"
+                                  Required="@f.Required"
+                                  Value="@GetValue(f.Id)"
+                                  ValueChanged="@(EventCallback.Factory.Create<string>(this, v => SetValue(f.Id, v)))"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  FullWidth="true"
+                                  Error="@(_attemptedSubmit && f.Required && string.IsNullOrWhiteSpace(GetValue(f.Id)))"
+                                  ErrorText="@(_attemptedSubmit && f.Required && string.IsNullOrWhiteSpace(GetValue(f.Id)) ? "Required" : null)"
+                                  Class="mb-2" />
+                }
+            }
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Color="Color.Default">No inputs declared.</MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.PlayArrow"
+                   OnClick="Submit">Run</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>
+    /// The workflow whose Trigger.Inputs drive the rendered fields.
+    /// </summary>
+    [Parameter] public WorkflowDefinition? Workflow { get; set; }
+
+    /// <summary>
+    /// Optional pre-fill from a previous run's TriggerInputs. Keys
+    /// that don't match any current declared input are dropped silently
+    /// (workflow may have evolved between runs). Lets "Run again" land
+    /// the dialog populated so the user only edits what changed.
+    /// </summary>
+    [Parameter] public IReadOnlyDictionary<string, string>? InitialValues { get; set; }
+
+    private readonly Dictionary<string, string> _values =
+        new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<Workspace> _workspaces = Array.Empty<Workspace>();
+    private bool _attemptedSubmit;
+
+    protected override void OnInitialized()
+    {
+        _workspaces = WorkspaceStore.ListAll();
+
+        if (InitialValues is { Count: > 0 } initial && Workflow?.Trigger?.Inputs is { Count: > 0 } fields)
+        {
+            // Only adopt keys that still exist in the workflow's current
+            // declared inputs — stale keys would be dead weight.
+            var declared = fields.Select(f => f.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var (k, v) in initial)
+            {
+                if (declared.Contains(k))
+                {
+                    _values[k] = v ?? string.Empty;
+                }
+            }
+        }
+
+        if (Workflow?.Trigger?.Inputs is { Count: > 0 } declaredFields)
+        {
+            foreach (var f in declaredFields)
+            {
+                if (!_values.ContainsKey(f.Id) && !string.IsNullOrWhiteSpace(f.DefaultValue))
+                {
+                    _values[f.Id] = f.DefaultValue!;
+                }
+            }
+        }
+    }
+
+    private string GetValue(string id) =>
+        _values.TryGetValue(id, out var v) ? v : string.Empty;
+
+    private void SetValue(string id, string value) => _values[id] = value ?? string.Empty;
+
+    private static bool IsSelectField(WorkflowTriggerInputField field) =>
+        string.Equals(field.Type, "select", StringComparison.OrdinalIgnoreCase)
+        && field.Options is { Count: > 0 };
+
+    private static bool IsWorkspaceField(WorkflowTriggerInputField field) =>
+        string.Equals(field.Type, "workspace", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(field.Id, "workspace", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(field.Id, "workspace-id", StringComparison.OrdinalIgnoreCase)
+        || field.Id.EndsWith("-workspace-id", StringComparison.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> SelectOptions(WorkflowTriggerInputField field) =>
+        field.Options?.Where(o => !string.IsNullOrWhiteSpace(o)).Distinct(StringComparer.OrdinalIgnoreCase)
+        ?? Enumerable.Empty<string>();
+
+    private static string WorkspaceLabel(Workspace workspace) =>
+        string.Equals(workspace.Name, workspace.Id, StringComparison.OrdinalIgnoreCase)
+            ? workspace.Id
+            : $"{workspace.Name} ({workspace.Id})";
+
+    private string WorkspaceHelperText(WorkflowTriggerInputField field)
+    {
+        if (_workspaces.Count == 0)
+        {
+            return field.Required
+                ? "No Workspaces exist yet. Create one from Workspaces before running this workflow."
+                : "No Workspaces exist yet. Leave blank to run from the project root.";
+        }
+
+        return field.Required
+            ? "Choose the Workspace whose mounted libraries and environment should travel with this workflow run."
+            : "Choose a Workspace for context, or leave blank to run from the project root.";
+    }
+
+    private string? WorkspaceErrorText(WorkflowTriggerInputField field) =>
+        _attemptedSubmit && field.Required && string.IsNullOrWhiteSpace(GetValue(field.Id))
+            ? "Required"
+            : null;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Submit()
+    {
+        _attemptedSubmit = true;
+
+        // Block submission if any required field is blank — same
+        // contract the API enforces, surfaced inline so the user
+        // doesn't see a 400 in the network panel.
+        if (Workflow?.Trigger?.Inputs is { Count: > 0 } fields)
+        {
+            foreach (var f in fields)
+            {
+                if (f.Required && string.IsNullOrWhiteSpace(GetValue(f.Id)))
+                {
+                    StateHasChanged();
+                    return;
+                }
+            }
+        }
+
+        // Strip blank optional values so the runner doesn't see empty
+        // strings where the user "didn't fill it" — distinct from
+        // "wanted an empty string". The substitution treats absent and
+        // empty identically (both → empty), but this keeps the
+        // dictionary clean for audit.
+        var clean = _values
+            .Where(p => !string.IsNullOrEmpty(p.Value))
+            .ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
+        MudDialog.Close(DialogResult.Ok<Dictionary<string, string>>(clean));
+    }
+}

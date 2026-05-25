@@ -1,0 +1,31 @@
+{
+  "id": "workflow-output-contract-designer",
+  "description": "Designs file and markdown contracts between Doxie workflow nodes.",
+  "displayName": "Workflow Output Contract Designer",
+  "icon": "Schema",
+  "category": "Builder",
+  "requirements": [],
+  "modes": {
+    "advise": {
+      "fields": [
+        {
+          "id": "task",
+          "label": "Task",
+          "placeholder": "Describe the question, system, decision, or artifact to review.",
+          "required": true
+        },
+        {
+          "id": "context",
+          "label": "Context",
+          "placeholder": "Paste constraints, links, logs, code notes, or upstream findings.",
+          "required": false
+        }
+      ],
+      "argumentsTemplate": "advise --task \"{task}\" --context \"{context}\"",
+      "keepSessionAlive": false,
+      "hidden": false,
+      "description": "Use Workflow Output Contract Designer to produce a focused advisory plan, checklist, or handoff.",
+      "requiresWorkspace": false
+    }
+  }
+}

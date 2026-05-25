@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" role="img" aria-labelledby="flowTitle" font-family="Inter, system-ui, sans-serif">
+  <title id="flowTitle">Doxie regen flow: canonical .doxie/ emits .claude/ and .codex/ shims</title>
+
+  <defs>
+    <linearGradient id="canonicalFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#D97757" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#D97757" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="shimFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F5F0E8" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#F5F0E8" stop-opacity="0.02"/>
+    </linearGradient>
+    <marker id="arrowHead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#D97757"/>
+    </marker>
+  </defs>
+
+  <!-- Canonical box (.doxie) -->
+  <g transform="translate(60, 60)">
+    <rect x="0" y="0" width="180" height="100" rx="12" fill="url(#canonicalFill)" stroke="#D97757" stroke-width="1.5"/>
+    <text x="90" y="22" text-anchor="middle" font-size="10" font-weight="600" letter-spacing="0.08em" fill="#D97757">CANONICAL</text>
+    <text x="90" y="48" text-anchor="middle" font-size="22" font-weight="700" fill="#F5F0E8" font-family="JetBrains Mono, ui-monospace, monospace">.doxie/</text>
+    <text x="90" y="70" text-anchor="middle" font-size="11" fill="#C9BFAB">skills · agents · libraries</text>
+    <text x="90" y="86" text-anchor="middle" font-size="10" fill="#9A8F7E">you author here</text>
+  </g>
+
+  <!-- Arrow to .claude shim -->
+  <g stroke="#D97757" stroke-width="2" fill="none" marker-end="url(#arrowHead)">
+    <path d="M 240 90 Q 320 90 460 60"/>
+  </g>
+  <text x="350" y="68" font-size="10" fill="#D97757" font-weight="600">regen on save</text>
+
+  <!-- Arrow to .codex shim -->
+  <g stroke="#D97757" stroke-width="2" fill="none" marker-end="url(#arrowHead)">
+    <path d="M 240 130 Q 320 130 460 160"/>
+  </g>
+  <text x="350" y="148" font-size="10" fill="#D97757" font-weight="600">idempotent</text>
+
+  <!-- Claude shim box -->
+  <g transform="translate(480, 30)">
+    <rect x="0" y="0" width="180" height="76" rx="12" fill="url(#shimFill)" stroke="#3A3530" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-size="10" font-weight="600" letter-spacing="0.08em" fill="#9A8F7E">SHIM</text>
+    <text x="90" y="46" text-anchor="middle" font-size="18" font-weight="700" fill="#F5F0E8" font-family="JetBrains Mono, ui-monospace, monospace">.claude/</text>
+    <text x="90" y="64" text-anchor="middle" font-size="10" fill="#9A8F7E">SKILL.md per skill</text>
+  </g>
+
+  <!-- Codex shim box -->
+  <g transform="translate(480, 130)">
+    <rect x="0" y="0" width="180" height="76" rx="12" fill="url(#shimFill)" stroke="#3A3530" stroke-width="1"/>
+    <text x="90" y="22" text-anchor="middle" font-size="10" font-weight="600" letter-spacing="0.08em" fill="#9A8F7E">SHIM</text>
+    <text x="90" y="46" text-anchor="middle" font-size="18" font-weight="700" fill="#F5F0E8" font-family="JetBrains Mono, ui-monospace, monospace">.codex/</text>
+    <text x="90" y="64" text-anchor="middle" font-size="10" fill="#9A8F7E">single AGENTS.md</text>
+  </g>
+</svg>

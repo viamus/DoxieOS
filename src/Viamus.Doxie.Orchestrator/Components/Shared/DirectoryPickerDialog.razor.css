@@ -1,0 +1,6 @@
+.directory-picker-list {
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 6px;
+    max-height: min(48vh, 420px);
+    overflow-y: auto;
+}

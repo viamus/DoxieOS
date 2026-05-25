@@ -1,0 +1,112 @@
+@using Markdig
+@using Viamus.Doxie.Orchestrator.ReleaseNotes
+@inject IReleaseNotesService ReleaseNotesService
+
+<MudDialog Class="release-notes-dialog" Style="min-width: min(960px, 90vw); min-height: 64vh;">
+    <DialogContent>
+        <MudGrid Spacing="0" Style="height: 64vh;">
+            @* Sidebar timeline — minimal, version-led, hover-aware. Tigerlily
+               rail on the active row. *@
+            <MudItem xs="3" Class="release-timeline" Style="overflow-y: auto;">
+                <MudList T="ReleaseNote" Dense="true" SelectedValueChanged="OnSelected" SelectedValue="@_selected">
+                    @foreach (var note in _notes)
+                    {
+                        <MudListItem T="ReleaseNote" Value="@note">
+                            @* "v@(note.Version)" — explicit parentheses to bypass Razor's email heuristic
+                               (it would otherwise parse "v@note.Version" as an email and emit literal text). *@
+                            <div class="timeline-version">v@(note.Version)</div>
+                            <div class="timeline-date">@note.ReleaseDate.ToString("MMM d, yyyy")</div>
+                            <div class="timeline-title">@note.Title</div>
+                        </MudListItem>
+                    }
+                </MudList>
+            </MudItem>
+
+            @* Reading column. The hierarchy follows the Linear changelog
+               pattern: dateline (small, dim) → version pill (Tigerlily) →
+               title (display) → hero (Lottie, full bleed) → body. *@
+            <MudItem xs="9" Style="overflow-y: auto;">
+                @if (_selected is { } note)
+                {
+                    <div class="release-note-body">
+                        <div class="release-dateline">@note.ReleaseDate.ToString("MMMM d, yyyy")</div>
+                        <span class="version-pill">v@(note.Version)</span>
+                        <h1 class="release-title">@note.Title</h1>
+
+                        @* Hero is type-aware: .json → Lottie animation, .svg/.png → static image.
+                           Falls back to no-hero if path is empty. *@
+                        @if (!string.IsNullOrWhiteSpace(note.LottieAssetPath))
+                        {
+                            var heroPath = note.LottieAssetPath!;
+                            <div class="release-hero">
+                                @if (heroPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    <lottie-player src="@heroPath"
+                                                   background="transparent"
+                                                   speed="1"
+                                                   loop
+                                                   autoplay></lottie-player>
+                                }
+                                else
+                                {
+                                    <img src="@heroPath" alt="@note.Title" class="release-hero-image" />
+                                }
+                            </div>
+                        }
+
+                        <div class="markdown">@((MarkupString)RenderHtml(note.BodyMarkdown))</div>
+                    </div>
+                }
+                else
+                {
+                    <div class="release-note-body">
+                        <p>Select a release on the left.</p>
+                    </div>
+                }
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="MarkAllRead" Variant="Variant.Text">Mark all as read</MudButton>
+        <MudButton OnClick="Close" Color="Color.Primary" Variant="Variant.Filled">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter] public string? FocusVersion { get; set; }
+
+    [Parameter] public EventCallback<string> OnMarkAllRead { get; set; }
+
+    private IReadOnlyList<ReleaseNote> _notes = Array.Empty<ReleaseNote>();
+    private ReleaseNote? _selected;
+
+    private static readonly MarkdownPipeline MdPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .Build();
+
+    protected override void OnInitialized()
+    {
+        _notes = ReleaseNotesService.ListAll();
+        _selected = !string.IsNullOrWhiteSpace(FocusVersion)
+            ? _notes.FirstOrDefault(n => n.Version == FocusVersion) ?? _notes.FirstOrDefault()
+            : _notes.FirstOrDefault();
+    }
+
+    private void OnSelected(ReleaseNote? note) => _selected = note;
+
+    private static string RenderHtml(string markdown) => Markdown.ToHtml(markdown, MdPipeline);
+
+    private async Task MarkAllRead()
+    {
+        var latest = _notes.FirstOrDefault();
+        if (latest is not null && OnMarkAllRead.HasDelegate)
+        {
+            await OnMarkAllRead.InvokeAsync(latest.Version);
+        }
+        Close();
+    }
+
+    private void Close() => MudDialog.Close();
+}

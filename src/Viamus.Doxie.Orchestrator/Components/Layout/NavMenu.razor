@@ -1,0 +1,68 @@
+@using MudBlazor
+@inject IConsoleSessionStore ConsoleStore
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@implements IDisposable
+
+<MudNavMenu Class="doxie-nav-menu">
+    <MudNavLink Href="/"
+                Match="NavLinkMatch.All"
+                Icon="@Icons.Material.Filled.Dashboard">@Lang["Nav.Dashboard"]</MudNavLink>
+    <MudNavLink Href="/workspaces"
+                Icon="@Icons.Material.Filled.Folder">@Lang["Nav.Workspaces"]</MudNavLink>
+    <MudNavLink Href="/consoles"
+                Icon="@Icons.Material.Filled.Terminal">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+            <span>@Lang["Nav.Consoles"]</span>
+            @if (_liveCount > 0)
+            {
+                <span class="doxie-status-pill">@_liveCount</span>
+            }
+        </MudStack>
+    </MudNavLink>
+    <MudNavLink Href="/agents"
+                Icon="@Icons.Material.Filled.SmartToy">@Lang["Nav.Agents"]</MudNavLink>
+    <MudNavLink Href="/workflows"
+                Icon="@Icons.Material.Filled.AccountTree">@Lang["Nav.Workflows"]</MudNavLink>
+    <MudNavLink Href="/libraries"
+                Icon="@Icons.Material.Filled.MenuBook">@Lang["Nav.Libraries"]</MudNavLink>
+    <MudNavLink Href="/history"
+                Icon="@Icons.Material.Filled.History">@Lang["Nav.History"]</MudNavLink>
+
+    <MudDivider Class="doxie-nav-divider" />
+
+    <MudNavLink Href="/settings"
+                Icon="@Icons.Material.Filled.Settings">@Lang["Nav.Settings"]</MudNavLink>
+</MudNavMenu>
+
+@code {
+    private int _liveCount;
+
+    protected override void OnInitialized()
+    {
+        Refresh(null);
+        ConsoleStore.SessionCreated += Refresh;
+        ConsoleStore.SessionRemoved += Refresh;
+        ConsoleStore.SessionUpdated += Refresh;
+        Lang.Changed += OnLanguageChanged;
+    }
+
+    private async void Refresh(ConsoleSession? _)
+    {
+        _liveCount = ConsoleStore.ListAll()
+            .Count(s => s.Status == ConsoleSessionStatus.Running && s.Kind == ConsoleSessionKind.Workspace);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ConsoleStore.SessionCreated -= Refresh;
+        ConsoleStore.SessionRemoved -= Refresh;
+        ConsoleStore.SessionUpdated -= Refresh;
+        Lang.Changed -= OnLanguageChanged;
+    }
+
+    private async void OnLanguageChanged()
+    {
+        await InvokeAsync(StateHasChanged);
+    }
+}

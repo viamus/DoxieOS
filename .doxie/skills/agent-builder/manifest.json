@@ -1,0 +1,6 @@
+{
+  "id": "agent-builder",
+  "description": "Interactive guide for authoring a new DoxieOS agent. Runs inside a builder sandbox at ./.sandbox/builder-agent-N/ (allocated by the DoxieOS Agent Builder UI) and writes the in-progress agent definition to ./.draft/manifest.json so the right-hand preview pane in the UI can render it live. The user iterates with you in plain language; you propose, refine, and persist. When the user clicks Save in the UI, the orchestrator promotes the manifest into the canonical Doxie catalog (.doxie/skills/<id>/{manifest.json,body.md}).",
+  "displayName": "Agent Builder",
+  "category": "Doxie"
+}

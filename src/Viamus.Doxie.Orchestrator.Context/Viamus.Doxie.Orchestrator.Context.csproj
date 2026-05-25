@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Viamus.Doxie.Orchestrator.Context</RootNamespace>
+    <!-- PosixPtyHandle uses unsafe blocks to pin the read/write byte buffers
+         when calling into libc — needed because the calls are on hot paths
+         and we don't want a per-call GCHandle.Alloc. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pty.Net" Version="0.1.16-pre" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Viamus.Doxie.Orchestrator.Context.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Viamus.Doxie.Orchestrator.Common\Viamus.Doxie.Orchestrator.Common.csproj" />
+  </ItemGroup>
+
+</Project>

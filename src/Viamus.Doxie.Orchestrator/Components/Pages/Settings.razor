@@ -1,0 +1,569 @@
+@page "/settings"
+@using Viamus.Doxie.Orchestrator.Agents
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+@using Viamus.Doxie.Orchestrator.Common
+@using Viamus.Doxie.Orchestrator.Services
+@inject IAgentProviderResolver Resolver
+@inject IDoxieCatalogStore CatalogStore
+@inject IAgentCatalog AgentCatalog
+@inject DoxieRegenerator Regenerator
+@inject ProviderEnvironmentStore ProviderEnvironment
+@inject IConsoleSessionStore ConsoleStore
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+
+<PageTitle>@Lang["Settings.Title"] - DoxieOS</PageTitle>
+
+<MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+
+<MudText Typo="Typo.h3" GutterBottom="true">@Lang["Settings.Title"]</MudText>
+<MudText Typo="Typo.subtitle1" Class="mb-4">
+    @Lang["Settings.Subtitle"]
+</MudText>
+
+<MudPaper Class="pa-4 mb-4" Elevation="2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.Language" Color="Color.Primary" />
+        <MudText Typo="Typo.h5">@Lang["Settings.LanguageTitle"]</MudText>
+    </MudStack>
+
+    <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+        @Lang["Settings.LanguageDescription"]
+    </MudText>
+
+    <MudSelect T="string"
+               Label="@Lang["Settings.LanguageLabel"]"
+               Value="_selectedLanguage"
+               ValueChanged="OnLanguageChanged"
+               Variant="Variant.Outlined"
+               Margin="Margin.Dense"
+               Style="max-width: 360px;">
+        @foreach (var language in Lang.Languages)
+        {
+            <MudSelectItem T="string" Value="@language.Key">@language.Value</MudSelectItem>
+        }
+    </MudSelect>
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-4" Elevation="2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.Terminal" Color="Color.Primary" />
+        <MudText Typo="Typo.h5">@Lang["Settings.AgentProviders"]</MudText>
+        <MudSpacer />
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_rows.Count @Lang["Settings.Registered"]</MudChip>
+    </MudStack>
+
+    <MudRadioGroup T="string"
+                   Value="_activeProviderId"
+                   ValueChanged="OnDefaultChanged"
+                   Style="width: 100%;">
+    <MudTable Items="_rows"
+              Dense="true"
+              Hover="true"
+              Elevation="0"
+              Style="width: 100%;">
+        <HeaderContent>
+            <MudTh>@Lang["Settings.Default"]</MudTh>
+            <MudTh>@Lang["Settings.Provider"]</MudTh>
+            <MudTh>Id</MudTh>
+            <MudTh>@Lang["Settings.Executable"]</MudTh>
+            <MudTh>@Lang["Settings.Status"]</MudTh>
+            <MudTh>@Lang["Settings.Auth"]</MudTh>
+            <MudTh>@Lang["Settings.Active"]</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudRadio T="string"
+                          Value="@context.Id"
+                          Color="Color.Primary"
+                          Dense="true" />
+            </MudTd>
+            <MudTd>
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudIcon Icon="@Icons.Material.Filled.SmartToy" Size="Size.Small" Color="Color.Primary" />
+                    <MudText Typo="Typo.body2"><strong>@context.DisplayName</strong></MudText>
+                </MudStack>
+            </MudTd>
+            <MudTd>
+                <code>@context.Id</code>
+            </MudTd>
+            <MudTd>
+                <code>@context.Executable</code>
+            </MudTd>
+            <MudTd>
+                @if (context.IsAvailable)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">
+                        <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Class="mr-1" />@Lang["Settings.Available"]
+                    </MudChip>
+                }
+                else
+                {
+                    <MudTooltip Text="@($"Executable not found on PATH or at the configured location: {context.Executable}")">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                            <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Size="Size.Small" Class="mr-1" />@Lang["Settings.NotFound"]
+                        </MudChip>
+                    </MudTooltip>
+                }
+            </MudTd>
+            <MudTd>
+                @if (context.IsAuthenticated)
+                {
+                    <MudTooltip Text="@context.AuthDetail">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">
+                            <MudIcon Icon="@Icons.Material.Filled.VerifiedUser" Size="Size.Small" Class="mr-1" />@Lang["Settings.SignedIn"]
+                        </MudChip>
+                    </MudTooltip>
+                }
+                else
+                {
+                    <MudTooltip Text="@context.AuthDetail">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                            <MudIcon Icon="@Icons.Material.Filled.LockOpen" Size="Size.Small" Class="mr-1" />@Lang["Settings.NeedsLogin"]
+                        </MudChip>
+                    </MudTooltip>
+                }
+            </MudTd>
+            <MudTd>
+                @if (context.Id == _activeProviderId)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">@Lang["Settings.Active"]</MudChip>
+                }
+            </MudTd>
+            <MudTd>
+                <MudStack Row="true" Spacing="1" Justify="Justify.FlexEnd">
+                    <MudTooltip Text="Open auth console">
+                        <MudIconButton Icon="@Icons.Material.Filled.Terminal"
+                                       Color="Color.Primary"
+                                       OnClick="@(() => OpenAuthConsole(context.Id))" />
+                    </MudTooltip>
+                </MudStack>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+    </MudRadioGroup>
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-4" Elevation="2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.Hub" Color="Color.Primary" />
+        <MudText Typo="Typo.h5">@Lang["Settings.McpServers"]</MudText>
+        <MudSpacer />
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_mcpRows.Count @Lang["Settings.Configured"]</MudChip>
+    </MudStack>
+
+    <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+        @Lang["Settings.McpDescription"]
+    </MudText>
+
+    <MudTable Items="_mcpRows" Dense="true" Hover="true" Elevation="0">
+        <HeaderContent>
+            <MudTh>@Lang["Common.Name"]</MudTh>
+            <MudTh>@Lang["Settings.Transport"]</MudTh>
+            <MudTh>@Lang["Settings.Providers"]</MudTh>
+            <MudTh>@Lang["Common.Status"]</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.body2"><strong>@context.Name</strong></MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Default"><code>@context.Id</code></MudText>
+                </MudStack>
+            </MudTd>
+            <MudTd>@context.Transport</MudTd>
+            <MudTd>
+                <MudStack Row="true" Spacing="1">
+                    @if (context.Claude)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Claude</MudChip>
+                    }
+                    @if (context.Codex)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Codex</MudChip>
+                    }
+                </MudStack>
+            </MudTd>
+            <MudTd>
+                <MudChip T="string" Size="Size.Small" Color="@(context.Enabled ? Color.Success : Color.Default)" Variant="Variant.Outlined">
+                    @(context.Enabled ? Lang["Settings.Enabled"] : Lang["Settings.Disabled"])
+                </MudChip>
+            </MudTd>
+            <MudTd>
+                <MudStack Row="true" Spacing="1" Justify="Justify.FlexEnd">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" OnClick="@(() => EditMcpRow(context))" />
+                    <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" OnClick="@(() => RemoveMcpRow(context))" />
+                </MudStack>
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+
+    <MudStack Row="true" Spacing="2" Justify="Justify.FlexEnd" Class="mt-3">
+        <MudButton Variant="Variant.Outlined" Color="Color.Default" StartIcon="@Icons.Material.Filled.Sync" OnClick="ImportMcpServers">@Lang["Settings.ImportFromProviders"]</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddMcpRow">@Lang["Settings.AddMcp"]</MudButton>
+    </MudStack>
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-4" Elevation="2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.FolderSpecial" Color="Color.Primary" />
+        <MudText Typo="Typo.h5">@Lang["Settings.DoxieCatalogs"]</MudText>
+        <MudSpacer />
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_customCatalogs.Count @Lang["Settings.Custom"]</MudChip>
+    </MudStack>
+
+    <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-3">
+        @Lang["Settings.CatalogsDescription"]
+    </MudText>
+
+    <MudList T="string" Dense="true" Class="px-0 mb-3">
+        @foreach (var catalog in _catalogRoots)
+        {
+            <MudListItem T="string" Icon="@(catalog.IsDefault ? Icons.Material.Filled.Home : Icons.Material.Filled.Folder)">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Style="width: 100%; min-width: 0;">
+                    <MudStack Spacing="0" Style="min-width: 0; flex: 1;">
+                        <MudText Typo="Typo.body2"><strong>@catalog.Name</strong> <MudText Typo="Typo.caption" Inline="true" Color="Color.Default">(@catalog.Id)</MudText></MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Default" Style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><code>@catalog.RootPath</code></MudText>
+                    </MudStack>
+                    @if (!catalog.IsDefault)
+                    {
+                        <span @onclick:stopPropagation="true">
+                            <MudTooltip Text="@Lang["Settings.RemoveCatalog"]">
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                               Size="Size.Small"
+                                               Color="Color.Error"
+                                               OnClick="@(() => RemoveCatalog(catalog))" />
+                            </MudTooltip>
+                        </span>
+                    }
+                </MudStack>
+            </MudListItem>
+        }
+    </MudList>
+
+    <MudStack Row="true" Spacing="2" Justify="Justify.FlexEnd" Class="mt-3">
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="AddCatalogRow">@Lang["Settings.AddCatalog"]</MudButton>
+    </MudStack>
+</MudPaper>
+
+<MudPaper Class="pa-4 mb-4" Elevation="2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Primary" />
+        <MudText Typo="Typo.h5">@Lang["Settings.StoragePaths"]</MudText>
+    </MudStack>
+    <MudText Typo="Typo.body2" Color="Color.Default" Class="mb-2">
+        @Lang["Settings.StorageDescription"]
+    </MudText>
+    <MudList T="string" Dense="true" Class="px-0">
+        <MudListItem T="string" Icon="@Icons.Material.Filled.AutoFixHigh">
+            <MudText Typo="Typo.body2"><strong>@Lang["Settings.CanonicalPath"]:</strong> <code>.doxie/</code></MudText>
+        </MudListItem>
+        <MudListItem T="string" Icon="@Icons.Material.Filled.Storage">
+            <MudText Typo="Typo.body2"><strong>@Lang["Settings.SqliteState"]:</strong> <code>%LOCALAPPDATA%/Viamus.Doxie.Orchestrator/state.db</code></MudText>
+        </MudListItem>
+    </MudList>
+</MudPaper>
+
+@code {
+    private List<ProviderRow> _rows = new();
+    private string _activeProviderId = "";
+    private string _selectedLanguage = AppLanguageService.DefaultLanguage;
+    private IReadOnlyList<DoxieCatalogRoot> _catalogRoots = Array.Empty<DoxieCatalogRoot>();
+    private List<CatalogRow> _customCatalogs = new();
+    private List<McpRow> _mcpRows = new();
+
+    private List<BreadcrumbItem> _breadcrumbs => new()
+    {
+        new BreadcrumbItem(Lang["Settings.Title"], href: null, disabled: true),
+    };
+
+    protected override void OnInitialized()
+    {
+        _selectedLanguage = Lang.CurrentLanguage;
+        ReloadRows();
+        ReloadCatalogs();
+        ProviderEnvironment.ImportGlobalMcpServers();
+        ReloadMcpServers();
+    }
+
+    private Task OnLanguageChanged(string language)
+    {
+        _selectedLanguage = language;
+        Lang.SetLanguage(language);
+        Snackbar.Add(Lang["Settings.LanguageSaved"], Severity.Success);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void ReloadCatalogs()
+    {
+        _catalogRoots = CatalogStore.ListCatalogs();
+        _customCatalogs = CatalogStore.GetCustomCatalogs()
+            .Select(c => new CatalogRow(c.Id, c.Name, c.Path))
+            .ToList();
+    }
+
+    private void ReloadRows()
+    {
+        _activeProviderId = Resolver.ActiveProviderId;
+        var auth = ProviderEnvironment.GetAuthStatuses().ToDictionary(s => s.ProviderId, StringComparer.OrdinalIgnoreCase);
+        _rows = Resolver.AllProviders.Select(p =>
+        {
+            auth.TryGetValue(p.Id, out var status);
+            return new ProviderRow(
+                DisplayName: p.DisplayName,
+                Id: p.Id,
+                Executable: p.Executable,
+                IsAvailable: ExecutableResolver.Resolve(p.Executable) is not null,
+                IsAuthenticated: status?.IsAuthenticated == true,
+                AuthDetail: status?.Detail ?? "No auth probe available");
+        }).ToList();
+    }
+
+    private void ReloadMcpServers()
+    {
+        _mcpRows = ProviderEnvironment.ListMcpServers()
+            .Select(McpRow.FromDefinition)
+            .ToList();
+    }
+
+    private async Task OnDefaultChanged(string providerId)
+    {
+        if (string.IsNullOrEmpty(providerId) || providerId == _activeProviderId) return;
+
+        try
+        {
+            Resolver.SetDefault(providerId);
+            ReloadRows();
+            Snackbar.Add($"Default agent CLI is now {providerId}.", Severity.Success);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not change default: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task AddCatalogRow()
+    {
+        var selected = await ChooseFolder("Choose catalog folder", null);
+        if (string.IsNullOrWhiteSpace(selected)) return;
+
+        _customCatalogs.Add(new CatalogRow(
+            string.Empty,
+            InferCatalogName(selected),
+            selected));
+        await PersistCatalogs("Catalog added.");
+    }
+
+    private async Task OpenAuthConsole(string providerId)
+    {
+        try
+        {
+            var provider = Resolver.AllProviders.FirstOrDefault(p => string.Equals(p.Id, providerId, StringComparison.OrdinalIgnoreCase));
+            var session = await ConsoleStore.CreateForProviderAsync(
+                providerId,
+                StorageOptions.ResolvePath("."),
+                $"Auth - {provider?.DisplayName ?? providerId}");
+            Nav.NavigateTo($"/consoles?id={Uri.EscapeDataString(session.Id)}");
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not open auth console: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task<string?> ChooseFolder(string title, string? initialPath)
+    {
+        var parameters = new DialogParameters<DirectoryPickerDialog>
+        {
+            { x => x.Title, title },
+            { x => x.InitialPath, initialPath },
+        };
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true,
+        };
+        var dialog = await DialogService.ShowAsync<DirectoryPickerDialog>(title, parameters, options);
+        var result = await dialog.Result;
+        return result is { Canceled: false, Data: string path } && !string.IsNullOrWhiteSpace(path)
+            ? path
+            : null;
+    }
+
+    private static string InferCatalogName(string path)
+    {
+        var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var name = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(name) ? "Team catalog" : name;
+    }
+
+    private Task RemoveCatalog(DoxieCatalogRoot catalog)
+    {
+        if (catalog.IsDefault)
+        {
+            return Task.CompletedTask;
+        }
+
+        var removed = _customCatalogs.RemoveAll(c =>
+            string.Equals(c.Id, catalog.Id, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(StorageOptions.ResolvePath(c.Path), catalog.RootPath, StringComparison.OrdinalIgnoreCase));
+
+        return removed == 0
+            ? Task.CompletedTask
+            : PersistCatalogs($"Catalog \"{catalog.Name}\" removed.");
+    }
+
+    private Task PersistCatalogs(string message)
+    {
+        CatalogStore.SaveCustomCatalogs(_customCatalogs.Select(c => new CustomDoxieCatalog(c.Id, c.Name, c.Path)));
+        Regenerator.Regenerate();
+        AgentCatalog.Refresh();
+        ReloadCatalogs();
+        Snackbar.Add(message, Severity.Success);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task AddMcpRow()
+    {
+        var result = await OpenMcpDialog(
+            "New MCP server",
+            new McpServerDefinition(string.Empty, "New MCP", "stdio", null, null, null, null, new[] { "claude-code", "codex" }, true));
+        if (result is null) return;
+        _mcpRows.Add(McpRow.FromDefinition(result));
+        PersistMcpRows("MCP server added.");
+    }
+
+    private void RemoveMcpRow(McpRow row)
+    {
+        _mcpRows.Remove(row);
+        PersistMcpRows("MCP server removed.");
+    }
+
+    private async Task EditMcpRow(McpRow row)
+    {
+        var result = await OpenMcpDialog($"Edit MCP - {row.Name}", row.ToDefinition());
+        if (result is null) return;
+        var index = _mcpRows.IndexOf(row);
+        if (index < 0) return;
+        _mcpRows[index] = McpRow.FromDefinition(result);
+        PersistMcpRows("MCP server saved.");
+    }
+
+    private async Task<McpServerDefinition?> OpenMcpDialog(string title, McpServerDefinition definition)
+    {
+        var parameters = new DialogParameters<McpServerDialog>
+        {
+            { x => x.Title, title },
+            { x => x.Server, definition },
+        };
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true,
+        };
+        var dialog = await DialogService.ShowAsync<McpServerDialog>(title, parameters, options);
+        var result = await dialog.Result;
+        return result is { Canceled: false, Data: McpServerDefinition server } ? server : null;
+    }
+
+    private void PersistMcpRows(string message)
+    {
+        var saved = ProviderEnvironment.SaveMcpServers(_mcpRows.Select(r => r.ToDefinition()));
+        _mcpRows = saved.Select(McpRow.FromDefinition).ToList();
+        Snackbar.Add(message, Severity.Success);
+    }
+
+    private Task ImportMcpServers()
+    {
+        var imported = ProviderEnvironment.ImportGlobalMcpServers();
+        ReloadMcpServers();
+        Snackbar.Add(
+            imported == 0
+                ? "Provider MCP configs are already in sync."
+                : $"Imported {imported} MCP server(s) from provider configs.",
+            imported == 0 ? Severity.Info : Severity.Success);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private sealed record ProviderRow(
+        string DisplayName,
+        string Id,
+        string Executable,
+        bool IsAvailable,
+        bool IsAuthenticated,
+        string AuthDetail);
+
+    private sealed class CatalogRow
+    {
+        public CatalogRow(string id, string name, string path)
+        {
+            Id = id;
+            Name = name;
+            Path = path;
+        }
+
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string Path { get; set; }
+    }
+
+    private sealed class McpRow
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string Transport { get; set; } = "stdio";
+        public string Command { get; set; } = string.Empty;
+        public string Arguments { get; set; } = string.Empty;
+        public string Url { get; set; } = string.Empty;
+        public string EnvironmentDraft { get; set; } = string.Empty;
+        public string OriginalEnvironment { get; set; } = string.Empty;
+        public bool HasStoredEnvironment { get; set; }
+        public bool EditEnvironment { get; set; }
+        public string ExtraJson { get; set; } = string.Empty;
+        public bool Enabled { get; set; } = true;
+        public bool Claude { get; set; } = true;
+        public bool Codex { get; set; } = true;
+
+        public static McpRow FromDefinition(McpServerDefinition definition) => new()
+        {
+            Id = definition.Id,
+            Name = definition.Name,
+            Transport = definition.Transport,
+            Command = definition.Command ?? string.Empty,
+            Arguments = definition.Arguments ?? string.Empty,
+            Url = definition.Url ?? string.Empty,
+            EnvironmentDraft = string.Empty,
+            OriginalEnvironment = definition.Environment ?? string.Empty,
+            HasStoredEnvironment = !string.IsNullOrWhiteSpace(definition.Environment),
+            EditEnvironment = false,
+            ExtraJson = definition.ExtraJson ?? string.Empty,
+            Enabled = definition.Enabled,
+            Claude = definition.Providers.Contains("claude-code", StringComparer.OrdinalIgnoreCase),
+            Codex = definition.Providers.Contains("codex", StringComparer.OrdinalIgnoreCase),
+        };
+
+        public McpServerDefinition ToDefinition()
+        {
+            var providers = new List<string>();
+            if (Claude) providers.Add("claude-code");
+            if (Codex) providers.Add("codex");
+            return new McpServerDefinition(
+                Id,
+                Name,
+                Transport,
+                Command,
+                Arguments,
+                Url,
+                EditEnvironment ? EnvironmentDraft : OriginalEnvironment,
+                providers.ToArray(),
+                Enabled,
+                ExtraJson);
+        }
+    }
+}

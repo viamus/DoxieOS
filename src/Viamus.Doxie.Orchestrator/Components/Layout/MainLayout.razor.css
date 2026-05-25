@@ -1,0 +1,188 @@
+#blazor-error-ui {
+    color-scheme: light only;
+    background: lightyellow;
+    bottom: 0;
+    box-shadow: 0 -1px 2px rgba(0, 0, 0, 0.2);
+    box-sizing: border-box;
+    display: none;
+    left: 0;
+    padding: 0.6rem 1.25rem 0.7rem 1.25rem;
+    position: fixed;
+    width: 100%;
+    z-index: 1000;
+}
+
+    #blazor-error-ui .dismiss {
+        cursor: pointer;
+        position: absolute;
+        right: 0.75rem;
+        top: 0.5rem;
+    }
+
+::deep .doxie-appbar {
+    height: 58px;
+    border-bottom: 1px solid color-mix(in srgb, var(--mud-palette-divider) 72%, transparent);
+    background: color-mix(in srgb, var(--mud-palette-appbar-background) 92%, transparent);
+    backdrop-filter: blur(14px);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+::deep .doxie-drawer {
+    bottom: 32px;
+    height: calc(100vh - 64px - 32px) !important;
+    border-right: 1px solid color-mix(in srgb, var(--mud-palette-divider) 72%, transparent);
+    background: var(--mud-palette-drawer-background);
+}
+
+.doxie-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding-right: 10px;
+}
+
+.doxie-topbar-context {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 10px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.75rem;
+}
+
+.doxie-context-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px solid color-mix(in srgb, var(--mud-palette-divider) 78%, transparent);
+    border-radius: var(--doxie-radius-compact);
+    background: color-mix(in srgb, var(--mud-palette-surface) 80%, transparent);
+}
+
+.doxie-topbar-action {
+    position: relative;
+}
+
+.doxie-topbar-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--mud-palette-primary);
+    color: var(--mud-palette-primary-text);
+    font-size: 0.65rem;
+    font-weight: 650;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.doxie-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1090;
+    min-height: 32px;
+    padding: 0 var(--doxie-shell-padding-x);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-top: 1px solid color-mix(in srgb, var(--mud-palette-divider) 52%, transparent);
+    background: color-mix(in srgb, var(--mud-palette-appbar-background) 70%, transparent);
+    backdrop-filter: blur(10px);
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.75rem;
+}
+
+.doxie-footer-inner {
+    width: 100%;
+    min-height: 32px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    justify-content: stretch;
+    gap: 12px;
+}
+
+.doxie-footer-link {
+    min-height: 24px;
+    border: 0;
+    border-radius: var(--doxie-radius-compact);
+    background: transparent;
+    color: var(--mud-palette-text-primary);
+    font: inherit;
+    padding: 0 8px;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+}
+
+.doxie-footer-link:hover {
+    background: color-mix(in srgb, var(--mud-palette-primary) 8%, transparent);
+    color: var(--mud-palette-primary);
+}
+
+.doxie-footer-release {
+    grid-column: 2;
+    justify-self: end;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--mud-palette-text-primary);
+}
+
+.doxie-footer-version {
+    color: inherit;
+    font-weight: 750;
+    letter-spacing: 0;
+}
+
+.doxie-footer-badge {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--mud-palette-primary);
+    color: var(--mud-palette-primary-text);
+    font-size: 0.65rem;
+    font-weight: 650;
+    line-height: 1;
+}
+
+@media (max-width: 760px) {
+    .doxie-topbar-context {
+        display: none;
+    }
+
+    .doxie-brand .mud-typography {
+        display: none;
+    }
+
+    .doxie-footer {
+        min-height: 30px;
+    }
+
+    ::deep .doxie-drawer {
+        bottom: 30px;
+        height: calc(100vh - 64px - 30px) !important;
+    }
+
+    .doxie-footer-inner {
+        grid-template-columns: minmax(0, 1fr) auto;
+        min-height: 30px;
+    }
+}

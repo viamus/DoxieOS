@@ -1,0 +1,73 @@
+@page "/workflows/{Id}/edit"
+
+@inject IWorkflowStore WorkflowStore
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IJSRuntime Js
+
+<PageTitle>Edit @(_workflow?.Name ?? Id) — DoxieOS</PageTitle>
+
+@if (_workflow is null)
+{
+    <MudAlert Severity="Severity.Error">
+        Workflow <code>@Id</code> not found. Back to <MudLink Href="/workflows">Workflows</MudLink>.
+    </MudAlert>
+}
+else
+{
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+
+    <WorkflowForm Existing="_workflow"
+                  OnSave="HandleUpdate"
+                  HeaderIcon="@Icons.Material.Filled.Edit"
+                  HeaderText="@($"Edit · {_workflow.Name}")"
+                  SaveLabel="Update workflow"
+                  CancelHref="@($"/workflows/{Id}")" />
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = string.Empty;
+
+    private WorkflowDefinition? _workflow;
+    private List<BreadcrumbItem> _breadcrumbs = new();
+
+    protected override void OnParametersSet()
+    {
+        _workflow = WorkflowStore.GetById(Id);
+        _breadcrumbs =
+        [
+            new BreadcrumbItem("Home", href: "/"),
+            new BreadcrumbItem("Workflows", href: "/workflows"),
+            new BreadcrumbItem(_workflow?.Name ?? Id, href: $"/workflows/{Id}"),
+            new BreadcrumbItem("Edit", href: null, disabled: true),
+        ];
+    }
+
+    private async Task HandleUpdate(WorkflowDefinition payload)
+    {
+        try
+        {
+            var result = await Js.InvokeAsync<SaveResult?>("doxieOs.updateWorkflow", Id, payload);
+            if (result is null)
+            {
+                Snackbar.Add("Update failed: no response from server.", Severity.Error);
+                return;
+            }
+            if (result.Ok)
+            {
+                Snackbar.Add($"Updated workflow \"{payload.Name}\"", Severity.Success);
+                Nav.NavigateTo($"/workflows/{Id}");
+            }
+            else
+            {
+                Snackbar.Add(string.IsNullOrEmpty(result.Message) ? $"Update failed: HTTP {result.Status}" : $"Update failed: {result.Message}", Severity.Error);
+            }
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Update failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private sealed record SaveResult(bool Ok, int Status, string? Message);
+}

@@ -1,0 +1,640 @@
+@page "/workflows/{Id}"
+
+@using Viamus.Doxie.Orchestrator.Components.Shared
+@inject IWorkflowStore WorkflowStore
+@inject IWorkflowRunStore WorkflowRunStore
+@inject IWorkflowRunner WorkflowRunner
+@inject IAgentCatalog AgentCatalog
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+@inject IDialogService Dialog
+@inject IJSRuntime Js
+@implements IDisposable
+
+<PageTitle>@(_workflow?.Name ?? "Workflow") — DoxieOS</PageTitle>
+
+@if (_workflow is null)
+{
+    <MudAlert Severity="Severity.Error">
+        Workflow <code>@Id</code> not found. Back to <MudLink Href="/workflows">Workflows</MudLink>.
+    </MudAlert>
+}
+else
+{
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2 flex-wrap">
+        <MudIcon Icon="@Icons.Material.Filled.AccountTree" Color="Color.Primary" />
+        <MudText Typo="Typo.h3">@_workflow.Name</MudText>
+        <MudChip T="string"
+                 Size="Size.Small"
+                 Variant="Variant.Outlined"
+                 Color="@TriggerColor(_workflow.Trigger.Kind)"
+                 Icon="@TriggerIcon(_workflow.Trigger.Kind)">@TriggerLabel(_workflow.Trigger)</MudChip>
+        @if (!string.Equals(_workflow.CatalogId, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            <MudChip T="string"
+                     Size="Size.Small"
+                     Variant="Variant.Outlined"
+                     Color="Color.Default"
+                     Icon="@Icons.Material.Filled.FolderSpecial">@_workflow.CatalogId</MudChip>
+        }
+        @if (!string.IsNullOrWhiteSpace(_workflow.WorkspaceId))
+        {
+            <MudChip T="string"
+                     Size="Size.Small"
+                     Variant="Variant.Outlined"
+                     Color="Color.Primary"
+                     Icon="@Icons.Material.Filled.Folder">@_workflow.WorkspaceId</MudChip>
+        }
+        @if (_workflow.Enabled
+             && _workflow.Trigger.Kind == WorkflowTriggerKind.Cron
+             && CronExpression.NextOccurrenceAfter(_workflow.Trigger.CronExpression, DateTime.UtcNow) is DateTime nextFire)
+        {
+            <MudTooltip Text="@($"Next cron firing (UTC: {nextFire:O})")">
+                <MudChip T="string"
+                         Size="Size.Small"
+                         Variant="Variant.Outlined"
+                         Color="Color.Default"
+                         Icon="@Icons.Material.Filled.AccessTime">next: @nextFire.ToLocalTime().ToString("HH:mm")</MudChip>
+            </MudTooltip>
+        }
+        @if (!_workflow.Enabled)
+        {
+            <MudChip T="string"
+                     Size="Size.Small"
+                     Variant="Variant.Filled"
+                     Color="Color.Warning"
+                     Icon="@Icons.Material.Filled.PauseCircle">disabled</MudChip>
+        }
+        <MudSpacer />
+        <MudStack Row="true"
+                  AlignItems="AlignItems.Center"
+                  Spacing="1"
+                  Class="doxie-action-bar"
+                  Style="justify-content: flex-end;">
+        @* Enable / disable switch — placed before Edit / Run so users
+           reach for it first when they need to stop a cron-driven flow. *@
+        <MudStack Row="true"
+                  AlignItems="AlignItems.Center"
+                  Spacing="0"
+                  Class="mr-2 doxie-action-toggle">
+            <MudSwitch T="bool"
+                       Value="_workflow.Enabled"
+                       ValueChanged="OnEnabledToggled"
+                       Color="Color.Primary"
+                       Size="Size.Small" />
+            <MudText Typo="Typo.caption" Color="Color.Default">@(_workflow.Enabled ? "enabled" : "disabled")</MudText>
+        </MudStack>
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.AutoAwesome"
+                   Class="doxie-action-button"
+                   Href="@($"/workflows/new/chat?edit={Id}")">Edit with AI</MudButton>
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Default"
+                   StartIcon="@Icons.Material.Filled.Edit"
+                   Class="doxie-action-button"
+                   Href="@($"/workflows/{Id}/edit")">Edit</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.PlayArrow"
+                   OnClick="StartManualRun"
+                   Class="doxie-action-button"
+                   Disabled="@(!_workflow.Enabled)">Run now</MudButton>
+        @if (_activeRun is not null && _activeRun.Status == WorkflowRunStatus.Running)
+        {
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Warning"
+                       StartIcon="@Icons.Material.Filled.Stop"
+                       Class="doxie-action-button"
+                       OnClick="CancelActiveRun">Cancel</MudButton>
+        }
+        </MudStack>
+    </MudStack>
+
+    <MudText Typo="Typo.subtitle1" Class="mb-4">@_workflow.Description</MudText>
+
+    @* Canvas hero — full width, ~70vh tall so the graph is the
+       page's centerpiece. Scrollable both axes; SVG sized to the
+       right- / bottom-most node so the whole graph is reachable. *@
+    <MudPaper Class="pa-0 mb-3" Elevation="0"
+              Style="@($"height: calc(100vh - 240px); min-height: 540px; overflow: auto; background-color: #0E0F0D; background-image: linear-gradient(rgba(242,239,231,0.055) 1px, transparent 1px), linear-gradient(90deg, rgba(242,239,231,0.055) 1px, transparent 1px), linear-gradient(180deg, #151613 0%, #0E0F0D 100%); background-size: 32px 32px, 32px 32px, 100% 100%; border: 1px solid rgba(242,239,231,0.10); border-radius: 8px; position: relative;{(_workflow.Enabled ? string.Empty : " opacity: 0.55;")}")">
+        <svg width="@CanvasWidth" height="@CanvasHeight"
+             style="display: block; min-width: 100%; min-height: 100%; touch-action: none; user-select: none;"
+             @onpointerdown="CloseNodeMenu"
+             @onpointermove="DragNode"
+             @onpointerup="EndNodeDrag"
+             @onpointerleave="EndNodeDrag"
+             xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <linearGradient id="workflow-canvas-bg" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="#151613" />
+                            <stop offset="100%" stop-color="#0E0F0D" />
+                        </linearGradient>
+                        <pattern id="workflow-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+                            <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(242,239,231,0.055)" stroke-width="1" />
+                        </pattern>
+                        <filter id="workflow-node-shadow" x="-20%" y="-30%" width="140%" height="170%">
+                            <feDropShadow dx="0" dy="10" stdDeviation="8" flood-color="#000000" flood-opacity="0.34" />
+                        </filter>
+                        <marker id="workflow-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+                            <path d="M 2 2 L 10 6 L 2 10 z" fill="#D97757" />
+                        </marker>
+                    </defs>
+                    <rect width="100%" height="100%" fill="url(#workflow-canvas-bg)" />
+                    <rect width="100%" height="100%" fill="url(#workflow-grid)" />
+                    @* Loop body containers — drawn first (behind edges
+                       + nodes in z-order) so the user can see at a
+                       glance which nodes are "inside" each Loop. *@
+                    @foreach (var loopGroup in _workflow.Nodes
+                        .Where(n => !string.IsNullOrEmpty(n.LoopId))
+                        .GroupBy(n => n.LoopId!, StringComparer.OrdinalIgnoreCase))
+                    {
+                        var bodyNodes = loopGroup.ToList();
+                        if (bodyNodes.Count == 0) continue;
+                        const int padX = 18;
+                        const int padTop = 30;
+                        const int padBottom = 14;
+                        var bMinX = bodyNodes.Min(n => n.X) - padX;
+                        var bMinY = bodyNodes.Min(n => n.Y) - padTop;
+                        var bMaxX = bodyNodes.Max(n => n.X) + NodeWidth + padX;
+                        var bMaxY = bodyNodes.Max(n => n.Y) + NodeHeight + padBottom;
+                        var loopOwner = _workflow.Nodes.FirstOrDefault(n =>
+                            string.Equals(n.Id, loopGroup.Key, StringComparison.OrdinalIgnoreCase));
+                        var loopLabel = loopOwner?.Label ?? loopGroup.Key;
+
+                        <g>
+                            <rect x="@bMinX" y="@bMinY"
+                                  width="@(bMaxX - bMinX)" height="@(bMaxY - bMinY)"
+                                  fill="rgba(217, 119, 87, 0.065)"
+                                  stroke="rgba(217, 119, 87, 0.58)" stroke-dasharray="8 6" stroke-width="1.5"
+                                  rx="16" ry="16" />
+                            <text x="@(bMinX + 14)" y="@(bMinY + 18)"
+                                  font-size="10.5" font-weight="700" fill="#D97757"
+                                  style="text-transform: uppercase; letter-spacing: 0;">
+                                Loop body - @Truncate(loopLabel, 32)
+                            </text>
+                        </g>
+                    }
+
+                    @* Edges next so nodes paint over endpoints *@
+                    @foreach (var edge in _workflow.Edges)
+                    {
+                        var from = NodeOrNull(edge.FromNodeId);
+                        var to = NodeOrNull(edge.ToNodeId);
+                        if (from is null || to is null) continue;
+
+                        var x1 = from.X + NodeWidth;
+                        var y1 = from.Y + NodeHeight / 2;
+                        var x2 = to.X;
+                        var y2 = to.Y + NodeHeight / 2;
+                        var midX = (x1 + x2) / 2;
+                        var path = $"M {x1} {y1} C {midX} {y1}, {midX} {y2}, {x2} {y2}";
+
+                        var color = EdgeColor(from.Id, to.Id);
+                        <path d="@path" stroke="rgba(242,239,231,0.075)" stroke-width="7" fill="none" stroke-linecap="round" />
+                        <path d="@path" stroke="@color" stroke-width="2.4" fill="none" opacity="0.95" stroke-linecap="round" marker-end="url(#workflow-arrow)" />
+                    }
+
+                    @foreach (var node in _workflow.Nodes)
+                    {
+                        var status = _activeRun is null
+                            ? WorkflowNodeRunStatus.Pending
+                            : _activeRun.NodeRun(node.Id).Status;
+                        var fill = NodeFill(status);
+                        var effKind = EffectiveKindForRender(node);
+                        var stroke = NodeStroke(effKind, status);
+                        var labelColor = "#F2EFE7";
+
+                        <g transform="@($"translate({node.X},{node.Y})")"
+                           style="@($"cursor: {NodeCursor(node.Id)}; touch-action: none; user-select: none;")"
+                           @onpointerdown="@((PointerEventArgs e) => BeginNodeDrag(node, e))"
+                           @onpointerdown:stopPropagation="true"
+                           @oncontextmenu="@(() => OpenNodeMenu(node))"
+                           @oncontextmenu:preventDefault="true"
+                           @oncontextmenu:stopPropagation="true">
+                            @if (node.Id == _selectedNodeId)
+                            {
+                                <rect x="-5" y="-5" width="@(NodeWidth + 10)" height="@(NodeHeight + 10)"
+                                      rx="15" ry="15" fill="none" stroke="#D97757" stroke-width="2" opacity="0.85" />
+                            }
+                            <rect width="@NodeWidth" height="@NodeHeight"
+                                  rx="12" ry="12"
+                                  fill="@fill"
+                                  stroke="@stroke"
+                                  stroke-width="1.5"
+                                  filter="url(#workflow-node-shadow)" />
+                            @* kind badge *@
+                            <rect x="1" y="1" width="@(NodeWidth - 2)" height="6"
+                                  rx="12" ry="12" fill="@stroke" opacity="0.85" />
+                            <rect x="12" y="14" width="78" height="20"
+                                  rx="10" ry="10" fill="@stroke" opacity="0.13" />
+                            <text x="23" y="28" font-size="10" font-weight="700"
+                                  fill="@stroke" style="text-transform: uppercase; letter-spacing: 0;">
+                                @KindLabel(effKind)
+                            </text>
+
+                            @* main label *@
+                            <text x="14" y="50" font-size="13" font-weight="700" fill="@labelColor">
+                                @Truncate(node.Label, 24)
+                            </text>
+
+                            @* sub-line: agent id or trigger / output config *@
+                            <text x="14" y="66" font-size="10.5" fill="#A9A39A" font-family="Cascadia Code, Consolas, monospace">
+                                @SubLine(node)
+                            </text>
+
+                            @* status dot *@
+                            <circle cx="@(NodeWidth - 18)" cy="24" r="7" fill="@StatusDot(status)" />
+                            <circle cx="@(NodeWidth - 18)" cy="24" r="10" fill="none" stroke="@StatusDot(status)" stroke-width="1.5" opacity="0.28" />
+                            <circle cx="0" cy="@(NodeHeight / 2)" r="4" fill="#0E0F0D" stroke="@stroke" stroke-width="2" />
+                            <circle cx="@NodeWidth" cy="@(NodeHeight / 2)" r="4" fill="#0E0F0D" stroke="@stroke" stroke-width="2" />
+
+                            @* workspace badge - small chip overlapping the
+                               top edge, present when this step runs at /
+                               writes into a workspace. Truncated to fit. *@
+                            @{ var ws = WorkspaceForBadge(node); }
+                            @if (!string.IsNullOrEmpty(ws))
+                            {
+                                <g transform="translate(0,0)">
+                                    <rect x="@(NodeWidth - 104)" y="@(NodeHeight - 22)" width="92" height="18" rx="9" ry="9"
+                                          fill="rgba(217,119,87,0.12)" stroke="rgba(217,119,87,0.55)" stroke-width="1" />
+                                    <text x="@(NodeWidth - 94)" y="@(NodeHeight - 10)" font-size="9.5" fill="#D97757" font-weight="700">WS @Truncate(ws, 11)</text>
+                                </g>
+                            }
+                        </g>
+                    }
+
+                    @if (_nodeMenu is { } menu)
+                    {
+                        var agentName = string.IsNullOrWhiteSpace(menu.AgentId)
+                            ? "Workflow step"
+                            : AgentCatalog.FindById(menu.AgentId)?.Name ?? menu.AgentId;
+                        <g transform="@($"translate({menu.X},{menu.Y})")"
+                           style="filter: drop-shadow(0 16px 26px rgba(0,0,0,0.45));">
+                            <rect width="190" height="@(_activeRun is null ? 74 : 104)" rx="10" ry="10"
+                                  fill="#171816" stroke="rgba(242,239,231,0.16)" stroke-width="1" />
+                            <text x="14" y="22" font-size="10" font-weight="700" fill="#D97757"
+                                  style="text-transform: uppercase; letter-spacing: 0;">Step</text>
+                            <text x="14" y="40" font-size="12" font-weight="700" fill="#F2EFE7">
+                                @Truncate(agentName, 22)
+                            </text>
+                            @if (_activeRun is not null)
+                            {
+                                <g transform="translate(0,46)"
+                                   style="cursor: pointer;"
+                                   @onclick="@(() => RerunFromNode(menu.NodeId))"
+                                   @onclick:stopPropagation="true"
+                                   @onpointerdown:stopPropagation="true">
+                                    <rect x="8" y="0" width="174" height="22" rx="6" ry="6" fill="rgba(217,119,87,0.12)" />
+                                    <text x="18" y="15" font-size="11" font-weight="700" fill="#F2EFE7">Run from here</text>
+                                </g>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(menu.AgentId))
+                            {
+                                <g transform="@($"translate(0,{(_activeRun is null ? 46 : 74)})")"
+                                   style="cursor: pointer;"
+                                   @onclick="@(() => NavigateToAgent(menu.AgentId!))"
+                                   @onclick:stopPropagation="true"
+                                   @onpointerdown:stopPropagation="true">
+                                    <rect x="8" y="0" width="174" height="22" rx="6" ry="6" fill="rgba(242,239,231,0.055)" />
+                                    <text x="18" y="15" font-size="11" font-weight="700" fill="#F2EFE7">Open agent</text>
+                                </g>
+                            }
+                        </g>
+                    }
+                </svg>
+    </MudPaper>
+
+    <MudStack Row="true" Spacing="3" Class="mb-3 flex-wrap">
+        @foreach (var (color, label) in _legend)
+        {
+            <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                <span style="@($"display:inline-block; width:10px; height:10px; border-radius:50%; background:{color};")"></span>
+                <MudText Typo="Typo.caption" Color="Color.Default">@label</MudText>
+            </MudStack>
+        }
+    </MudStack>
+
+    <MudGrid>
+        <MudItem xs="12" md="7">
+            <MudPaper Class="pa-3" Elevation="2" Style="min-height: 240px;">
+                <MudText Typo="Typo.subtitle1" Class="mb-2">
+                    @if (_selectedNodeId is null) { <span>Select a node</span> }
+                    else { <span>Node detail</span> }
+                </MudText>
+                @if (_selectedNode is not null)
+                {
+                    <MudStack Spacing="2">
+                        <div>
+                            <MudText Typo="Typo.caption" Color="Color.Default">Kind</MudText>
+                            <MudText Typo="Typo.body2">@_selectedNode.Kind</MudText>
+                        </div>
+                        <div>
+                            <MudText Typo="Typo.caption" Color="Color.Default">Label</MudText>
+                            <MudText Typo="Typo.body2">@_selectedNode.Label</MudText>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_selectedNode.AgentId))
+                        {
+                            <div>
+                                <MudText Typo="Typo.caption" Color="Color.Default">Agent</MudText>
+                                <MudText Typo="Typo.body2">
+                                    @(AgentCatalog.FindById(_selectedNode.AgentId)?.Name ?? _selectedNode.AgentId)
+                                    @if (!string.IsNullOrEmpty(_selectedNode.AgentMode))
+                                    {
+                                        <MudText Typo="Typo.caption" Inline="true" Color="Color.Default">
+                                            &nbsp;· mode: @_selectedNode.AgentMode
+                                        </MudText>
+                                    }
+                                </MudText>
+                            </div>
+                        }
+                        @if (_selectedNode.Inputs is { Count: > 0 } inputs)
+                        {
+                            <div>
+                                <MudText Typo="Typo.caption" Color="Color.Default" Class="mb-1">Inputs</MudText>
+                                @foreach (var pair in inputs)
+                                {
+                                    <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.78rem;">
+                                        @pair.Key = @pair.Value
+                                    </MudText>
+                                }
+                            </div>
+                        }
+                        @if (_selectedNode.Kind == WorkflowNodeKind.Output)
+                        {
+                            <div>
+                                <MudText Typo="Typo.caption" Color="Color.Default">Target workspace</MudText>
+                                <MudText Typo="Typo.body2">@(_selectedNode.OutputWorkspaceId ?? "(none)")</MudText>
+                                @if (!string.IsNullOrEmpty(_selectedNode.OutputFileName))
+                                {
+                                    <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.78rem;">
+                                        file: @_selectedNode.OutputFileName
+                                    </MudText>
+                                }
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(_selectedNode.WorkspaceId))
+                        {
+                            <div>
+                                <MudText Typo="Typo.caption" Color="Color.Default">Runs inside workspace</MudText>
+                                <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+                                    <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Color="Color.Primary" Size="Size.Small" />
+                                    <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@_selectedNode.WorkspaceId</MudText>
+                                </MudStack>
+                            </div>
+                        }
+                        @if (_activeRun is not null)
+                        {
+                            var nr = _activeRun.NodeRun(_selectedNode.Id);
+
+                            @* Approval-gate prompt — shown prominently
+                               when this node is currently parked. The
+                               buttons below trigger the approve/reject
+                               endpoints on the runner. Optional comment
+                               box becomes the rejection reason or the
+                               approver note in the node's logs. *@
+                            @if (nr.Status == WorkflowNodeRunStatus.AwaitingApproval)
+                            {
+                                @* Theme-aware styling: rgba alphas keep the card legible on
+                                   both light and dark backgrounds. Border uses the project's
+                                   tigerlily orange (warm palette) since "awaiting decision"
+                                   is brand-relevant rather than generic warning yellow. Text
+                                   colors stay default so MudBlazor switches them per theme. *@
+                                <MudPaper Elevation="0" Class="pa-3 mb-2"
+                                          Style="border: 1px solid rgba(217, 119, 87, 0.55); border-left: 4px solid #D97757; border-radius: 6px; background: rgba(217, 119, 87, 0.08);">
+                                    <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="mb-2">
+                                        <MudIcon Icon="@Icons.Material.Filled.PauseCircle" Style="color: #D97757;" />
+                                        <MudText Typo="Typo.subtitle2"><strong>Awaiting your decision</strong></MudText>
+                                    </MudStack>
+                                    @{
+                                        var prompt = _selectedNode.Inputs?.GetValueOrDefault("prompt");
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(prompt))
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mb-2">@prompt</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.body2" Class="mb-2" Color="Color.Default">
+                                            This run is parked at an approval gate. Approve to continue downstream nodes, Reject to cancel the run.
+                                        </MudText>
+                                    }
+                                    <MudTextField @bind-Value="_approvalComment"
+                                                  Label="Comment (optional)"
+                                                  Placeholder="Reason for rejection, or note for the audit log"
+                                                  Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense"
+                                                  FullWidth="true"
+                                                  Class="mb-2" />
+                                    <MudStack Row="true" Spacing="1">
+                                        <MudButton Variant="Variant.Filled"
+                                                   Color="Color.Success"
+                                                   StartIcon="@Icons.Material.Filled.CheckCircle"
+                                                   OnClick="@(() => ResolveGate(approve: true))"
+                                                   Disabled="@_resolvingGate">
+                                            @(_resolvingGate ? "Working…" : "Approve")
+                                        </MudButton>
+                                        <MudButton Variant="Variant.Outlined"
+                                                   Color="Color.Error"
+                                                   StartIcon="@Icons.Material.Filled.Cancel"
+                                                   OnClick="@(() => ResolveGate(approve: false))"
+                                                   Disabled="@_resolvingGate">
+                                            Reject
+                                        </MudButton>
+                                    </MudStack>
+                                </MudPaper>
+                            }
+                            <MudDivider Class="my-2" />
+                            <div>
+                                <MudText Typo="Typo.caption" Color="Color.Default">Status</MudText>
+                                <MudChip T="string"
+                                         Size="Size.Small"
+                                         Color="@NodeRunChipColor(nr.Status)"
+                                         Variant="Variant.Filled">@nr.Status</MudChip>
+                            </div>
+                            @if (!string.IsNullOrEmpty(nr.OutputSummary))
+                            {
+                                <div>
+                                    <MudText Typo="Typo.caption" Color="Color.Default">Output</MudText>
+                                    <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.78rem;">
+                                        @nr.OutputSummary
+                                    </MudText>
+                                </div>
+                            }
+                            @if (CanSendWorkflowHint)
+                            {
+                                <MudPaper Elevation="0"
+                                          Class="pa-3 doxie-human-loop">
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-2">
+                                        <MudIcon Icon="@Icons.Material.Filled.TipsAndUpdates" Size="Size.Small" Color="Color.Info" />
+                                        <MudText Typo="Typo.subtitle2">Guide running workflow</MudText>
+                                    </MudStack>
+                                    <div class="doxie-human-loop-body">
+                                        <MudTextField @bind-Value="_operatorHintDraft"
+                                                      Placeholder="Tell the running agent what to adjust..."
+                                                      Variant="Variant.Outlined"
+                                                      Margin="Margin.Dense"
+                                                      Lines="2"
+                                                      FullWidth="true" />
+                                        <MudButton Variant="Variant.Filled"
+                                                   Color="Color.Info"
+                                                   StartIcon="@Icons.Material.Filled.Send"
+                                                   Class="doxie-action-button doxie-human-loop-send"
+                                                   OnClick="SendWorkflowHint"
+                                                   Disabled="@(_sendingOperatorHint || string.IsNullOrWhiteSpace(_operatorHintDraft))">
+                                            @(_sendingOperatorHint ? "Sending..." : "Send hint")
+                                        </MudButton>
+                                    </div>
+                                </MudPaper>
+                            }
+                            @if (nr.Logs.Count > 0)
+                            {
+                                <div>
+                                    <MudText Typo="Typo.caption" Color="Color.Default" Class="mb-1">Logs</MudText>
+                                    <RunLogViewer Entries="@WorkflowLogEntries(nr.Logs)"
+                                                  MaxHeight="280"
+                                                  LogKey="@($"{_activeRun.Id}:{_selectedNode.Id}")"
+                                                  SearchPlaceholder="Search this node's logs..."
+                                                  EmptyText="No logs recorded for this node." />
+                                </div>
+                            }
+                        }
+                    </MudStack>
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Default">Click a node in the canvas to inspect its config and live logs.</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="5">
+            <MudPaper Class="pa-3 mb-3" Elevation="2">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-1">
+                    <MudIcon Icon="@Icons.Material.Filled.Code" Color="Color.Default" Size="Size.Small" />
+                    <MudText Typo="Typo.subtitle1">Environment</MudText>
+                    <MudSpacer />
+                    @if (_workflow.Env is { Count: > 0 } envCount)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Default">@envCount.Count var(s)</MudText>
+                    }
+                </MudStack>
+                @if (_workflow.Env is null || _workflow.Env.Count == 0)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Default">
+                        No workflow-scoped env. Process env + skill-local <code>.env</code> + the bound workspace's <code>.env</code> still apply.
+                    </MudText>
+                }
+                else
+                {
+                    <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                        @foreach (var pair in _workflow.Env)
+                        {
+                            <MudChip T="string"
+                                     Size="Size.Small"
+                                     Variant="Variant.Outlined"
+                                     Color="Color.Default"
+                                     Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                                @pair.Key=@(LooksSecretKey(pair.Key) ? "***" : pair.Value)
+                            </MudChip>
+                        }
+                    </MudStack>
+                    <MudText Typo="Typo.caption" Color="Color.Warning" Class="d-block mt-2">
+                        ⚠ Plaintext storage — keys matching token / secret / password / key / *_pat are masked here but stored as-is in workflow.json.
+                    </MudText>
+                }
+            </MudPaper>
+
+            <MudPaper Class="pa-3" Elevation="2" Style="min-height: 200px;">
+                <MudText Typo="Typo.subtitle1" Class="mb-2">Recent runs</MudText>
+                @{
+                    var runs = WorkflowRunStore.ListByWorkflow(_workflow.Id).Take(8).ToList();
+                }
+                @if (runs.Count == 0)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Default">No runs yet — click "Run now".</MudText>
+                }
+                else
+                {
+                    <MudList T="WorkflowRun" Dense="true">
+                        @foreach (var r in runs)
+                        {
+                            var selected = _activeRun?.Id == r.Id;
+                            <MudListItem T="WorkflowRun" OnClick="@(() => SelectRun(r))" Style="@(selected ? "background: rgba(217,119,87,0.12);" : null)">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                    <MudChip T="string"
+                                             Size="Size.Small"
+                                             Color="@RunStatusColor(r.Status)"
+                                             Variant="Variant.Filled">@r.Status</MudChip>
+                                    <MudStack Spacing="0">
+                                        <MudText Typo="Typo.body2">@r.TriggeredBy</MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Default">
+                                            @r.StartedAt.ToLocalTime().ToString("HH:mm:ss") · @FormatDuration(r)
+                                        </MudText>
+                                    </MudStack>
+                                    <MudSpacer />
+                                    @* Run again — only meaningful when the
+                                       workflow declares trigger inputs (otherwise
+                                       Run now does the same job). Pre-fills the
+                                       dialog with this run's TriggerInputs so the
+                                       user only edits what changed. *@
+                                    @if (_workflow.Trigger.Inputs is { Count: > 0 } && _workflow.Enabled)
+                                    {
+                                        <MudTooltip Text="Run again with this run's inputs">
+                                            <MudIconButton Icon="@Icons.Material.Filled.Replay"
+                                                           Size="Size.Small"
+                                                           Color="Color.Default"
+                                                           OnClick="@(() => RerunWith(r))"
+                                                           OnClickStopPropagation="true" />
+                                        </MudTooltip>
+                                    }
+                                    <MudTooltip Text="Browse files for this run">
+                                        <MudIconButton Icon="@Icons.Material.Filled.FolderOpen"
+                                                       Size="Size.Small"
+                                                       Color="Color.Primary"
+                                                       OnClick="@(() => OpenFilesForRun(r))"
+                                                       OnClickStopPropagation="true" />
+                                    </MudTooltip>
+                                </MudStack>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @* Files explorer — modal so the tree+preview gets full screen
+       real-estate without bloating the main page. *@
+    <MudDialog @bind-Visible="_filesDialogOpen"
+               Options="@(new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true, BackdropClick = true })">
+        <TitleContent>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Color="Color.Primary" />
+                <MudText Typo="Typo.h6">Files produced by this run</MudText>
+                @if (_activeRun is not null)
+                {
+                    <MudSpacer />
+                    <MudText Typo="Typo.caption" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                        .runs/@_activeRun.Id
+                    </MudText>
+                }
+            </MudStack>
+        </TitleContent>
+        <DialogContent>
+            @if (_activeRun is not null && _filesDialogOpen)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Default" Class="mb-2 d-block">
+                    Folders below correspond to each workflow node — open a node folder to inspect what it produced.
+                </MudText>
+                <RunFilesExplorer RootKind="workflow-run" Identifier="@_activeRun.Id" />
+            }
+        </DialogContent>
+        <DialogActions>
+            <MudButton OnClick="@(() => _filesDialogOpen = false)">Close</MudButton>
+        </DialogActions>
+    </MudDialog>
+
+}

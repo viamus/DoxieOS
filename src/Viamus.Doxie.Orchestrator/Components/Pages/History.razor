@@ -1,0 +1,233 @@
+@page "/history"
+@inject IAgentCatalog Catalog
+@inject IAgentRunStore Store
+@inject IWorkflowRunStore WorkflowRunStore
+@inject IAgentRunner Runner
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@implements IDisposable
+
+<PageTitle>@Lang["History.Title"] - DoxieOS</PageTitle>
+
+<MudBreadcrumbs Items="Breadcrumbs" Class="px-0 mb-2" />
+
+<MudStack Row="true" AlignItems="AlignItems.Start" Class="mb-6">
+    <MudStack Spacing="0">
+        <MudText Typo="Typo.h3">@Lang["History.Title"]</MudText>
+        <MudText Typo="Typo.subtitle1">
+            @Lang["History.Subtitle"]
+        </MudText>
+    </MudStack>
+    <MudSpacer />
+    <MudButton Variant="Variant.Outlined"
+               Color="Color.Error"
+               StartIcon="@Icons.Material.Filled.DeleteSweep"
+               OnClick="ClearHistory"
+               Disabled="@_clearingHistory">
+        @(_clearingHistory ? Lang["History.Clearing"] : Lang["History.Clear"])
+    </MudButton>
+</MudStack>
+
+@if (!string.IsNullOrWhiteSpace(_loadError))
+{
+    <MudAlert Severity="Severity.Error">@_loadError</MudAlert>
+}
+else if (_loadingRuns)
+{
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudProgressCircular Color="Color.Primary" Size="Size.Small" Indeterminate="true" />
+            <MudText Typo="Typo.body2" Color="Color.Default">@Lang["History.Loading"]</MudText>
+        </MudStack>
+    </MudPaper>
+}
+else if (_runs.Count == 0)
+{
+    <MudPaper Class="pa-6" Elevation="2">
+        <MudText Typo="Typo.body2" Color="Color.Default">
+            @Lang["History.Empty"]
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudTable Items="_runs"
+              Hover="true"
+              Bordered="false"
+              Striped="true"
+              Elevation="2"
+              Dense="true"
+              OnRowClick="OnRowClick"
+              T="AgentRun">
+        <HeaderContent>
+            <MudTh>@Lang["Common.Started"]</MudTh>
+            <MudTh>@Lang["History.Agent"]</MudTh>
+            <MudTh>@Lang["Common.Status"]</MudTh>
+            <MudTh>@Lang["Common.Duration"]</MudTh>
+            <MudTh>@Lang["History.Exit"]</MudTh>
+            <MudTh>@Lang["Common.Arguments"]</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Started">@context.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+            <MudTd DataLabel="Agent">@AgentName(context.AgentId)</MudTd>
+            <MudTd DataLabel="Status">
+                <MudChip T="string"
+                         Size="Size.Small"
+                         Color="@StatusColor(context.Status)"
+                         Variant="Variant.Filled">@context.Status</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Duration">@FormatDuration(context)</MudTd>
+            <MudTd DataLabel="Exit">@(context.ExitCode?.ToString() ?? "-")</MudTd>
+            <MudTd DataLabel="Arguments">
+                <MudText Typo="Typo.body2"
+                         title="@context.Arguments"
+                         Style="font-family: 'Cascadia Code', Consolas, monospace; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    @FormatArguments(context.Arguments)
+                </MudText>
+            </MudTd>
+        </RowTemplate>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="new[] { 10, 25, 50, 100 }" />
+        </PagerContent>
+    </MudTable>
+}
+
+@code {
+    private List<BreadcrumbItem> Breadcrumbs =>
+    [
+        new BreadcrumbItem(Lang["Common.Home"], href: "/"),
+        new BreadcrumbItem(Lang["History.Title"], href: null, disabled: true),
+    ];
+
+    private IReadOnlyList<AgentRun> _runs = Array.Empty<AgentRun>();
+    private bool _loadingRuns = true;
+    private bool _clearingHistory;
+    private string? _loadError;
+    private DateTimeOffset _lastEventRefresh = DateTimeOffset.MinValue;
+
+    protected override void OnInitialized()
+    {
+        Runner.RunUpdated += OnRunUpdated;
+        _ = LoadRunsAsync(showSpinner: true, refreshAfter: true);
+    }
+
+    public void Dispose()
+    {
+        Runner.RunUpdated -= OnRunUpdated;
+    }
+
+    private async void OnRunUpdated(AgentRun run)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastEventRefresh < TimeSpan.FromSeconds(2)
+            && run.Status is AgentRunStatus.Queued or AgentRunStatus.Running)
+        {
+            return;
+        }
+
+        _lastEventRefresh = now;
+        await LoadRunsAsync(showSpinner: false, refreshAfter: false);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadRunsAsync(bool showSpinner, bool refreshAfter)
+    {
+        if (showSpinner)
+        {
+            _loadingRuns = true;
+        }
+
+        try
+        {
+            _loadError = null;
+            _runs = await Task.Run(Store.ListAll);
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Could not load run history: {ex.Message}";
+        }
+        finally
+        {
+            _loadingRuns = false;
+        }
+
+        if (refreshAfter)
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<AgentRun> args)
+    {
+        if (args.Item is null) return;
+        Nav.NavigateTo($"/agents/{args.Item.AgentId}?run={args.Item.Id}");
+    }
+
+    private async Task ClearHistory()
+    {
+        bool confirmed;
+        try
+        {
+            confirmed = await Js.InvokeAsync<bool>(
+                "doxieOs.confirm",
+                "Clear all agent and workflow execution history? Running processes are not stopped.");
+        }
+        catch (JSException)
+        {
+            confirmed = false;
+        }
+
+        if (!confirmed) return;
+
+        _clearingHistory = true;
+        try
+        {
+            var agentCount = Store.ClearAll();
+            var workflowCount = WorkflowRunStore.ClearAll();
+            await LoadRunsAsync(showSpinner: false, refreshAfter: true);
+            Snackbar.Add($"Cleared {agentCount} agent run(s) and {workflowCount} workflow run(s).", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not clear history: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _clearingHistory = false;
+        }
+    }
+
+    private string AgentName(string agentId) =>
+        Catalog.FindById(agentId)?.Name ?? agentId;
+
+    private static MudBlazor.Color StatusColor(AgentRunStatus status) => status switch
+    {
+        AgentRunStatus.Queued => MudBlazor.Color.Default,
+        AgentRunStatus.Running => MudBlazor.Color.Info,
+        AgentRunStatus.Completed => MudBlazor.Color.Success,
+        AgentRunStatus.Failed => MudBlazor.Color.Error,
+        AgentRunStatus.Cancelled => MudBlazor.Color.Warning,
+        AgentRunStatus.Interrupted => MudBlazor.Color.Dark,
+        _ => MudBlazor.Color.Default,
+    };
+
+    private static string FormatDuration(AgentRun run)
+    {
+        var end = run.FinishedAt ?? DateTimeOffset.UtcNow;
+        var duration = end - run.StartedAt;
+        return duration.TotalSeconds < 60
+            ? $"{duration.TotalSeconds:0.0}s"
+            : duration.TotalMinutes < 60
+                ? $"{duration.TotalMinutes:0.0}m"
+                : $"{duration.TotalHours:0.0}h";
+    }
+
+    private static string FormatArguments(string? arguments)
+    {
+        if (string.IsNullOrWhiteSpace(arguments)) return "-";
+        var compact = System.Text.RegularExpressions.Regex.Replace(arguments.Trim(), @"\s+", " ");
+        return compact.Length <= 140 ? compact : compact[..137] + "...";
+    }
+}

@@ -1,0 +1,4 @@
+networks:
+  doxie:
+    external: true
+    name: ${DOXIE_DOCKER_NETWORK:?Set DOXIE_DOCKER_NETWORK to the existing MCP Docker network}

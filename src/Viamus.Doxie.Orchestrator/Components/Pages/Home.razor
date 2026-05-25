@@ -1,0 +1,461 @@
+@page "/"
+
+@inject IAgentCatalog AgentCatalog
+@inject IAgentRunStore AgentRunStore
+@inject IAgentRunner AgentRunner
+@inject ILibraryStore LibraryStore
+@inject IWorkspaceStore WorkspaceStore
+@inject IConsoleSessionStore ConsoleStore
+@inject IWorkflowStore WorkflowStore
+@inject IWorkflowRunStore WorkflowRunStore
+@inject IWorkflowRunner WorkflowRunner
+@inject IAgentProviderResolver ProviderResolver
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@inject NavigationManager Nav
+@implements IDisposable
+
+<PageTitle>DoxieOS - @Lang["Home.Title"]</PageTitle>
+
+<div class="doxie-page">
+<div class="doxie-page-header">
+    <div>
+        <div class="doxie-page-title">
+            <span class="doxie-page-title-icon">
+                <MudIcon Icon="@Icons.Material.Filled.Dashboard" Size="Size.Small" />
+            </span>
+            <MudText Typo="Typo.h3">@Lang["Home.Title"]</MudText>
+        </div>
+        <MudText Typo="Typo.subtitle1" Class="doxie-page-subtitle">
+            @Lang["Home.Subtitle"]
+        </MudText>
+    </div>
+    <div class="doxie-page-actions">
+        <MudTooltip Text="@Lang["Home.ActiveProviderTooltip"]">
+            <MudChip T="string"
+                     Size="Size.Small"
+                     Variant="Variant.Outlined"
+                     Color="Color.Primary"
+                     Icon="@Icons.Material.Filled.Memory"
+                     OnClick="@(() => Nav.NavigateTo("/settings"))">
+                @ProviderResolver.Resolve().DisplayName
+            </MudChip>
+        </MudTooltip>
+        <MudText Typo="Typo.caption" Color="Color.Default">
+            @Lang["Home.Updated"] @DateTime.Now.ToString("HH:mm:ss")
+        </MudText>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(_dashboardLoadError))
+{
+    <MudAlert Severity="Severity.Error" Class="mb-3">@_dashboardLoadError</MudAlert>
+}
+else if (_dashboardLoading)
+{
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="mb-3" />
+}
+
+@* ─── Empty-state CTA (first-launch / fresh clone) ────────── *@
+@* Shown only when both workflows AND user-created agents are empty —
+   the framework's first-party Doxie kit doesn't count, otherwise this
+   would never trigger. Goal: a brand-new user lands on the dashboard
+   and immediately sees what the next click is, not four zero cards. *@
+@if (_dashboardLoaded && _workflows.Count == 0 && _userCreatedAgentCount == 0)
+{
+    <MudPaper Class="pa-5 doxie-empty-state" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Class="mb-3">
+            <MudIcon Icon="@Icons.Material.Filled.WavingHand" Color="Color.Primary" Size="Size.Large" />
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.h5">@Lang["Home.Welcome"]</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Default">
+                    @Lang["Home.WelcomeBody"]
+                </MudText>
+            </MudStack>
+        </MudStack>
+        <MudStack Row="true" Spacing="2" Class="flex-wrap">
+            <MudButton Variant="Variant.Filled"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.AutoAwesome"
+                       Href="/agents/new">
+                @Lang["Home.BuildWithAi"]
+            </MudButton>
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Default"
+                       StartIcon="@Icons.Material.Filled.AccountTree"
+                       Href="/workflows/new/chat">
+                @Lang["Home.ComposeWorkflow"]
+            </MudButton>
+            <MudButton Variant="Variant.Outlined"
+                       Color="Color.Default"
+                       StartIcon="@Icons.Material.Filled.Folder"
+                       Href="/workspaces">
+                @Lang["Home.CreateWorkspace"]
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+@* ─── Failures pill (last 24h) ───────────────────────────── *@
+@* Only shown when there are failures in the last 24h. Click jumps
+   straight to /history where the user can drill into each one.
+   Sits above the stat row so red sticks out against the neutral
+   stat backgrounds. *@
+@* ─── Stat row ───────────────────────────────────────────── *@
+@* Palette: Tigerlily border ONLY on Workflows (the primary mental
+   model now). Other cards stay neutral so the colour budget gets
+   spent on real semantic state below (info / warning / success
+   chips on live runs, soon-firing countdowns, status indicators). *@
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Class="pa-3 doxie-surface dash-stat dash-stat-primary dash-stat-fixed" Elevation="0" @onclick="@(() => Nav.NavigateTo("/workflows"))">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icons.Material.Filled.AccountTree" Color="Color.Primary" Size="Size.Large" />
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h4">@_workflows.Count</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.Workflows"]</MudText>
+                </MudStack>
+                <MudSpacer />
+                @* Sparkline — last 7 days of all runs (workflow + agent
+                   merged). Tiny, label-less, sized to live INSIDE the
+                   stat card without pushing the rest down. Hidden when
+                   the whole window is zero so a fresh install doesn't
+                   show a flat line at the bottom. *@
+                @if (_workflowSparkline.Sum() > 0)
+                {
+                    var maxSparkline = _workflowSparkline.Max();
+                    <div class="dash-sparkline" aria-hidden="true">
+                        @foreach (var value in _workflowSparkline)
+                        {
+                            <span class="dash-sparkline-bar"
+                                  style="@($"height: {SparklineBarHeight(value, maxSparkline):0}px;")"></span>
+                        }
+                    </div>
+                }
+            </MudStack>
+            <MudStack Row="true" Spacing="1" Class="mt-2 flex-wrap">
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    @_workflows.Count(w => w.Enabled) @Lang["Home.Enabled"] · @_workflows.Count(w => w.Trigger.Kind == WorkflowTriggerKind.Cron) cron · 7d: @_workflowSparkline.Sum() @Lang["Home.Runs"]
+                </MudText>
+            </MudStack>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Class="pa-3 doxie-surface dash-stat dash-stat-fixed" Elevation="0" @onclick="@(() => Nav.NavigateTo("/agents"))">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icons.Material.Filled.SmartToy" Color="Color.Default" Size="Size.Large" />
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h4">@_agents.Count</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.Agents"]</MudText>
+                </MudStack>
+            </MudStack>
+            <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-2">
+                <span title="@AgentsCategoryBreakdownTitle()">@AgentsCategorySummary()</span>
+            </MudText>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Class="pa-3 doxie-surface dash-stat dash-stat-fixed" Elevation="0" @onclick="@(() => Nav.NavigateTo("/libraries"))">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icons.Material.Filled.MenuBook" Color="Color.Default" Size="Size.Large" />
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h4">@_libraries.Count</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.Libraries"]</MudText>
+                </MudStack>
+            </MudStack>
+            <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-2">
+                @{
+                    var totalMemories = _libraries.Sum(l => l.Memories?.Count ?? 0);
+                }
+                @LibraryMemorySummary(totalMemories)
+            </MudText>
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Class="pa-3 doxie-surface dash-stat dash-stat-fixed" Elevation="0" @onclick="@(() => Nav.NavigateTo("/workspaces"))">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Default" Size="Size.Large" />
+                <MudStack Spacing="0">
+                    <MudText Typo="Typo.h4">@_workspaces.Count</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.Workspaces"]</MudText>
+                </MudStack>
+            </MudStack>
+            <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-2">
+                @LiveConsolesSummary()
+            </MudText>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@* ─── Live now + Next firings ─────────────────────────────── *@
+@* Mid-row panels share the same 6+6 split + same min-height so the
+   "Live now" / "Next firings" / "Run health" / "Activity" rectangles
+   all line up on a strict grid. *@
+<MudGrid Class="mb-4">
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4 doxie-surface" Elevation="0" Style="min-height: 320px;">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-3">
+                <MudIcon Icon="@Icons.Material.Filled.Bolt" Color="Color.Primary" />
+                <MudText Typo="Typo.h6">@Lang["Home.LiveNow"]</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@(LiveCount > 0 ? Color.Primary : Color.Default)">@LiveCount</MudChip>
+            </MudStack>
+
+            @if (LiveCount == 0)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    @Lang["Home.NothingRunning"] <MudLink Href="/workflows">@Lang["Home.Workflows"]</MudLink> @Lang["Home.OrOpenAgent"] <MudLink Href="/agents">@Lang["Home.Agents"]</MudLink>.
+                </MudText>
+            }
+            else
+            {
+                <div class="dash-panel-list">
+                @foreach (var run in LiveWorkflowRuns.Take(5))
+                {
+                    var wf = _workflows.FirstOrDefault(w => w.Id == run.WorkflowId);
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2"
+                              Style="padding: 6px 8px; background: rgba(33,150,243,0.06); border-radius: 4px; cursor: pointer;"
+                              @onclick="@(() => Nav.NavigateTo($"/workflows/{run.WorkflowId}?run={run.Id}"))">
+                        <MudIcon Icon="@Icons.Material.Filled.AccountTree" Color="Color.Info" Size="Size.Small" />
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.body2">@(wf?.Name ?? run.WorkflowId)</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default">
+                                @run.TriggeredBy · @Lang["Home.Started"] @RelativeTime(run.StartedAt)
+                            </MudText>
+                        </MudStack>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">@run.Status</MudChip>
+                    </MudStack>
+                }
+                @foreach (var run in LiveAgentRuns.Take(5))
+                {
+                    var agent = AgentCatalog.FindById(run.AgentId);
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2"
+                              Style="padding: 6px 8px; background: rgba(33,150,243,0.06); border-radius: 4px; cursor: pointer;"
+                              @onclick="@(() => Nav.NavigateTo($"/agents/{run.AgentId}?run={run.Id}"))">
+                        <MudIcon Icon="@Icons.Material.Filled.SmartToy" Color="Color.Info" Size="Size.Small" />
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.body2">@(agent?.Name ?? run.AgentId)</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                                @(string.IsNullOrEmpty(run.Arguments) ? "(no args)" : Truncate(run.Arguments, 60)) · @RelativeTime(run.StartedAt)
+                            </MudText>
+                        </MudStack>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">@run.Status</MudChip>
+                    </MudStack>
+                }
+                @foreach (var session in _consoles.Where(s => s.Status == ConsoleSessionStatus.Running).Take(5))
+                {
+                    var route = ConsoleRouteFor(session);
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2"
+                              Style="padding: 6px 8px; background: rgba(217,119,87,0.06); border-radius: 4px; cursor: pointer;"
+                              @onclick="@(() => Nav.NavigateTo(route.Href))">
+                        <MudIcon Icon="@Icons.Material.Filled.Terminal" Color="Color.Primary" Size="Size.Small" />
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.body2">@session.Label</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default">
+                                @route.Subtitle · @Lang["Home.Started"] @RelativeTime(session.StartedAt)
+                            </MudText>
+                        </MudStack>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">@route.Pill</MudChip>
+                    </MudStack>
+                }
+                </div>
+            }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4 doxie-surface" Elevation="0" Style="min-height: 320px;">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-3">
+                <MudIcon Icon="@Icons.Material.Filled.Schedule" Color="Color.Info" />
+                <MudText Typo="Typo.h6">@Lang["Home.NextCronFirings"]</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@(_nextFirings.Count > 0 ? Color.Info : Color.Default)">@_nextFirings.Count</MudChip>
+            </MudStack>
+
+            @if (_nextFirings.Count == 0)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Default">
+                    @Lang["Home.NoCronWorkflows"] <MudLink Href="/workflows">@Lang["Home.Workflows"]</MudLink> @Lang["Home.AndPickCron"]
+                </MudText>
+            }
+            else
+            {
+                <div class="dash-panel-list">
+                @foreach (var (wf, fireAt) in _nextFirings.Take(8))
+                {
+                    var howSoon = fireAt - DateTime.UtcNow;
+                    var soonChipColor = howSoon.TotalMinutes < 2 ? Color.Warning : Color.Default;
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2"
+                              Style="padding: 6px 8px; cursor: pointer;"
+                              @onclick="@(() => Nav.NavigateTo($"/workflows/{wf.Id}"))">
+                        <MudIcon Icon="@Icons.Material.Filled.Schedule" Color="Color.Default" Size="Size.Small" />
+                        <MudStack Spacing="0">
+                            <MudText Typo="Typo.body2">@wf.Name</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                                @wf.Trigger.CronExpression · @fireAt.ToLocalTime().ToString("HH:mm")
+                            </MudText>
+                        </MudStack>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@soonChipColor">@Lang["Home.In"] @FormatRemaining(howSoon)</MudChip>
+                    </MudStack>
+                }
+                </div>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@* ─── Spend (tokens & USD) ─────────────────────────────────── *@
+@* Aggregates Usage across all agent runs in the selected window.
+   Workflow runs are out of scope — usage is captured per-agent-run
+   (the leaf subprocess) so the workflow run total is just the sum
+   of its constituent agent runs, which is what you get here too.
+   Runs without provider usage telemetry are counted by provider but
+   skipped from token/cost totals.
+
+   Sized to match the height that the prior Run Health / Activity
+   charts row used to occupy (min-height: 320px) so removing those
+   panels doesn't leave the dashboard feeling top-heavy. The
+   Recent runs strip below is the activity history — a stacked-bar
+   chart on top of the same data was redundant. *@
+<MudPaper Class="pa-4 mb-4 doxie-surface" Elevation="0" Style="min-height: 320px;">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3 flex-wrap">
+        <MudIcon Icon="@Icons.Material.Filled.AttachMoney" Color="Color.Primary" />
+        <MudText Typo="Typo.h6">@Lang["Home.Spend"]</MudText>
+        <MudSpacer />
+        <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+            <MudButton Color="@(_costWindow == CostWindow.Last24h ? Color.Primary : Color.Default)"
+                       OnClick="@(() => SetCostWindow(CostWindow.Last24h))">24h</MudButton>
+            <MudButton Color="@(_costWindow == CostWindow.Last7d ? Color.Primary : Color.Default)"
+                       OnClick="@(() => SetCostWindow(CostWindow.Last7d))">7d</MudButton>
+            <MudButton Color="@(_costWindow == CostWindow.AllTime ? Color.Primary : Color.Default)"
+                       OnClick="@(() => SetCostWindow(CostWindow.AllTime))">@Lang["Home.All"]</MudButton>
+        </MudButtonGroup>
+    </MudStack>
+
+    @if (_costRunCount == 0 && _providerSpend.All(p => p.RunCount == 0))
+    {
+        <MudText Typo="Typo.caption" Color="Color.Default">
+            @Lang["Home.NoUsageData"]
+        </MudText>
+    }
+    else
+    {
+        <MudStack Row="true" Spacing="6" AlignItems="AlignItems.Center" Class="flex-wrap">
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.TotalCost"]</MudText>
+                <MudText Typo="Typo.h4" Style="color: #D97757;">@FormatCost(_costTotalUsd)</MudText>
+            </MudStack>
+            <MudDivider Vertical="true" FlexItem="true" />
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.TotalTokens"]</MudText>
+                <MudText Typo="Typo.h5" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(_costTotalTokens)</MudText>
+            </MudStack>
+            <MudDivider Vertical="true" FlexItem="true" />
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.InputOutput"]</MudText>
+                <MudText Typo="Typo.body1" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(_costInputTokens) · @FormatTokens(_costOutputTokens)</MudText>
+            </MudStack>
+            <MudDivider Vertical="true" FlexItem="true" />
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.CacheReadCreated"]</MudText>
+                <MudText Typo="Typo.body1" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(_costCacheReadTokens) · @FormatTokens(_costCacheCreationTokens)</MudText>
+            </MudStack>
+            <MudDivider Vertical="true" FlexItem="true" />
+            <MudStack Spacing="0">
+                <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.RunsCounted"]</MudText>
+                <MudText Typo="Typo.h6">@_costRunCount</MudText>
+            </MudStack>
+        </MudStack>
+
+        @* Per-provider breakdown — one card per registered provider so
+           Codex stays visible even before it emits usage. Its run count
+           is accurate, while token/cost figures stay unavailable until
+           the provider reports them. Cards render in the order
+           the resolver enumerates providers, which mirrors the order
+           in Settings. *@
+        <MudDivider Class="my-4" />
+        <MudText Typo="Typo.subtitle2" Class="mb-2">@Lang["Home.ByProvider"]</MudText>
+        <MudGrid Spacing="2">
+            @foreach (var p in _providerSpend)
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Class="pa-3 doxie-surface" Elevation="0" Style="border-left: 3px solid #D97757;">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                            <MudIcon Icon="@Icons.Material.Filled.Memory" Color="Color.Primary" Size="Size.Small" />
+                            <MudText Typo="Typo.body1"><strong>@p.DisplayName</strong></MudText>
+                            <MudSpacer />
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@p.RunCount run@(p.RunCount == 1 ? "" : "s")</MudChip>
+                        </MudStack>
+                        @if (p.RunCount == 0)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.NoRunsInWindow"]</MudText>
+                        }
+                        else
+                        {
+                            <MudStack Row="true" Spacing="3" AlignItems="AlignItems.Center" Class="flex-wrap">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.caption" Color="Color.Default">@(IsEstimatedCost(p) ? Lang["Home.EstimatedCost"] : Lang["Home.Cost"])</MudText>
+                                    <MudText Typo="Typo.h6" Style="@(p.CostReported ? "color: #D97757;" : "color: #888;")">
+                                        @(p.CostReported ? FormatCost(p.TotalUsd) : "—")
+                                    </MudText>
+                                </MudStack>
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.caption" Color="Color.Default">@Lang["Home.Tokens"]</MudText>
+                                    <MudText Typo="Typo.body1" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(p.TotalTokens)</MudText>
+                                </MudStack>
+                            </MudStack>
+                            @if (!p.CostReported)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-1">
+                                    @Lang["Home.CostNotReported"]
+                                </MudText>
+                            }
+                        }
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+</MudPaper>
+
+@* ─── Recent activity (compact) ───────────────────────────── *@
+<MudPaper Class="pa-4 doxie-surface" Elevation="0">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.History" Color="Color.Default" />
+        <MudText Typo="Typo.h6">@Lang["Home.RecentRuns"]</MudText>
+        <MudSpacer />
+        <MudLink Href="/history" Underline="Underline.Hover">
+            <MudText Typo="Typo.caption">@Lang["Home.FullHistory"] →</MudText>
+        </MudLink>
+    </MudStack>
+
+    @if (_recentActivity.Count == 0)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Default">
+            @Lang["Home.NoRunsYet"]
+        </MudText>
+    }
+    else
+    {
+        @foreach (var entry in _recentActivity.Take(5))
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1"
+                      Style="padding: 4px 6px; cursor: pointer;"
+                      @onclick="@(() => Nav.NavigateTo(entry.Href))">
+                <MudIcon Icon="@(entry.IsWorkflow ? Icons.Material.Filled.AccountTree : Icons.Material.Filled.SmartToy)"
+                         Size="Size.Small"
+                         Color="@(entry.IsWorkflow ? Color.Primary : Color.Default)" />
+                <MudText Typo="Typo.body2">@entry.Name</MudText>
+                <MudSpacer />
+                <MudChip T="string" Size="Size.Small" Color="@entry.StatusColor" Variant="Variant.Filled">@LocalizeStatus(entry.StatusLabel)</MudChip>
+                <MudText Typo="Typo.caption" Color="Color.Default" Style="min-width: 60px; text-align: right;">@entry.DurationLabel</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Default" Style="min-width: 80px; text-align: right;">@RelativeTime(entry.StartedAt)</MudText>
+            </MudStack>
+        }
+    }
+</MudPaper>
+</div>

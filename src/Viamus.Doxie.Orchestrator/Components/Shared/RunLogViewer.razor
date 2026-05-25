@@ -1,0 +1,212 @@
+@using System.Text.Encodings.Web
+@inject IJSRuntime Js
+
+<div class="run-log-viewer">
+    <div class="run-log-toolbar">
+        <MudTextField T="string"
+                      Value="_searchText"
+                      ValueChanged="OnSearchTextChanged"
+                      Immediate="true"
+                      Clearable="true"
+                      Placeholder="@SearchPlaceholder"
+                      Variant="Variant.Outlined"
+                      Margin="Margin.Dense"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search"
+                      Class="run-log-search" />
+        <MudText Typo="Typo.caption" Color="Color.Default" Class="run-log-summary">
+            @SummaryText
+        </MudText>
+    </div>
+
+    <div class="run-log-panel" style="@PanelStyle" @ref="_panel">
+        @if (OmittedLineCount > 0)
+        {
+            <div class="run-log-line run-log-line-compacted">
+                <span class="run-log-number">...</span>
+                <span class="run-log-meta">scope</span>
+                <span class="run-log-text">
+                    @OmittedLineCount earlier console line@(OmittedLineCount == 1 ? "" : "s") hidden; showing the latest @Entries.Count.
+                </span>
+            </div>
+        }
+
+        @if (FilteredEntries.Count == 0)
+        {
+            <div class="run-log-line run-log-line-compacted">
+                <span class="run-log-number">...</span>
+                <span class="run-log-meta">empty</span>
+                <span class="run-log-text">@(string.IsNullOrWhiteSpace(_searchText) ? EmptyText : "No log lines match this search.")</span>
+            </div>
+        }
+        else
+        {
+            @foreach (var entry in FilteredEntries)
+            {
+                <div class="@LineClass(entry)">
+                    <span class="run-log-number">@LineNumber(entry)</span>
+                    <span class="run-log-time">@(entry.Timestamp?.ToLocalTime().ToString("HH:mm:ss") ?? "--:--:--")</span>
+                    <span class="run-log-meta">@KindLabel(entry.Kind)</span>
+                    <span class="run-log-text">@HighlightedText(entry.Text)</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<RunLogViewerEntry> Entries { get; set; } = Array.Empty<RunLogViewerEntry>();
+    [Parameter] public int OmittedLineCount { get; set; }
+    [Parameter] public int MaxHeight { get; set; } = 420;
+    [Parameter] public int MaxLineChars { get; set; } = 4_000;
+    [Parameter] public bool AutoScroll { get; set; }
+    [Parameter] public bool ScrollToBottomOnOpen { get; set; } = true;
+    [Parameter] public string? LogKey { get; set; }
+    [Parameter] public string EmptyText { get; set; } = "No console output recorded for this run.";
+    [Parameter] public string SearchPlaceholder { get; set; } = "Search logs...";
+
+    private ElementReference _panel;
+    private string _searchText = string.Empty;
+    private int _lastEntryCount = -1;
+    private string? _lastLogKey;
+    private bool _scrollToBottomAfterRender;
+
+    private string PanelStyle => $"max-height: {MaxHeight}px;";
+
+    private IReadOnlyList<RunLogViewerEntry> FilteredEntries
+    {
+        get
+        {
+            var entries = Entries;
+            if (string.IsNullOrWhiteSpace(_searchText))
+            {
+                return entries;
+            }
+
+            return entries
+                .Where(e => e.Text.Contains(_searchText.Trim(), StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private string SummaryText
+    {
+        get
+        {
+            var totalVisible = Entries.Count;
+            var totalKnown = totalVisible + Math.Max(0, OmittedLineCount);
+            if (!string.IsNullOrWhiteSpace(_searchText))
+            {
+                return $"{FilteredEntries.Count} match{(FilteredEntries.Count == 1 ? "" : "es")} in {totalVisible} visible line{(totalVisible == 1 ? "" : "s")}";
+            }
+
+            return OmittedLineCount > 0
+                ? $"showing {totalVisible} of {totalKnown} lines"
+                : $"{totalVisible} line{(totalVisible == 1 ? "" : "s")}";
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        var key = LogKey ?? string.Empty;
+        if (ScrollToBottomOnOpen && !string.Equals(key, _lastLogKey, StringComparison.Ordinal))
+        {
+            _lastLogKey = key;
+            _lastEntryCount = -1;
+            _scrollToBottomAfterRender = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && ScrollToBottomOnOpen)
+        {
+            _scrollToBottomAfterRender = true;
+        }
+
+        var shouldScroll = _scrollToBottomAfterRender || (AutoScroll && Entries.Count != _lastEntryCount);
+        if (!shouldScroll || !string.IsNullOrWhiteSpace(_searchText))
+        {
+            return;
+        }
+
+        _lastEntryCount = Entries.Count;
+        _scrollToBottomAfterRender = false;
+        try
+        {
+            await Js.InvokeVoidAsync("doxieOs.scrollToBottom", _panel);
+        }
+        catch (JSException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    private void OnSearchTextChanged(string value) => _searchText = value ?? string.Empty;
+
+    private string LineClass(RunLogViewerEntry entry)
+    {
+        var kind = NormalizeKind(entry.Kind);
+        var structural = IsStructural(entry.Text) ? " run-log-line-structural" : string.Empty;
+        return $"run-log-line run-log-line-{kind}{structural}";
+    }
+
+    private static string NormalizeKind(string? kind)
+    {
+        if (string.IsNullOrWhiteSpace(kind)) return "stdout";
+        return kind.Trim().ToLowerInvariant() switch
+        {
+            "stderr" or "error" => "stderr",
+            "system" or "orchestrator" => "system",
+            _ => "stdout",
+        };
+    }
+
+    private static string KindLabel(string? kind) => NormalizeKind(kind) switch
+    {
+        "stderr" => "ERR",
+        "system" => "SYS",
+        _ => "OUT",
+    };
+
+    private static string LineNumber(RunLogViewerEntry entry) =>
+        entry.Number is null ? "#" : $"#{entry.Number.Value}";
+
+    private static bool IsStructural(string text) =>
+        text.StartsWith("[", StringComparison.Ordinal)
+        || text.StartsWith("==", StringComparison.Ordinal)
+        || text.StartsWith("##", StringComparison.Ordinal);
+
+    private MarkupString HighlightedText(string raw)
+    {
+        var text = ClipLine(raw ?? string.Empty);
+        var query = _searchText.Trim();
+        if (query.Length == 0)
+        {
+            return new MarkupString(HtmlEncoder.Default.Encode(text));
+        }
+
+        var encoded = new System.Text.StringBuilder();
+        var start = 0;
+        while (start < text.Length)
+        {
+            var index = text.IndexOf(query, start, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                encoded.Append(HtmlEncoder.Default.Encode(text[start..]));
+                break;
+            }
+
+            encoded.Append(HtmlEncoder.Default.Encode(text[start..index]));
+            encoded.Append("<mark>");
+            encoded.Append(HtmlEncoder.Default.Encode(text.Substring(index, query.Length)));
+            encoded.Append("</mark>");
+            start = index + query.Length;
+        }
+
+        return new MarkupString(encoded.ToString());
+    }
+
+    private string ClipLine(string text) =>
+        string.IsNullOrEmpty(text) || text.Length <= MaxLineChars
+            ? text
+            : text[..(MaxLineChars - 3)] + "...";
+}

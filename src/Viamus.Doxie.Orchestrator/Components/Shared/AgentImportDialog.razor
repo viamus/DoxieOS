@@ -1,0 +1,57 @@
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+@using Viamus.Doxie.Orchestrator.Common
+@inject IDialogService DialogService
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            <MudText Typo="Typo.h6">Import agent</MudText>
+            <MudSelect T="string"
+                       Value="_selectedCatalogId"
+                       ValueChanged="@(v => _selectedCatalogId = string.IsNullOrWhiteSpace(v) ? DoxieCatalogStore.DefaultCatalogId : v)"
+                       Variant="Variant.Outlined"
+                       Dense="true"
+                       Margin="Margin.Dense"
+                       Adornment="Adornment.Start"
+                       AdornmentIcon="@Icons.Material.Filled.FolderSpecial"
+                       FullWidth="true">
+                @foreach (var catalog in Catalogs)
+                {
+                    <MudSelectItem T="string" Value="@catalog.Id">@catalog.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.FileUpload"
+                   OnClick="Import">
+            Select file
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public IReadOnlyList<DoxieCatalogRoot> Catalogs { get; set; } = Array.Empty<DoxieCatalogRoot>();
+    [Parameter] public string CurrentCatalogId { get; set; } = DoxieCatalogStore.DefaultCatalogId;
+
+    private string _selectedCatalogId = DoxieCatalogStore.DefaultCatalogId;
+
+    protected override void OnParametersSet()
+    {
+        _selectedCatalogId = string.IsNullOrWhiteSpace(CurrentCatalogId)
+            ? DoxieCatalogStore.DefaultCatalogId
+            : CurrentCatalogId;
+
+        if (Catalogs.Count > 0 && Catalogs.All(c => !string.Equals(c.Id, _selectedCatalogId, StringComparison.OrdinalIgnoreCase)))
+        {
+            _selectedCatalogId = Catalogs[0].Id;
+        }
+    }
+
+    private void Import() => MudDialog.Close(DialogResult.Ok(_selectedCatalogId));
+    private void Cancel() => MudDialog.Cancel();
+}

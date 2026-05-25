@@ -1,0 +1,267 @@
+/* Release Notes modal styles. Loaded as a non-scoped global stylesheet
+   because MudDialog teleports its DOM to the MudDialogProvider at the
+   root layout — Blazor scoped CSS attributes (`b-XXX`) don't propagate
+   there, so component-scoped rules silently miss every selector.
+
+   Mirrors the Linear changelog layout: generous reading column, version
+   pill before title, full-bleed Lottie hero, ample whitespace between
+   sections. Tigerlily as accent only; warm cream on near-black for body.
+
+   Class prefix `release-` namespaces every rule so we don't collide with
+   MudBlazor's own classes. */
+
+/* --- Dialog chrome ------------------------------------------------------- */
+
+.release-notes-dialog .mud-dialog {
+    background: #1C1815;
+    border: 1px solid rgba(217, 119, 87, 0.12);
+}
+
+/* Hide the chrome title bar — the in-body .release-title (pill +
+   dateline + display heading) is the canonical header. The chrome bar
+   was duplicating it. The DialogActions footer stays visible for the
+   "Mark all as read" / "Close" buttons. */
+.release-notes-dialog .mud-dialog-title,
+.release-notes-dialog .mud-dialog-titlebar {
+    display: none !important;
+}
+
+/* --- Sidebar timeline ---------------------------------------------------- */
+
+.release-notes-dialog .release-timeline {
+    border-right: 1px solid #2A2520;
+    background: #18140F;
+    padding: 16px 0;
+}
+
+.release-notes-dialog .release-timeline .mud-list-item {
+    border-radius: 0;
+    padding: 12px 20px;
+    border-left: 2px solid transparent;
+}
+.release-notes-dialog .release-timeline .mud-list-item:hover {
+    background: rgba(217, 119, 87, 0.06);
+    border-left-color: rgba(217, 119, 87, 0.3);
+}
+.release-notes-dialog .release-timeline .mud-list-item.mud-selected-item {
+    background: rgba(217, 119, 87, 0.10);
+    border-left-color: #D97757;
+}
+
+.release-notes-dialog .timeline-version {
+    font: 600 11px/1 "JetBrains Mono", ui-monospace, monospace;
+    letter-spacing: 0.06em;
+    color: #D97757;
+    text-transform: uppercase;
+}
+.release-notes-dialog .timeline-date {
+    font-size: 11px;
+    color: #6F6557;
+    margin-top: 2px;
+}
+.release-notes-dialog .timeline-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: #E8E2D6;
+    margin-top: 6px;
+    line-height: 1.35;
+}
+
+/* --- Reading column ------------------------------------------------------ */
+
+.release-note-body {
+    max-width: 680px;
+    margin: 0 auto;
+    padding: 32px 8px 40px;
+    color: #E8E2D6;
+    font: 16px/1.65 "Inter", system-ui, -apple-system, sans-serif;
+}
+
+.release-note-body .release-dateline {
+    font-size: 13px;
+    color: #9A8F7E;
+    margin: 0 0 4px;
+}
+
+.release-note-body .version-pill {
+    display: inline-block;
+    font: 600 11px/1 "JetBrains Mono", ui-monospace, monospace;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #D97757;
+    background: rgba(217, 119, 87, 0.12);
+    padding: 6px 10px;
+    border-radius: 999px;
+    margin-bottom: 14px;
+}
+
+.release-note-body .release-title {
+    font: 700 32px/1.2 "Inter", system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    color: #F5F0E8;
+    margin: 0 0 28px;
+}
+
+.release-note-body .release-hero {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 320px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: linear-gradient(135deg, rgba(217, 119, 87, 0.08), rgba(217, 119, 87, 0.02));
+    margin-bottom: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.release-note-body .release-hero lottie-player {
+    width: 100%;
+    height: 100%;
+}
+.release-note-body .release-hero-image {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+/* --- Markdown content ---------------------------------------------------- */
+
+/* The canonical title is .release-title; suppress the # H1 from the .md body. */
+.release-note-body .markdown h1 {
+    display: none;
+}
+
+.release-note-body .markdown h2 {
+    font: 600 22px/1.3 "Inter", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+    color: #F5F0E8;
+    margin: 48px 0 12px;
+}
+
+.release-note-body .markdown h3 {
+    font: 600 16px/1.4 "Inter", system-ui, sans-serif;
+    color: #F5F0E8;
+    margin: 32px 0 8px;
+}
+
+.release-note-body .markdown p {
+    margin: 0 0 20px;
+}
+
+.release-note-body .markdown p:first-of-type {
+    /* Italic lead paragraph — Linear pattern. */
+    font-size: 17px;
+    line-height: 1.6;
+    color: #C9BFAB;
+    font-style: italic;
+    margin-bottom: 28px;
+}
+
+.release-note-body .markdown ul,
+.release-note-body .markdown ol {
+    margin: 0 0 24px;
+    padding-left: 22px;
+}
+.release-note-body .markdown li {
+    margin-bottom: 10px;
+    padding-left: 4px;
+}
+.release-note-body .markdown li::marker {
+    color: #D97757;
+}
+
+.release-note-body .markdown a {
+    color: #D97757;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+    transition: text-decoration-thickness 0.15s ease;
+}
+.release-note-body .markdown a:hover {
+    text-decoration-thickness: 2px;
+}
+
+.release-note-body .markdown code {
+    font: 0.88em "JetBrains Mono", ui-monospace, monospace;
+    background: #14110E;
+    color: #F5F0E8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid #2A2520;
+}
+
+.release-note-body .markdown pre {
+    background: #14110E;
+    border: 1px solid #2A2520;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 0 0 24px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.6;
+}
+.release-note-body .markdown pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+    white-space: pre;
+}
+
+.release-note-body .markdown blockquote {
+    border-left: 3px solid #D97757;
+    background: rgba(217, 119, 87, 0.04);
+    padding: 14px 18px 14px 22px;
+    margin: 24px 0;
+    color: #C9BFAB;
+    border-radius: 0 6px 6px 0;
+}
+.release-note-body .markdown blockquote p {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+.release-note-body .markdown blockquote p + p {
+    margin-top: 8px;
+}
+
+.release-note-body .markdown hr {
+    border: 0;
+    border-top: 1px solid #2A2520;
+    margin: 40px 0;
+}
+
+.release-note-body .markdown strong {
+    color: #F5F0E8;
+    font-weight: 600;
+}
+
+/* Embedded architecture diagrams / screenshots — wider treatment than
+   inline figures, with subtle border-frame + breathing room above. */
+.release-note-body .markdown img[src$=".svg"],
+.release-note-body .markdown img[src$=".png"] {
+    width: 100%;
+    border: 1px solid #2A2520;
+    border-radius: 12px;
+    margin: 8px 0 36px;
+    background: #14110E;
+    padding: 16px;
+    box-sizing: border-box;
+}
+
+/* Light-mode overrides — DoxieOS theme toggle flips the host class. */
+.mud-theme-light .release-note-body { color: #2C2620; }
+.mud-theme-light .release-note-body .release-title { color: #1A1612; }
+.mud-theme-light .release-note-body .markdown h2,
+.mud-theme-light .release-note-body .markdown h3,
+.mud-theme-light .release-note-body .markdown strong { color: #1A1612; }
+.mud-theme-light .release-note-body .markdown p:first-of-type { color: #5A5042; }
+.mud-theme-light .release-note-body .markdown code,
+.mud-theme-light .release-note-body .markdown pre { background: #FAF5EC; color: #1A1612; border-color: #E8DFCE; }
+.mud-theme-light .release-note-body .markdown img[src$=".svg"],
+.mud-theme-light .release-note-body .markdown img[src$=".png"] {
+    background: #FAF5EC;
+    border-color: #E8DFCE;
+}

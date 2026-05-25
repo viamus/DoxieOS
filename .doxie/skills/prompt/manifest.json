@@ -1,0 +1,54 @@
+﻿{
+  "id": "prompt",
+  "description": "Workflow connector \u2014 runs a free-text prompt against an input payload (from an upstream workflow node OR a static form value) and emits structured output that downstream nodes can consume. Generic LLM transform / extractor / mapper. Unlike \u0060aggregate\u0060 and \u0060write-to-workspace\u0060 (which are runner-handled in-process), this primitive dispatches a real \u0060prompt\u0060 subagent so the prompt actually runs against Claude. Skill validates args, builds the agent input, and dispatches the \u0060prompt\u0060 subagent (the only writer to disk).",
+  "displayName": "Prompt",
+  "category": "Connector",
+  "requirements": [],
+  "modes": {
+    "run": {
+      "fields": [
+        {
+          "id": "prompt",
+          "label": "Prompt (what to do with the input)",
+          "placeholder": "Read the index.md in the workflow input dir. Extract every Feature ID listed under the \u0027Refinement candidates\u0027 section. Output a JSON object: { \u0022feature_ids\u0022: [\u003Cint\u003E, ...] }.",
+          "required": true
+        },
+        {
+          "id": "input_text",
+          "label": "Input text (used only when no upstream node and no input file)",
+          "placeholder": "(leave empty when chained after another node)",
+          "required": false
+        },
+        {
+          "id": "input_file",
+          "label": "Input file path (alternative to input text)",
+          "placeholder": "C:\\Workspace\\.workspace\\\u003Cmy-workspace\u003E\\some-file.md",
+          "required": false
+        },
+        {
+          "id": "output_format",
+          "label": "Output format (text / md / json)",
+          "placeholder": "text",
+          "required": false
+        },
+        {
+          "id": "output_schema",
+          "label": "Output schema (only with json \u2014 sample object or JSON Schema)",
+          "placeholder": "{ \u0022feature_ids\u0022: [12345, 12346] }",
+          "required": false
+        },
+        {
+          "id": "system_prompt",
+          "label": "System prompt (optional persona / hard rules)",
+          "placeholder": "(leave empty unless needed)",
+          "required": false
+        }
+      ],
+      "argumentsTemplate": "run --prompt \u0022{prompt}\u0022 --input-text \u0022{input_text}\u0022 --input-file \u0022{input_file}\u0022 --output-format {output_format} --output-schema \u0022{output_schema}\u0022 --system-prompt \u0022{system_prompt}\u0022",
+      "keepSessionAlive": false,
+      "hidden": false,
+      "description": "Run a free-text prompt against an input payload (upstream node OR static form text OR a file) and emit a single output file in text / md / json. Use to bridge two task-specific agents in a workflow \u2014 e.g. extract Feature IDs from a backlog-review report so a refinement agent can consume them.",
+      "requiresWorkspace": false
+    }
+  }
+}

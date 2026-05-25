@@ -1,0 +1,674 @@
+@page "/agents/{Id}"
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+@using Viamus.Doxie.Orchestrator.Components.Shared
+@inject IAgentCatalog Catalog
+@inject IAgentRunner Runner
+@inject IAgentRunStore Store
+@inject IAgentRequirementChecker RequirementChecker
+@inject IWorkspaceStore WorkspaceStore
+@inject DoxieSkillReader SkillReader
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+@implements IDisposable
+
+<PageTitle>@(_agent?.Name ?? "Agent") — DoxieOS</PageTitle>
+
+@if (_agent is null)
+{
+    <MudAlert Severity="Severity.Error">
+        Agent <code>@Id</code> is not registered. Go back to <MudLink Href="/agents">Agents</MudLink>.
+    </MudAlert>
+}
+else
+{
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+        <MudIcon Icon="@AgentIcon(_agent)" Color="Color.Primary" />
+        <MudText Typo="Typo.h3">@_agent.Name</MudText>
+        @if (!string.Equals(_agent.CatalogId, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            <MudChip T="string"
+                     Size="Size.Small"
+                     Variant="Variant.Outlined"
+                     Color="Color.Default"
+                     Icon="@Icons.Material.Filled.FolderSpecial">@_agent.CatalogName</MudChip>
+        }
+        @* Sealed categories (Doxie/Connector) show a static chip with a
+           lock icon — they're framework-defined and the user cannot
+           reassign them. Everything else opens a menu of editable
+           categories on click. Custom user-defined labels are NEVER
+           sealed. *@
+        @if (_agent.CategorySealed)
+        {
+            <MudTooltip Text="@($"Sealed category — {_agent.DisplayCategory} agents are part of the framework and cannot be moved by the user")">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Lock">@_agent.DisplayCategory</MudChip>
+            </MudTooltip>
+        }
+        else
+        {
+            @* Hybrid activator pattern. MudBlazor 9.4's MudChip eats the
+               click when used as a bare ActivatorContent child — the
+               chip's pointer handling intercepts the event and the menu
+               never opens. We work around that by giving the chip its
+               own OnClick + a controlled @bind-Open on the menu, while
+               KEEPING the chip inside ActivatorContent so MudMenu can
+               anchor the popover to the chip's element (without it the
+               popover opens at the row's left edge instead of under the
+               chip — confusing UX). *@
+            <MudMenu Dense="true"
+                     @bind-Open="_categoryMenuOpen"
+                     AnchorOrigin="Origin.BottomLeft"
+                     TransformOrigin="Origin.TopLeft">
+                <ActivatorContent>
+                    <MudChip T="string"
+                             Size="Size.Small"
+                             Variant="Variant.Outlined"
+                             Icon="@Icons.Material.Filled.Edit"
+                             OnClick="@ToggleCategoryMenu"
+                             Disabled="@_categoryUpdateInFlight"
+                             Style="cursor: pointer;"
+                             title="Click to change category">
+                        @_agent.DisplayCategory
+                    </MudChip>
+                </ActivatorContent>
+                <ChildContent>
+                    @foreach (var cat in EditableCategories)
+                    {
+                        <MudMenuItem Disabled="@string.Equals(cat, _agent.DisplayCategory, StringComparison.OrdinalIgnoreCase)"
+                                     OnClick="@(() => UpdateCategoryAsync(cat))">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudIcon Icon="@CategoryIcon(cat)" Size="Size.Small" />
+                                <MudText Typo="Typo.body2">@cat</MudText>
+                            </MudStack>
+                        </MudMenuItem>
+                    }
+                    @{
+                        var existingCustoms = Catalog.GetAll()
+                            .Where(a => a.CustomCategory is not null)
+                            .Select(a => a.CustomCategory!)
+                            .Distinct(StringComparer.OrdinalIgnoreCase)
+                            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+                            .ToList();
+                    }
+                    @if (existingCustoms.Count > 0)
+                    {
+                        <MudDivider Class="my-1" />
+                        @foreach (var cat in existingCustoms)
+                        {
+                            <MudMenuItem Disabled="@string.Equals(cat, _agent.DisplayCategory, StringComparison.OrdinalIgnoreCase)"
+                                         OnClick="@(() => UpdateCategoryAsync(cat))">
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                    <MudIcon Icon="@CategoryIcon(cat)" Size="Size.Small" />
+                                    <MudText Typo="Typo.body2">@cat</MudText>
+                                </MudStack>
+                            </MudMenuItem>
+                        }
+                    }
+                    <MudDivider Class="my-1" />
+                    <MudMenuItem OnClick="@OpenCustomCategoryEditor">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudIcon Icon="@Icons.Material.Filled.Add" Size="Size.Small" />
+                            <MudText Typo="Typo.body2">New custom category…</MudText>
+                        </MudStack>
+                    </MudMenuItem>
+                </ChildContent>
+            </MudMenu>
+            <MudButton Size="Size.Small"
+                       Variant="Variant.Outlined"
+                       Color="Color.Default"
+                       StartIcon="@AgentIcon(_agent)"
+                       OnClick="@OpenIconPickerAsync"
+                       Disabled="@_categoryUpdateInFlight"
+                       title="Choose agent icon">
+                Icon
+            </MudButton>
+            @if (_customCategoryEditorOpen)
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <MudTextField @bind-Value="_customCategoryDraft"
+                                  Placeholder="e.g. Marketing"
+                                  Variant="Variant.Outlined"
+                                  Margin="Margin.Dense"
+                                  Immediate="true"
+                                  OnKeyDown="@OnCustomCategoryKeyDown"
+                                  HelperText="1-32 chars · letters, digits, spaces or hyphens · must start with a letter"
+                                  Style="min-width: 220px;" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Check"
+                                   Size="Size.Small"
+                                   Color="Color.Primary"
+                                   OnClick="@ApplyCustomCategory"
+                                   Disabled="@(!CustomCategoryDraftValid || _categoryUpdateInFlight)" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                   Size="Size.Small"
+                                   OnClick="@CancelCustomCategoryEditor" />
+                </MudStack>
+            }
+        }
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.AutoAwesome"
+                   Style="white-space: nowrap; flex-shrink: 0; min-height: 36px;"
+                   Href="@($"/agents/new?edit={_agent.Id}")">
+            Edit with AI
+        </MudButton>
+    </MudStack>
+    <MudText Typo="Typo.subtitle1" Class="mb-5">@_agent.Description</MudText>
+
+    @if (_agent.Requirements is { } requirements)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-4 flex-wrap">
+            <MudText Typo="Typo.caption" Color="Color.Default">Prerequisites:</MudText>
+            @if (requirements.Count == 0)
+            {
+                <MudChip T="string"
+                         Size="Size.Small"
+                         Variant="Variant.Outlined"
+                         Color="Color.Success"
+                         Icon="@Icons.Material.Filled.CheckCircle">
+                    Self-contained
+                </MudChip>
+            }
+            else
+            {
+                @foreach (var req in requirements)
+                {
+                    var status = _requirementStatuses.GetValueOrDefault(req, AgentRequirementStatus.Unknown);
+                    var tip = (string.IsNullOrWhiteSpace(req.Purpose) ? "" : req.Purpose + " ")
+                              + $"({RequirementKindLabel(req.Kind)}, {(req.Required ? "required" : "optional")}, {StatusLabel(status, req.Required)})";
+                    <MudTooltip Text="@tip" Placement="Placement.Top">
+                        <MudChip T="string"
+                                 Size="Size.Small"
+                                 Variant="Variant.Outlined"
+                                 Color="@StatusChipColor(status, req.Required)"
+                                 Icon="@StatusIcon(status)"
+                                 Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                            @req.Name
+                        </MudChip>
+                    </MudTooltip>
+                }
+            }
+        </MudStack>
+    }
+
+    <MudGrid>
+        <MudItem xs="12" md="5">
+            <MudPaper Class="pa-4" Elevation="2">
+                <MudText Typo="Typo.h6" GutterBottom="true">Configure run</MudText>
+
+                @if (_agent.Modes is { Count: > 0 } modes)
+                {
+                    <MudSelect T="AgentMode"
+                               Label="Mode"
+                               Value="_selectedMode"
+                               ValueChanged="OnModeChanged"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               ToStringFunc="@(m => m?.Name ?? string.Empty)">
+                        @foreach (var mode in modes)
+                        {
+                            <MudSelectItem Value="@mode">@mode.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @if (_selectedMode is not null)
+                    {
+                        @if (!string.IsNullOrWhiteSpace(_selectedMode.Description))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-1 mb-1">@_selectedMode.Description</MudText>
+                        }
+                        @if (_selectedMode.Fields is { Count: > 0 } fields)
+                        {
+                            @foreach (var field in fields)
+                            {
+                                <MudTextField T="string"
+                                              Label="@field.Label"
+                                              Placeholder="@field.Placeholder"
+                                              Variant="Variant.Outlined"
+                                              Margin="Margin.Dense"
+                                              Required="@field.Required"
+                                              FullWidth="true"
+                                              Value="@GetFieldValue(field.Id)"
+                                              ValueChanged="@(EventCallback.Factory.Create<string>(this, v => SetFieldValue(field.Id, v)))"
+                                              Class="mt-3" />
+                            }
+                        }
+                        else
+                        {
+                            <MudTextField @bind-Value="_extraArgs"
+                                          Label="Extra arguments"
+                                          Placeholder="(optional flags, ids, etc.)"
+                                          Variant="Variant.Outlined"
+                                          Margin="Margin.Dense"
+                                          FullWidth="true"
+                                          HelperText="Appended to the command after the subcommand"
+                                          Class="mt-3" />
+                        }
+                        <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-3" Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                            $ /@_agent.SkillName @ResolvedArguments
+                        </MudText>
+                    }
+                }
+                else
+                {
+                    <MudTextField @bind-Value="_arguments"
+                                  Label="Arguments"
+                                  Placeholder="@DefaultArgs"
+                                  Variant="Variant.Outlined"
+                                  FullWidth="true"
+                                  Margin="Margin.Dense"
+                                  HelperText="@($"Will invoke /{_agent.SkillName} with these arguments")" />
+                }
+
+                @{
+                    var requiresWs = _selectedMode?.RequiresWorkspace ?? false;
+                    var workspaceMissing = requiresWs && string.IsNullOrEmpty(_selectedWorkspaceId);
+                }
+                @if (requiresWs || _workspaces.Count > 0)
+                {
+                    <MudSelect T="string"
+                               Label="@RunInsideWorkspaceLabel(requiresWs)"
+                               Value="_selectedWorkspaceId"
+                               ValueChanged="OnWorkspaceChanged"
+                               Variant="Variant.Outlined"
+                               Margin="Margin.Dense"
+                               Class="mt-3"
+                               Required="@requiresWs"
+                               Error="@workspaceMissing"
+                               ErrorText="@(workspaceMissing ? WorkspaceRequiredError() : null)"
+                               HelperText="@(requiresWs ? WorkspaceRequiredHelper() : WorkspaceOptionalHelper())">
+                        @if (!requiresWs)
+                        {
+                            <MudSelectItem T="string" Value="@(string.Empty)">@NoWorkspaceLabel()</MudSelectItem>
+                        }
+                        @foreach (var ws in _workspaces)
+                        {
+                            <MudSelectItem T="string" Value="@ws.Id">@ws.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @if (requiresWs && _workspaces.Count == 0)
+                    {
+                        <MudAlert Severity="Severity.Warning" Class="mt-2">
+                            @Lang["Consoles.NoWorkspaces"] <MudLink Href="/workspaces">@Lang["Consoles.CreateWorkspaceFirst"]</MudLink>.
+                        </MudAlert>
+                    }
+                }
+
+                @* Per-run environment — ephemeral. Not persisted anywhere;
+                   sent through to the subprocess via envOverrides on Start.
+                   Sensitive keys (token / secret / password / key / *_pat)
+                   render the value field as a password input so the value
+                   doesn't sit on screen. *@
+                <MudExpansionPanels Elevation="0" Class="mt-3">
+                    <MudExpansionPanel>
+                        <TitleContent>
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                <MudIcon Icon="@Icons.Material.Filled.Code" Color="Color.Default" Size="Size.Small" />
+                                <MudText Typo="Typo.body2">Environment</MudText>
+                                @if (_envVars.Count > 0)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@_envVars.Count var(s)</MudChip>
+                                }
+                            </MudStack>
+                        </TitleContent>
+                        <ChildContent>
+                            <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mb-2">
+                                One-shot env vars for this run only — not stored. Layered on top of the orchestrator's process env. Sensitive keys are masked while typing.
+                            </MudText>
+                            @foreach (var ev in _envVars)
+                            {
+                                var sensitive = LooksSecretKey(ev.Key);
+                                <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-1">
+                                    <MudTextField T="string"
+                                                  Value="@ev.Key"
+                                                  ValueChanged="@(v => { ev.Key = v ?? string.Empty; OnEnvVarChanged(); })"
+                                                  Placeholder="KEY"
+                                                  Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense"
+                                                  Style="font-family: 'Cascadia Code', Consolas, monospace; max-width: 200px;" />
+                                    <MudTextField T="string"
+                                                  Value="@ev.Value"
+                                                  ValueChanged="@(v => { ev.Value = v ?? string.Empty; OnEnvVarChanged(); })"
+                                                  Placeholder="value"
+                                                  Variant="Variant.Outlined"
+                                                  Margin="Margin.Dense"
+                                                  InputType="@(sensitive ? InputType.Password : InputType.Text)"
+                                                  Style="font-family: 'Cascadia Code', Consolas, monospace;" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                                   Size="Size.Small"
+                                                   Color="Color.Error"
+                                                   OnClick="@(() => { _envVars.Remove(ev); OnEnvVarChanged(); })" />
+                                </MudStack>
+                            }
+                            <MudButton Variant="Variant.Outlined"
+                                       Color="Color.Primary"
+                                       Size="Size.Small"
+                                       StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="AddEnvVar"
+                                       Class="mt-1">Add var</MudButton>
+                        </ChildContent>
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
+
+                @* Run is always enabled when prerequisites are met —
+                   firing while a previous run of this agent is still
+                   going is supported (each run is its own subprocess
+                   with its own runId). The just-started run becomes
+                   the page's current run; the previous one keeps going
+                   in the background and is visible in History below. *@
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.PlayArrow"
+                           OnClick="StartRun"
+                           Disabled="@workspaceMissing"
+                           Class="mt-4">
+                    @(IsRunning ? "Run again" : "Run")
+                </MudButton>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="7">
+            <MudPaper Class="pa-4" Elevation="2" Style="min-height: 220px;">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                    <MudText Typo="Typo.h6">@(_currentRun is null ? "Execution" : "Latest run")</MudText>
+                    @if (_currentRun is not null)
+                    {
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                            <MudText Typo="Typo.caption" Color="Color.Default">@_currentRun.StartedAt.ToLocalTime().ToString("HH:mm:ss")</MudText>
+                            <MudChip T="string"
+                                     Size="Size.Small"
+                                     Color="@StatusColor(_currentRun.Status)"
+                                     Variant="Variant.Filled">@_currentRun.Status</MudChip>
+                            @if (IsRunning)
+                            {
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Error"
+                                           Size="Size.Small"
+                                           StartIcon="@Icons.Material.Filled.Stop"
+                                           Style="white-space: nowrap; flex-shrink: 0; min-height: 32px;"
+                                           OnClick="CancelRun">
+                                    Cancel
+                                </MudButton>
+                            }
+                        </MudStack>
+                    }
+                </MudStack>
+
+                @if (_currentRunLoading && _currentRun is null)
+                {
+                    <div class="output-panel output-loading">
+                        <MudProgressCircular Color="Color.Primary" Size="Size.Medium" Indeterminate="true" />
+                        <MudText Typo="Typo.body2" Color="Color.Default">Loading run output...</MudText>
+                    </div>
+                }
+                else if (_currentRun is null)
+                {
+                    <div class="output-panel doxie-empty">
+                        <pre class="doxie">@DoxieAscii</pre>
+                        <div class="doxie-welcome">
+                            <span class="doxie-title">Welcome to DoxieOS</span>
+                            <span class="doxie-tag">Configure parameters and click Run — the doxie is waiting.</span>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    @if (IsRunning)
+                    {
+                        <MudPaper Elevation="0"
+                                  Class="pa-3 mb-3 doxie-human-loop">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-2">
+                                <MudIcon Icon="@Icons.Material.Filled.TipsAndUpdates" Size="Size.Small" Color="Color.Info" />
+                                <MudText Typo="Typo.subtitle2">Guide running agent</MudText>
+                            </MudStack>
+                            <div class="doxie-human-loop-body">
+                                <MudTextField @bind-Value="_operatorHintDraft"
+                                              Placeholder="Give this running agent a nudge..."
+                                              Variant="Variant.Outlined"
+                                              Margin="Margin.Dense"
+                                              Lines="2"
+                                              FullWidth="true" />
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Info"
+                                           StartIcon="@Icons.Material.Filled.Send"
+                                           Class="doxie-action-button doxie-human-loop-send"
+                                           OnClick="SendOperatorHint"
+                                           Disabled="@(_sendingOperatorHint || string.IsNullOrWhiteSpace(_operatorHintDraft))">
+                                    @(_sendingOperatorHint ? "Sending..." : "Send hint")
+                                </MudButton>
+                            </div>
+                        </MudPaper>
+                    }
+                    @if (_currentRunLoading)
+                    {
+                        <div class="output-panel output-loading">
+                            <MudProgressCircular Color="Color.Primary" Size="Size.Medium" Indeterminate="true" />
+                            <MudText Typo="Typo.body2" Color="Color.Default">Loading run output...</MudText>
+                        </div>
+                    }
+                    else
+                    {
+                        var visibleOutput = VisibleOutputLines(_currentRun.Output);
+                        var omittedOutputLines = Math.Max(0, _currentRun.OutputLineCount - visibleOutput.Count);
+                        <RunLogViewer Entries="@AgentLogEntries(visibleOutput, omittedOutputLines)"
+                                      OmittedLineCount="@omittedOutputLines"
+                                      AutoScroll="@IsRunning"
+                                      LogKey="@_currentRun.Id"
+                                      MaxLineChars="@OutputPanelLineChars"
+                                      EmptyText="No console output recorded for this run."
+                                      SearchPlaceholder="Search this run's console output..." />
+                    }
+
+                    @if (_currentRun.FinishedAt is { } finishedAt)
+                    {
+                        var duration = finishedAt - _currentRun.StartedAt;
+                        <MudText Typo="Typo.caption" Color="Color.Default" Class="mt-3 d-block">
+                            Finished @finishedAt.ToLocalTime().ToString("HH:mm:ss")
+                            · duration @duration.TotalSeconds.ToString("0.0")s
+                            · exit code @(_currentRun.ExitCode?.ToString() ?? "—")
+                        </MudText>
+                    }
+
+                    @* Cost & tokens — only rendered when the provider
+                       surfaced a usage event. Codex runs and any
+                       fixture-driven runs don't have one and skip the
+                       block entirely. Cache-read tokens are shown
+                       separately because they bill ~10× cheaper than
+                       fresh input — collapsing them into one number
+                       hides the "is this run cache-warm?" signal. *@
+                    @if (_currentRun.Usage is { } usage)
+                    {
+                        <MudPaper Class="pa-3 mt-3" Elevation="0" Style="background: rgba(217,119,87,0.06); border-left: 3px solid #D97757;">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Class="flex-wrap">
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.caption" Color="Color.Default">@(IsEstimatedCost(_currentRun) ? "Estimated cost" : "Total cost")</MudText>
+                                    <MudText Typo="Typo.h6">@FormatCost(usage.TotalCostUsd)</MudText>
+                                </MudStack>
+                                <MudDivider Vertical="true" FlexItem="true" />
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.caption" Color="Color.Default">Tokens</MudText>
+                                    <MudText Typo="Typo.body1" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(usage.TotalTokens)</MudText>
+                                </MudStack>
+                                <MudDivider Vertical="true" FlexItem="true" />
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.caption" Color="Color.Default">Input · Output</MudText>
+                                    <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(usage.InputTokens) · @FormatTokens(usage.OutputTokens)</MudText>
+                                </MudStack>
+                                <MudDivider Vertical="true" FlexItem="true" />
+                                <MudStack Spacing="0">
+                                    <MudText Typo="Typo.caption" Color="Color.Default">Cache read · created</MudText>
+                                    <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(usage.CacheReadTokens) · @FormatTokens(usage.CacheCreationTokens)</MudText>
+                                </MudStack>
+                            </MudStack>
+                        </MudPaper>
+                    }
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    // Show the artefact explorer when this run produced a sandbox.
+    // Workflow node runs have a `.runs/<runId>/<nodeId>` OutputDir and
+    // aren't surfaced here — they're browsed via WorkflowDetail (Fase
+    // B). Standalone runs use `.sandbox/<tag>` and render inline so the
+    // user can navigate the produced files right alongside the output.
+    var sandboxTag = TryExtractSandboxTag(_currentRun?.OutputDir);
+    @if (sandboxTag is not null)
+    {
+        <MudPaper Class="pa-4 mt-6" Elevation="2">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-3">
+                <MudText Typo="Typo.h6">Files produced</MudText>
+                <MudText Typo="Typo.caption" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace;">.sandbox/@sandboxTag</MudText>
+            </MudStack>
+            <RunFilesExplorer RootKind="sandbox" Identifier="@sandboxTag" />
+        </MudPaper>
+    }
+
+    @* ─── Memories ────────────────────────────────────────────── *@
+    @* Per-skill memories live at .doxie/skills/<id>/memories/*.md
+       and the runner injects matching ones into the prompt at dispatch
+       (see MemoryConditionEvaluator). This panel is read-only — drop a
+       file in the folder to add a memory; UI editor comes in a later
+       iteration. *@
+    <MudPaper Class="pa-4 mt-6" Elevation="2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudIcon Icon="@Icons.Material.Filled.Lightbulb" Color="Color.Primary" />
+                <MudText Typo="Typo.h6">Memories</MudText>
+                @if (_memories.Count > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_memories.Count</MudChip>
+                }
+            </MudStack>
+            <MudTooltip Text="Open memories folder in Explorer">
+                <MudIconButton Icon="@Icons.Material.Filled.FolderOpen"
+                               Size="Size.Small"
+                               OnClick="OpenMemoriesFolderAsync" />
+            </MudTooltip>
+        </MudStack>
+        @if (_memories.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Default">
+                No memories yet. Drop a markdown file under <code>.doxie/skills/@_agent.SkillName/memories/</code> with optional <code>priority</code> + <code>condition</code> in the YAML frontmatter — the runner will inject matching ones into every dispatch automatically.
+            </MudText>
+        }
+        else
+        {
+            <MudExpansionPanels MultiExpansion="true" Elevation="0" Dense="true">
+                @foreach (var m in _memories)
+                {
+                    <MudExpansionPanel>
+                        <TitleContent>
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudChip T="string"
+                                         Size="Size.Small"
+                                         Variant="@(m.Priority == DoxieSkillMemoryPriority.High ? Variant.Filled : Variant.Outlined)"
+                                         Color="@MemoryPriorityColor(m.Priority)">
+                                    @m.Priority.ToString().ToLowerInvariant()
+                                </MudChip>
+                                <MudText Typo="Typo.body1">@m.Name</MudText>
+                                <MudSpacer />
+                                <MudText Typo="Typo.caption" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace;">
+                                    @(string.IsNullOrEmpty(m.Condition) ? "always" : m.Condition)
+                                </MudText>
+                            </MudStack>
+                        </TitleContent>
+                        <ChildContent>
+                            <MudText Typo="Typo.caption" Color="Color.Default" Class="mb-2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@m.FileName</MudText>
+                            <pre style="white-space: pre-wrap; font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.85em; margin: 0;">@m.Body</pre>
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
+        }
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mt-6" Elevation="2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="mb-2">
+            <MudText Typo="Typo.h6">History</MudText>
+            @if (_history.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Default">@_history.Count run@(_history.Count == 1 ? "" : "s")</MudText>
+            }
+        </MudStack>
+        @if (_historyLoading)
+        {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="py-2">
+                <MudProgressCircular Color="Color.Primary" Size="Size.Small" Indeterminate="true" />
+                <MudText Typo="Typo.body2" Color="Color.Default">Loading history...</MudText>
+            </MudStack>
+        }
+        else if (_history.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Default">
+                No runs yet. Click <strong>Run</strong> to start one.
+            </MudText>
+        }
+        else
+        {
+            <MudTable Items="_history"
+                      Dense="true"
+                      Bordered="false"
+                      Striped="true"
+                      Hover="true"
+                      Elevation="0"
+                      OnRowClick="OnHistoryClick"
+                      RowStyleFunc="@RowStyleFunc"
+                      T="AgentRun">
+                <HeaderContent>
+                    <MudTh>Started</MudTh>
+                    <MudTh>Status</MudTh>
+                    <MudTh>Duration</MudTh>
+                    <MudTh>Exit</MudTh>
+                    <MudTh>Cost</MudTh>
+                    <MudTh>Tokens</MudTh>
+                    <MudTh>Arguments</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Started">@context.StartedAt.ToLocalTime().ToString("HH:mm:ss")</MudTd>
+                    <MudTd DataLabel="Status">
+                        <MudChip T="string"
+                                 Size="Size.Small"
+                                 Color="@StatusColor(context.Status)"
+                                 Variant="Variant.Filled">@context.Status</MudChip>
+                    </MudTd>
+                    <MudTd DataLabel="Duration">@FormatDuration(context)</MudTd>
+                    <MudTd DataLabel="Exit">@(context.ExitCode?.ToString() ?? "—")</MudTd>
+                    <MudTd DataLabel="Cost">
+                        @if (context.Usage is { } u)
+                        {
+                            <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatCost(u.TotalCostUsd)</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Default">—</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Tokens">
+                        @if (context.Usage is { } u2)
+                        {
+                            <MudTooltip Text="@($"in {FormatTokens(u2.InputTokens)} · out {FormatTokens(u2.OutputTokens)} · cache read {FormatTokens(u2.CacheReadTokens)} · cache created {FormatTokens(u2.CacheCreationTokens)}")">
+                                <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">@FormatTokens(u2.TotalTokens)</MudText>
+                            </MudTooltip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Default">—</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="Arguments">
+                        <MudText Typo="Typo.body2"
+                                 title="@context.Arguments"
+                                 Style="font-family: 'Cascadia Code', Consolas, monospace; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            @FormatArguments(context.Arguments)
+                        </MudText>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudPaper>
+}

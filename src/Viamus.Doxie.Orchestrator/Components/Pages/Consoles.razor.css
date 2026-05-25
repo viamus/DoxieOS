@@ -1,0 +1,52 @@
+/* Session card in the left sidebar â€” clickable, hover-highlight, with
+   an orange left stripe when active so the eye lands on the right one
+   even in a long list. */
+.console-card {
+    position: relative;
+    padding: 8px 10px 8px 14px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 80ms ease;
+    border-left: 3px solid transparent;
+}
+
+.console-card:hover {
+    background: rgba(217, 119, 87, 0.06);
+}
+
+.console-card-active {
+    background: rgba(217, 119, 87, 0.12);
+    border-left-color: #d97757; /* Tigerlily */
+}
+
+.console-card-active:hover {
+    background: rgba(217, 119, 87, 0.16);
+}
+
+/* Status pill, used in both the sidebar card and the terminal header
+   bar. Smaller and tighter than MudChip â€” keeps the dense session list
+   from getting visually busy. */
+.console-pill-running,
+.console-pill-exited {
+    display: inline-flex;
+    align-items: center;
+    height: 16px;
+    padding: 0 7px;
+    border-radius: 8px;
+    font-size: 0.66rem;
+    font-weight: 600;
+    line-height: 1;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+}
+
+.console-pill-running {
+    background: rgba(76, 175, 80, 0.18);
+    color: #81c784;
+}
+
+.console-pill-exited {
+    background: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.55);
+}

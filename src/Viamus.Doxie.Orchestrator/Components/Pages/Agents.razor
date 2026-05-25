@@ -1,0 +1,649 @@
+@page "/agents"
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+@using Viamus.Doxie.Orchestrator.Common
+@inject IAgentCatalog Catalog
+@inject IDoxieCatalogStore CatalogStore
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
+@inject IDialogService DialogService
+@inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
+
+<PageTitle>@Lang["Agents.Title"] - DoxieOS</PageTitle>
+
+<MudBreadcrumbs Items="Breadcrumbs" Class="px-0 mb-2" />
+
+<div class="doxie-page">
+<div class="doxie-page-header">
+    <div>
+        <div class="doxie-page-title">
+            <span class="doxie-page-title-icon">
+                <MudIcon Icon="@Icons.Material.Filled.SmartToy" Size="Size.Small" />
+            </span>
+            <MudText Typo="Typo.h3">@Lang["Agents.Title"]</MudText>
+        </div>
+        <MudText Typo="Typo.subtitle1" Class="doxie-page-subtitle">
+            @Lang["Agents.Subtitle"]
+        </MudText>
+    </div>
+    <div class="doxie-page-actions">
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Default"
+                   StartIcon="@Icons.Material.Filled.FileUpload"
+                   OnClick="ImportAgent"
+                   Disabled="@_importing">
+            @(_importing ? Lang["Common.Importing"] : Lang["Common.Import"])
+        </MudButton>
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.AutoAwesome"
+                   Href="/agents/new">
+            @Lang["Common.BuildWithAi"]
+        </MudButton>
+    </div>
+</div>
+
+@* Search by name / skill id / description. Trimmed contains-match,
+   case-insensitive. Combines with the chip filter below — chips narrow
+   by category, search narrows within that. *@
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="doxie-command-bar doxie-surface">
+    <MudTextField @bind-Value="_searchText"
+                  @bind-Value:after="@OnSearchChanged"
+                  Placeholder="@Lang["Agents.SearchPlaceholder"]"
+                  Variant="Variant.Outlined"
+                  Margin="Margin.Dense"
+                  Adornment="Adornment.Start"
+                  AdornmentIcon="@Icons.Material.Filled.Search"
+                  Clearable="true"
+                  Immediate="true"
+                  DebounceInterval="150" />
+    @if (_catalogs.Count > 1)
+    {
+        <MudSelect T="string"
+                   Value="_selectedCatalogId"
+                   ValueChanged="OnCatalogChanged"
+                   Variant="Variant.Outlined"
+                   Dense="true"
+                   Margin="Margin.Dense"
+                   Placeholder="@Lang["Common.AllCatalogs"]"
+                   Adornment="Adornment.Start"
+                   AdornmentIcon="@Icons.Material.Filled.FolderSpecial"
+                   Style="min-width: 220px;">
+            <MudSelectItem T="string" Value="@AllCatalogs">@Lang["Common.AllCatalogs"]</MudSelectItem>
+            @foreach (var catalog in _catalogs)
+            {
+                <MudSelectItem T="string" Value="@catalog.Id">@catalog.Name</MudSelectItem>
+            }
+        </MudSelect>
+    }
+    <MudTooltip Text="@Lang["Agents.Recommend"]">
+        <MudIconButton Icon="@Icons.Material.Filled.AutoAwesome"
+                       Color="Color.Primary"
+                       Variant="Variant.Outlined"
+                       Size="Size.Medium"
+                       Disabled="@string.IsNullOrWhiteSpace(_searchText)"
+                       OnClick="RecommendAgents" />
+    </MudTooltip>
+</MudStack>
+
+@if (_agentRecommendations.Count > 0)
+{
+    <MudPaper Class="pa-3 mb-3 doxie-callout" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+            <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Color="Color.Primary" Size="Size.Small" />
+            <MudText Typo="Typo.subtitle2">@Lang["Agents.Recommended"]</MudText>
+            <MudSpacer />
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="@(() => _agentRecommendations = Array.Empty<AgentRecommendation>())" />
+        </MudStack>
+        <MudStack Row="true" Spacing="1" Class="flex-wrap">
+            @foreach (var rec in _agentRecommendations)
+            {
+                <MudChip T="string"
+                         Size="Size.Small"
+                         Variant="Variant.Outlined"
+                         Color="Color.Primary"
+                         Icon="@AgentIcon(rec.Agent)"
+                         OnClick="@(() => Nav.NavigateTo($"/agents/{rec.Agent.Id}"))"
+                         title="@rec.Reason">
+                    @rec.Agent.Name
+                </MudChip>
+            }
+        </MudStack>
+    </MudPaper>
+}
+
+@* Category filter — chip toggle row. Connector agents (workflow-glue
+   primitives like aggregate / write-to-workspace) are off by default
+   so the catalog stays focused on user-facing work; flip the chip to
+   show them. State is persisted in the URL so the view is bookmarkable. *@
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-4 flex-wrap">
+    <MudIcon Icon="@Icons.Material.Filled.FilterList" Color="Color.Default" Size="Size.Small" />
+    <MudText Typo="Typo.caption" Color="Color.Default" Class="mr-2">@Lang["Agents.Filter"]</MudText>
+    @foreach (var cat in _allCategories)
+    {
+        var active = _selected.Contains(cat);
+        var count = _countByCategory.GetValueOrDefault(cat);
+        <MudChip T="string"
+                 Size="Size.Small"
+                 Variant="@(active ? Variant.Filled : Variant.Outlined)"
+                 Color="@(active ? Color.Primary : Color.Default)"
+                 Icon="@CategoryIcon(cat)"
+                 OnClick="@(() => ToggleCategory(cat))">
+            @cat <MudText Typo="Typo.caption" Inline="true">&nbsp;(@count)</MudText>
+        </MudChip>
+    }
+    @if (_hiddenCount > 0)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Default" Class="ml-2">@_hiddenCount @Lang["Agents.Hidden"]</MudText>
+    }
+</MudStack>
+
+@if (_grouped.Count == 0)
+{
+    <MudPaper Class="pa-6 doxie-empty-state" Elevation="0">
+        <MudText Typo="Typo.body2" Color="Color.Default">
+            @if (!string.IsNullOrWhiteSpace(_searchText))
+            {
+                @Lang["Agents.NoMatchSearch"]
+            }
+            else
+            {
+                @Lang["Agents.NoMatchFilter"]
+            }
+        </MudText>
+    </MudPaper>
+}
+else
+{
+    <MudExpansionPanels MultiExpansion="true" Elevation="0" Class="doxie-surface doxie-list-panels">
+        @foreach (var group in _grouped)
+        {
+            <MudExpansionPanel Expanded="true">
+                <TitleContent>
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudIcon Icon="@CategoryIcon(group.Key)" Color="Color.Primary" />
+                        <MudText Typo="Typo.h6">@group.Key</MudText>
+                        <MudChip T="string"
+                                 Size="Size.Small"
+                                 Variant="Variant.Outlined"
+                                 Color="Color.Default">@group.Count() agent@(group.Count() == 1 ? "" : "s")</MudChip>
+                    </MudStack>
+                </TitleContent>
+                <ChildContent>
+                    <MudTable Items="group"
+                              Hover="true"
+                              Bordered="false"
+                              Elevation="0"
+                              OnRowClick="OnRowClick"
+                              Dense="true"
+                              T="AgentDescriptor">
+                        <HeaderContent>
+                            <MudTh Style="width: 32%; min-width: 280px;">@Lang["Common.Name"]</MudTh>
+                            <MudTh>@Lang["Common.Description"]</MudTh>
+                            <MudTh Style="text-align: right; width: 220px;">@Lang["Common.Actions"]</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Name" Style="width: 32%; min-width: 280px;">
+                                <MudStack Spacing="0">
+                                    <MudLink Href="@($"/agents/{context.Id}")" Underline="Underline.Hover">
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                                            <MudIcon Icon="@AgentIcon(context)" Size="Size.Small" Color="Color.Primary" />
+                                            <MudText Typo="Typo.body1">@context.Name</MudText>
+                                        </MudStack>
+                                    </MudLink>
+                                    <MudText Typo="Typo.caption" Color="Color.Default">/@context.SkillName</MudText>
+                                </MudStack>
+                            </MudTd>
+                            <MudTd DataLabel="Description">
+                                <MudText Typo="Typo.body2"
+                                         title="@context.Description"
+                                         Style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4;">
+                                    @context.Description
+                                </MudText>
+                            </MudTd>
+                            <MudTd DataLabel="Actions" Style="text-align: right; width: 220px;">
+                                @* Stop row-click so the per-row buttons don't double-trigger
+                                   navigation via OnRowClick. *@
+                                <span @onclick:stopPropagation="true">
+                                    <MudTooltip Text="@Lang["Agents.Open"]">
+                                        <MudIconButton Icon="@Icons.Material.Filled.OpenInNew"
+                                                       Size="Size.Small"
+                                                       Color="Color.Primary"
+                                                       Href="@($"/agents/{context.Id}")" />
+                                    </MudTooltip>
+                                    <MudTooltip Text="@Lang["Common.BuildWithAi"]">
+                                        <MudIconButton Icon="@Icons.Material.Filled.AutoAwesome"
+                                                       Size="Size.Small"
+                                                       Color="Color.Primary"
+                                                       Href="@($"/agents/new?edit={context.Id}")" />
+                                    </MudTooltip>
+                                    <MudTooltip Text="@Lang["Agents.DownloadZip"]">
+                                        <MudIconButton Icon="@Icons.Material.Filled.FileDownload"
+                                                       Size="Size.Small"
+                                                       Color="Color.Default"
+                                                       OnClick="@(() => ExportAgent(context))" />
+                                    </MudTooltip>
+                                    <MudTooltip Text="@Lang["Agents.Delete"]">
+                                        <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
+                                                       Size="Size.Small"
+                                                       Color="Color.Error"
+                                                       OnClick="@(() => DeleteAgent(context))" />
+                                    </MudTooltip>
+                                </span>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
+}
+
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "categories")]
+    public string? CategoriesQuery { get; set; }
+
+    private List<BreadcrumbItem> Breadcrumbs =>
+    [
+        new BreadcrumbItem(Lang["Common.Home"], href: "/"),
+        new BreadcrumbItem(Lang["Agents.Title"], href: null, disabled: true),
+    ];
+
+    // Display order for the BUILT-IN palette. Doxie first (the
+    // framework's authoring kit — the entry points to building MORE
+    // agents/workflows/libraries), then user-facing categories by
+    // frequency, Connector last so workflow-glue agents don't visually
+    // crowd the user-facing ones. Custom user-defined categories sort
+    // alphabetically AFTER everything in this array.
+    private static readonly string[] BuiltInOrder =
+    [
+        nameof(AgentCategory.Doxie),
+        nameof(AgentCategory.Developer),
+        nameof(AgentCategory.Inspector),
+        nameof(AgentCategory.Builder),
+        nameof(AgentCategory.Fixer),
+        nameof(AgentCategory.Connector),
+        nameof(AgentCategory.Other),
+    ];
+
+    // Categories filtered out by default. Connector is workflow-internal
+    // glue — pickable from the workflow builder, but cluttering on the
+    // top-level Agents page until the user opts in.
+    private static readonly HashSet<string> DefaultHidden = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(AgentCategory.Connector),
+    };
+    private const string AllCatalogs = "__all";
+
+    private IReadOnlyList<AgentDescriptor> _allAgents = Array.Empty<AgentDescriptor>();
+    private IReadOnlyList<DoxieCatalogRoot> _catalogs = Array.Empty<DoxieCatalogRoot>();
+    private Dictionary<string, int> _countByCategory = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _allCategories = new();
+    private HashSet<string> _selected = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<IGrouping<string, AgentDescriptor>> _grouped =
+        Array.Empty<IGrouping<string, AgentDescriptor>>();
+    private int _hiddenCount;
+    private bool _importing;
+    private string _searchText = string.Empty;
+    private string _importCatalogId = DoxieCatalogStore.DefaultCatalogId;
+    private string _selectedCatalogId = AllCatalogs;
+    private IReadOnlyList<AgentRecommendation> _agentRecommendations = Array.Empty<AgentRecommendation>();
+
+    protected override void OnInitialized()
+    {
+        _catalogs = CatalogStore.ListCatalogs();
+        _allAgents = Catalog.GetAll();
+        RebuildCategoryIndex();
+
+        _selected = ParseSelectedFromQuery() ?? _allCategories
+            .Where(c => !DefaultHidden.Contains(c))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Recompute();
+    }
+
+    /// <summary>
+    /// Rebuilds <see cref="_countByCategory"/> and <see cref="_allCategories"/>
+    /// from the current <see cref="_allAgents"/> snapshot. Called from
+    /// init and after import/delete so the chip row reflects the live
+    /// catalog including any user-defined custom categories.
+    /// </summary>
+    private void RebuildCategoryIndex()
+    {
+        _countByCategory = _allAgents.GroupBy(a => a.DisplayCategory, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        // Built-ins first in their canonical order, then customs
+        // alphabetically. Filter to only what's actually present so the
+        // chip row stays compact on small catalogs.
+        var builtInsPresent = BuiltInOrder.Where(_countByCategory.ContainsKey);
+        var customsPresent = _countByCategory.Keys
+            .Where(k => !BuiltInOrder.Contains(k, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(k => k, StringComparer.OrdinalIgnoreCase);
+        _allCategories = builtInsPresent.Concat(customsPresent).ToList();
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Re-parse on URL change so back/forward navigation honours
+        // bookmarked filter state.
+        var fromUrl = ParseSelectedFromQuery();
+        if (fromUrl is not null && !fromUrl.SetEquals(_selected))
+        {
+            _selected = fromUrl;
+            Recompute();
+        }
+    }
+
+    private void ToggleCategory(string cat)
+    {
+        if (!_selected.Add(cat)) _selected.Remove(cat);
+        Recompute();
+        // Persist as ?categories=Builder,Marketing,... so the view
+        // round-trips. Custom labels with spaces survive: Uri.EscapeDataString
+        // encodes them and HttpUtility on the read side decodes.
+        var ordered = _selected
+            .OrderBy(c => CategorySortKey(c))
+            .ThenBy(c => c, StringComparer.OrdinalIgnoreCase);
+        var qs = string.Join(",", ordered.Select(Uri.EscapeDataString));
+        var current = Nav.ToAbsoluteUri(Nav.Uri);
+        var baseUri = current.GetLeftPart(UriPartial.Path);
+        Nav.NavigateTo($"{baseUri}?categories={qs}", forceLoad: false, replace: true);
+    }
+
+    private void OnSearchChanged() => Recompute();
+
+    private void OnCatalogChanged(string value)
+    {
+        _selectedCatalogId = string.IsNullOrWhiteSpace(value) ? AllCatalogs : value;
+        _agentRecommendations = Array.Empty<AgentRecommendation>();
+        Recompute();
+    }
+
+    private void RecommendAgents()
+    {
+        _agentRecommendations = DoxieRecommendationAdvisor.RecommendAgents(
+            _searchText,
+            _allAgents.Where(a => a.Category is not AgentCategory.Connector && MatchesSelectedCatalog(a)),
+            take: 8);
+
+        if (_agentRecommendations.Count == 0)
+        {
+            Snackbar.Add("No strong agent matches for this context yet.", Severity.Info);
+        }
+    }
+
+    private void Recompute()
+    {
+        var needle = _searchText?.Trim() ?? string.Empty;
+        bool MatchesSearch(AgentDescriptor a) =>
+            needle.Length == 0 ||
+            a.Name.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+            a.SkillName.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+            a.CatalogName.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+            a.CatalogId.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
+            (a.Description?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false) ||
+            a.Id.Contains(needle, StringComparison.OrdinalIgnoreCase);
+
+        var byCategory = _allAgents
+            .Where(a => _selected.Contains(a.DisplayCategory))
+            .Where(MatchesSelectedCatalog)
+            .Where(MatchesSearch)
+            .GroupBy(a => a.DisplayCategory, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        _grouped = byCategory
+            .Keys
+            .OrderBy(c => CategorySortKey(c))
+            .ThenBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .Select(c => (IGrouping<string, AgentDescriptor>)
+                new CategoryGroup(c, byCategory[c]
+                    .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+
+        // Hidden = not selected (category off) + selected-but-search-filtered.
+        // The chip count badges still show full-catalog totals so the user
+        // sees "Inspector (4)" even when search trimmed it to 1 visible row.
+        _hiddenCount = _allAgents.Count(a =>
+            !_selected.Contains(a.DisplayCategory) || !MatchesSelectedCatalog(a) || !MatchesSearch(a));
+    }
+
+    private bool MatchesSelectedCatalog(AgentDescriptor agent) =>
+        string.Equals(_selectedCatalogId, AllCatalogs, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(agent.CatalogId, _selectedCatalogId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Sort key for a category label. Built-ins return their position in
+    /// <see cref="BuiltInOrder"/>; customs return a value past the end of
+    /// the array so they sort after — alphabetical tiebreak handled by
+    /// the caller's secondary OrderBy.
+    /// </summary>
+    private static int CategorySortKey(string category)
+    {
+        for (var i = 0; i < BuiltInOrder.Length; i++)
+        {
+            if (string.Equals(BuiltInOrder[i], category, StringComparison.OrdinalIgnoreCase)) return i;
+        }
+        return BuiltInOrder.Length;
+    }
+
+    private HashSet<string>? ParseSelectedFromQuery()
+    {
+        if (string.IsNullOrWhiteSpace(CategoriesQuery)) return null;
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in CategoriesQuery.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var decoded = Uri.UnescapeDataString(raw.Trim());
+            if (string.IsNullOrWhiteSpace(decoded)) continue;
+            // Normalise built-in names to canonical PascalCase so the URL
+            // is forgiving of casing (?categories=builder works). Custom
+            // labels are kept verbatim.
+            if (Enum.TryParse<AgentCategory>(decoded, ignoreCase: true, out var cat))
+            {
+                set.Add(cat.ToString());
+            }
+            else
+            {
+                set.Add(decoded);
+            }
+        }
+        return set;
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<AgentDescriptor> args)
+    {
+        if (args.Item is not null)
+        {
+            Nav.NavigateTo($"/agents/{args.Item.Id}");
+        }
+    }
+
+    private async Task ExportAgent(AgentDescriptor agent)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("doxieOs.exportAgent", agent.Id);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not start download: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ImportAgent()
+    {
+        if (_importing) return;
+        var catalogId = await ChooseImportCatalog();
+        if (catalogId is null) return;
+
+        _importCatalogId = catalogId;
+        _importing = true;
+        try
+        {
+            // First attempt: no overwrite. On collision the server
+            // returns 409 + code=Collision so we prompt the user before
+            // retrying. This matches the per-agent overwrite UX in the
+            // Builder Save flow.
+            var result = await Js.InvokeAsync<ImportResult?>("doxieOs.pickAndImportAgent", false, _importCatalogId);
+            if (result is null || result.Cancelled) return;
+
+            if (!result.Ok && string.Equals(result.Code, "Collision", StringComparison.OrdinalIgnoreCase))
+            {
+                bool confirmed;
+                try
+                {
+                    confirmed = await Js.InvokeAsync<bool>("doxieOs.confirm",
+                        $"{result.Message}\n\nReplace the existing agent with the imported one?");
+                }
+                catch (JSException) { confirmed = false; }
+                if (!confirmed)
+                {
+                    Snackbar.Add("Import cancelled — existing agent kept.", Severity.Info);
+                    return;
+                }
+                // Re-pick? No — we already have the file picked, but
+                // the JS helper doesn't preserve it across calls. The
+                // simpler path: ask the user to pick again.
+                // TODO: keep the picked file in JS-side state if the
+                // double-pick UX feels heavy in practice.
+                result = await Js.InvokeAsync<ImportResult?>("doxieOs.pickAndImportAgent", true, _importCatalogId);
+                if (result is null || result.Cancelled) return;
+            }
+
+            if (result.Ok)
+            {
+                Snackbar.Add($"Imported agent \"{result.AgentId}\"", Severity.Success);
+                if (!string.IsNullOrEmpty(result.Href))
+                {
+                    Nav.NavigateTo(result.Href);
+                }
+                else
+                {
+                    // Catalog already refreshed server-side; rebuild
+                    // the in-memory grouped projection so the new agent
+                    // shows up without a navigation.
+                    _allAgents = Catalog.GetAll();
+                    _catalogs = CatalogStore.ListCatalogs();
+                    RebuildCategoryIndex();
+                    Recompute();
+                }
+            }
+            else
+            {
+                Snackbar.Add($"Import failed: {result.Message ?? "unknown error"}", Severity.Error);
+            }
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Import failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private sealed record ImportResult(bool Ok, int Status, string? AgentId, string? Href, string? Code, string? Message, bool Cancelled);
+
+    private async Task<string?> ChooseImportCatalog()
+    {
+        _catalogs = CatalogStore.ListCatalogs();
+        if (_catalogs.Count <= 1)
+        {
+            return _catalogs.FirstOrDefault()?.Id ?? DoxieCatalogStore.DefaultCatalogId;
+        }
+
+        var parameters = new DialogParameters<AgentImportDialog>
+        {
+            { x => x.Catalogs, _catalogs },
+            { x => x.CurrentCatalogId, _importCatalogId },
+        };
+        var dialog = await DialogService.ShowAsync<AgentImportDialog>(
+            "Import agent",
+            parameters,
+            new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.ExtraSmall, FullWidth = true });
+        var result = await dialog.Result;
+        return result is { Canceled: false, Data: string id } ? id : null;
+    }
+
+    private async Task DeleteAgent(AgentDescriptor agent)
+    {
+        bool confirmed;
+        try
+        {
+            confirmed = await Js.InvokeAsync<bool>("doxieOs.confirm",
+                $"Permanently delete agent \"{agent.Name}\"?\n\nThe entire .doxie/skills/{agent.Id}/ folder is removed; the .claude/ and .codex/ shims regenerate without it on the next pass. This cannot be undone.");
+        }
+        catch (JSException) { confirmed = false; }
+        if (!confirmed) return;
+
+        try
+        {
+            var result = await Js.InvokeAsync<DeleteResult?>("doxieOs.deleteAgent", agent.Id);
+            if (result is { Ok: true })
+            {
+                Snackbar.Add($"Deleted agent \"{agent.Name}\"", Severity.Success);
+                // Catalog already refreshed server-side; rebuild the
+                // in-memory grouped projection.
+                _allAgents = Catalog.GetAll();
+                _catalogs = CatalogStore.ListCatalogs();
+                RebuildCategoryIndex();
+                _selected.IntersectWith(_allCategories);
+                Recompute();
+            }
+            else
+            {
+                Snackbar.Add($"Could not delete: {result?.Message ?? "unknown error"}", Severity.Error);
+            }
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private sealed record DeleteResult(bool Ok, int Status, string? Message);
+
+    /// <summary>
+    /// Icon for a category label. Built-ins get their typed icon;
+    /// anything else (custom user labels) gets a generic bookmark icon
+    /// so customs are visually distinct from the framework's built-ins.
+    /// </summary>
+    private static string CategoryIcon(string category)
+    {
+        if (Enum.TryParse<AgentCategory>(category, ignoreCase: true, out var cat))
+        {
+            return cat switch
+            {
+                AgentCategory.Doxie => Icons.Material.Filled.Pets,
+                AgentCategory.Developer => Icons.Material.Filled.Code,
+                AgentCategory.Fixer => Icons.Material.Filled.Build,
+                AgentCategory.Builder => Icons.Material.Filled.School,
+                AgentCategory.Inspector => Icons.Material.Filled.RuleFolder,
+                AgentCategory.Connector => Icons.Material.Filled.Cable,
+                _ => Icons.Material.Filled.SmartToy,
+            };
+        }
+        return Icons.Material.Filled.BookmarkBorder;
+    }
+
+    private static string AgentIcon(AgentDescriptor agent) =>
+        AgentIconPalette.Resolve(agent.Icon) ?? CategoryIcon(agent.DisplayCategory);
+
+    // Tiny shim so we can return a fully-typed grouped projection
+    // without re-running the LINQ on every render. We keep the
+    // IGrouping<TKey,TElement> contract that MudTable's foreach expects.
+    private sealed class CategoryGroup : IGrouping<string, AgentDescriptor>
+    {
+        private readonly IEnumerable<AgentDescriptor> _items;
+        public CategoryGroup(string key, IEnumerable<AgentDescriptor> items)
+        {
+            Key = key;
+            _items = items;
+        }
+        public string Key { get; }
+        public IEnumerator<AgentDescriptor> GetEnumerator() => _items.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => _items.GetEnumerator();
+    }
+}
