@@ -60,9 +60,31 @@ public sealed class NotificationArtifactFormatterTests : IDisposable
         var preview = NotificationArtifactFormatter.ForAgentRun(run, "Run completed");
 
         preview.ContentFormat.Should().Be("text");
+        preview.Content.Should().Contain("[stderr] warning");
         preview.Content.Should().Contain("final summary");
-        preview.Body.Should().Contain("stdout");
+        preview.Body.Should().Contain("console");
         preview.SourcePath.Should().BeNull();
+    }
+
+    [Fact]
+    public void AgentRunPreviewMarksVeryLargeConsoleOutputAsTruncated()
+    {
+        var longLine = new string('x', 310_000);
+        var run = AgentRun.Hydrate(
+            "run-large",
+            "developer",
+            "",
+            DateTimeOffset.UtcNow,
+            AgentRunStatus.Completed,
+            DateTimeOffset.UtcNow,
+            0,
+            new[] { new AgentRunOutputLine(DateTimeOffset.UtcNow, AgentRunOutputSource.Stdout, longLine) });
+
+        var preview = NotificationArtifactFormatter.ForAgentRun(run, "Run completed");
+
+        preview.ContentTruncated.Should().BeTrue();
+        preview.ContentLength.Should().Be(310_000);
+        preview.Content.Should().EndWith("[output truncated in notification]");
     }
 
     [Fact]

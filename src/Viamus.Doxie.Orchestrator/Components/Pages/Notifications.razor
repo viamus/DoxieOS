@@ -3,66 +3,126 @@
 
 @inject NotificationsBus Bus
 @inject NavigationManager Nav
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
 @implements IDisposable
 
-<PageTitle>Notifications — DoxieOS</PageTitle>
+<PageTitle>Notifications - DoxieOS</PageTitle>
 
-<MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-2" />
+<div class="doxie-page notifications-page">
+    <MudBreadcrumbs Items="_breadcrumbs" Class="px-0 mb-1" />
 
-<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
-    <MudIcon Icon="@Icons.Material.Filled.Notifications" Color="Color.Primary" />
-    <MudText Typo="Typo.h3">Notifications</MudText>
-    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">@_items.Count</MudChip>
-</MudStack>
-<MudText Typo="Typo.subtitle1" Class="mb-4">
-    Everything an agent has reported back since DoxieOS started — most recent first. Live-updates as new ones arrive (capped at @NotificationsBus.MaxHistory in memory; older ones are dropped).
-</MudText>
+    <div class="doxie-page-header notifications-header">
+        <div>
+            <div class="doxie-page-title">
+                <span class="doxie-page-title-icon">
+                    <MudIcon Icon="@Icons.Material.Filled.Notifications" Size="Size.Small" />
+                </span>
+                <MudText Typo="Typo.h3">Notifications</MudText>
+                <span class="doxie-status-pill">@_items.Count</span>
+            </div>
+            <MudText Typo="Typo.subtitle1" Class="doxie-page-subtitle">
+                Agent and workflow updates with readable execution details and inline output.
+            </MudText>
+        </div>
 
-@if (_items.Count == 0)
-{
-    <MudPaper Class="pa-6" Elevation="2">
-        <MudText Typo="Typo.body2" Color="Color.Default">
-            No notifications yet. Agents POST these to <code>/api/notifications</code> at meaningful moments — when something noisy happens you'll see them surface here (and as a toast in the corner).
-        </MudText>
-    </MudPaper>
-}
-else
-{
-    @* Capped height + scroll so a flood of notifications doesn't push
-       the rest of the page out of reach. The list itself is already
-       capped at NotificationsBus.MaxHistory, but on small viewports
-       even that is enough to scroll. *@
-    <MudPaper Elevation="2" Style="max-height: calc(100vh - 280px); overflow-y: auto;">
-        @foreach (var n in _items)
-        {
-            var (color, icon) = StyleFor(n.Severity);
-            var clickable = !string.IsNullOrWhiteSpace(n.Href);
-            <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2"
-                      Style="@($"padding: 12px 16px; border-bottom: 1px solid #E8E6DD;{(clickable ? " cursor: pointer;" : string.Empty)}")"
-                      @onclick="@(() => Navigate(n.Href))">
-                <MudIcon Icon="@icon" Color="@color" />
-                <MudStack Spacing="0" Style="flex: 1;">
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-                        <MudText Typo="Typo.subtitle2">@n.Title</MudText>
-                        @if (!string.IsNullOrEmpty(n.AgentId))
+        <div class="notifications-tools">
+            <MudTextField T="string"
+                          @bind-Value="_query"
+                          Immediate="true"
+                          Clearable="true"
+                          Placeholder="Search notifications or output..."
+                          Variant="Variant.Outlined"
+                          Margin="Margin.Dense"
+                          Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search"
+                          Class="notifications-search" />
+        </div>
+    </div>
+
+    @if (_items.Count == 0)
+    {
+        <MudPaper Class="doxie-empty-state notifications-empty pa-6" Elevation="0">
+            <MudText Typo="Typo.body2" Color="Color.Default">
+                No notifications yet. Agents POST updates to <code>/api/notifications</code>; new events appear here and as polished toasts.
+            </MudText>
+        </MudPaper>
+    }
+    else if (FilteredItems.Count == 0)
+    {
+        <MudPaper Class="doxie-empty-state notifications-empty pa-6" Elevation="0">
+            <MudText Typo="Typo.body2" Color="Color.Default">
+                No notifications match this search.
+            </MudText>
+        </MudPaper>
+    }
+    else
+    {
+        <div class="notifications-list">
+            @foreach (var n in FilteredItems)
+            {
+                var (color, icon, severityClass) = StyleFor(n.Severity);
+                <article class="@($"notification-card {severityClass}")">
+                    <div class="notification-card-icon">
+                        <MudIcon Icon="@icon" Color="@color" Size="Size.Small" />
+                    </div>
+
+                    <div class="notification-card-main">
+                        <div class="notification-card-top">
+                            <div class="notification-title-wrap">
+                                <MudText Typo="Typo.subtitle1" Class="notification-title">@n.Title</MudText>
+                                <div class="notification-meta">
+                                    <span class="notification-severity">@FormatSeverity(n.Severity)</span>
+                                    <span>@FormatTime(n.Timestamp)</span>
+                                    @if (!string.IsNullOrWhiteSpace(n.AgentId))
+                                    {
+                                        <span class="notification-agent">@n.AgentId</span>
+                                    }
+                                </div>
+                            </div>
+
+                            <div class="notification-actions">
+                                @if (!string.IsNullOrWhiteSpace(n.Href))
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.OpenInNew"
+                                                   Size="Size.Small"
+                                                   Color="Color.Default"
+                                                   title="Open source run"
+                                                   OnClick="@(() => Navigate(n.Href))" />
+                                }
+                                @if (n.Actions is { Count: > 0 })
+                                {
+                                    @foreach (var action in n.Actions)
+                                    {
+                                        <MudButton Variant="Variant.Text"
+                                                   Color="Color.Primary"
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => Navigate(action.Href))">
+                                            @action.Label
+                                        </MudButton>
+                                    }
+                                }
+                            </div>
+                        </div>
+
+                        @if (!string.IsNullOrWhiteSpace(n.Body))
                         {
-                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default" Style="font-family: 'Cascadia Code', Consolas, monospace; font-size: 0.7rem;">@n.AgentId</MudChip>
+                            <MudText Typo="Typo.body2" Color="Color.Default" Class="notification-body">@n.Body</MudText>
                         }
-                        @if (clickable)
+
+                        @if (HasPreview(n))
                         {
-                            <MudIcon Icon="@Icons.Material.Filled.OpenInNew" Size="Size.Small" Color="Color.Default" />
-                        }
-                        <MudSpacer />
-                        <MudText Typo="Typo.caption" Color="Color.Default">@FormatTime(n.Timestamp)</MudText>
-                    </MudStack>
-                    @if (!string.IsNullOrEmpty(n.Body))
-                    {
-                        <MudText Typo="Typo.body2" Color="Color.Default" Class="mt-1">@n.Body</MudText>
-                    }
-                    @if (HasPreview(n))
-                    {
-                        <MudExpansionPanels Elevation="0" Dense="true" Class="mt-2">
-                            <MudExpansionPanel Text="@PreviewTitle(n)">
+                            <section class="notification-output">
+                                <div class="notification-output-header">
+                                    <div class="notification-output-title">
+                                        <MudIcon Icon="@Icons.Material.Filled.Article" Size="Size.Small" />
+                                        <span>@PreviewTitle(n)</span>
+                                    </div>
+                                    <span class="@($"notification-output-size {(n.ContentTruncated ? "is-truncated" : string.Empty)}")">
+                                        @ContentSizeLabel(n)
+                                    </span>
+                                </div>
+
                                 @if (IsHtmlPreview(n))
                                 {
                                     <iframe class="notification-preview-frame"
@@ -72,27 +132,34 @@ else
                                 }
                                 else
                                 {
-                                    <div class="notification-preview">
+                                    <div class="@PreviewClass(n)">
                                         @RenderPreview(n)
                                     </div>
                                 }
+
                                 @if (!string.IsNullOrWhiteSpace(n.SourcePath))
                                 {
-                                    <MudText Typo="Typo.caption"
-                                             Color="Color.Default"
-                                             Class="mt-2"
-                                             Style="display: block; font-family: 'Cascadia Code', Consolas, monospace;">
-                                        @n.SourcePath
-                                    </MudText>
+                                    <div class="notification-source">
+                                        <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small" />
+                                        <span>@n.SourcePath</span>
+                                        <MudTooltip Text="Open artifact folder">
+                                            <MudIconButton Icon="@Icons.Material.Filled.FolderOpen"
+                                                           Size="Size.Small"
+                                                           Color="Color.Primary"
+                                                           Class="notification-source-action"
+                                                           title="Open artifact folder"
+                                                           OnClick="@(() => OpenSourceFolderAsync(n))" />
+                                        </MudTooltip>
+                                    </div>
                                 }
-                            </MudExpansionPanel>
-                        </MudExpansionPanels>
-                    }
-                </MudStack>
-            </MudStack>
-        }
-    </MudPaper>
-}
+                            </section>
+                        }
+                    </div>
+                </article>
+            }
+        </div>
+    }
+</div>
 
 @code {
     private static readonly List<BreadcrumbItem> _breadcrumbs =
@@ -102,14 +169,31 @@ else
     ];
 
     private IReadOnlyList<Notification> _items = Array.Empty<Notification>();
+    private string _query = string.Empty;
+
+    private IReadOnlyList<Notification> FilteredItems
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(_query))
+            {
+                return _items;
+            }
+
+            var query = _query.Trim();
+            return _items
+                .Where(n => Contains(n.Title, query)
+                    || Contains(n.Body, query)
+                    || Contains(n.AgentId, query)
+                    || Contains(n.Content, query)
+                    || Contains(n.SourcePath, query))
+                .ToList();
+        }
+    }
 
     protected override void OnInitialized()
     {
         Reload();
-        // First sight clears the unread cursor — the bell badge zeros
-        // out as soon as the user opens the page. New notifications
-        // that arrive WHILE we're on the page count as unread again
-        // (Changed event triggers a re-render which picks up the count).
         Bus.MarkAllRead();
         Bus.Changed += OnBusChanged;
     }
@@ -130,12 +214,6 @@ else
         _items = Bus.ListRecent();
     }
 
-    /// <summary>
-    /// Click handler for a notification row. External URLs (anything
-    /// starting with http/https) open in a new tab so the user doesn't
-    /// lose the dashboard. Internal routes (/agents, /workflows, ...)
-    /// navigate in-place.
-    /// </summary>
     private void Navigate(string? href)
     {
         if (string.IsNullOrWhiteSpace(href)) return;
@@ -150,22 +228,28 @@ else
         }
     }
 
-    private static (Color Color, string Icon) StyleFor(string severity) => severity?.ToLowerInvariant() switch
+    private static (Color Color, string Icon, string Class) StyleFor(string severity) => severity?.ToLowerInvariant() switch
     {
-        "success" => (Color.Success, Icons.Material.Filled.CheckCircle),
-        "warning" => (Color.Warning, Icons.Material.Filled.Warning),
-        "error" => (Color.Error, Icons.Material.Filled.Error),
-        _ => (Color.Info, Icons.Material.Filled.Info),
+        "success" => (Color.Success, Icons.Material.Filled.CheckCircle, "is-success"),
+        "warning" => (Color.Warning, Icons.Material.Filled.Warning, "is-warning"),
+        "error" => (Color.Error, Icons.Material.Filled.Error, "is-error"),
+        _ => (Color.Info, Icons.Material.Filled.Info, "is-info"),
     };
+
+    private static string FormatSeverity(string? severity)
+    {
+        if (string.IsNullOrWhiteSpace(severity)) return "Info";
+        return char.ToUpperInvariant(severity[0]) + severity[1..].ToLowerInvariant();
+    }
 
     private static string FormatTime(DateTimeOffset? ts)
     {
-        if (ts is null) return "—";
+        if (ts is null) return "-";
         var when = ts.Value.ToLocalTime();
         var delta = DateTimeOffset.UtcNow - ts.Value;
         if (delta.TotalSeconds < 60) return "just now";
-        if (delta.TotalMinutes < 60) return $"{(int)delta.TotalMinutes}m ago · {when:HH:mm:ss}";
-        if (delta.TotalHours < 24) return $"{(int)delta.TotalHours}h ago · {when:HH:mm}";
+        if (delta.TotalMinutes < 60) return $"{(int)delta.TotalMinutes}m ago - {when:HH:mm:ss}";
+        if (delta.TotalHours < 24) return $"{(int)delta.TotalHours}h ago - {when:HH:mm}";
         return when.ToString("yyyy-MM-dd HH:mm");
     }
 
@@ -178,12 +262,29 @@ else
     private static string PreviewTitle(Notification notification)
     {
         var source = string.IsNullOrWhiteSpace(notification.SourcePath)
-            ? "Output preview"
+            ? "Execution output"
             : Path.GetFileName(notification.SourcePath);
         var format = string.IsNullOrWhiteSpace(notification.ContentFormat)
             ? "text"
             : notification.ContentFormat;
-        return $"{source} · {format}";
+        return $"{source} - {format}";
+    }
+
+    private static string ContentSizeLabel(Notification notification)
+    {
+        var length = notification.ContentLength ?? notification.Content?.Length ?? 0;
+        var size = length < 1024
+            ? $"{length:N0} chars"
+            : $"{length / 1024d:N1} KB";
+        return notification.ContentTruncated ? $"{size} source, preview capped" : $"{size} inline";
+    }
+
+    private static string PreviewClass(Notification notification)
+    {
+        var format = notification.ContentFormat?.Trim().ToLowerInvariant();
+        return format is "markdown" or "md"
+            ? "notification-preview notification-preview-markdown markdown-body"
+            : "notification-preview notification-preview-code";
     }
 
     private static MarkupString RenderPreview(Notification notification)
@@ -204,4 +305,28 @@ else
         var html = $"<pre>{HtmlEncoder.Default.Encode(content)}</pre>";
         return new MarkupString(html);
     }
+
+    private async Task OpenSourceFolderAsync(Notification notification)
+    {
+        if (string.IsNullOrWhiteSpace(notification.SourcePath)) return;
+
+        var folder = Path.GetDirectoryName(notification.SourcePath);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            folder = ".";
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("doxieOs.openFolder", folder);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not open artifact folder: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private static bool Contains(string? value, string query) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Contains(query, StringComparison.OrdinalIgnoreCase);
 }

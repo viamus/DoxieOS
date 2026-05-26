@@ -24,7 +24,9 @@ public sealed record Notification(
     string? Content = null,
     string ContentFormat = "text",
     string? SourcePath = null,
-    IReadOnlyList<NotificationAction>? Actions = null);
+    IReadOnlyList<NotificationAction>? Actions = null,
+    bool ContentTruncated = false,
+    int? ContentLength = null);
 
 public sealed record NotificationAction(
     string Label,
