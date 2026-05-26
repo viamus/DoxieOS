@@ -71,3 +71,4 @@ run-*.sh
 
 # Doxie runtime evidence index (local workspace memory, never versioned)
 .doxie/index/
+/.doxie/run-inputs
