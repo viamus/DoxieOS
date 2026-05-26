@@ -103,7 +103,9 @@ public sealed class WorkflowCompletionNotifier : IHostedService, IDisposable
             Href: $"/workflows/{Uri.EscapeDataString(run.WorkflowId)}?run={Uri.EscapeDataString(run.Id)}",
             Content: content.Content,
             ContentFormat: content.ContentFormat,
-            SourcePath: content.SourcePath));
+            SourcePath: content.SourcePath,
+            ContentTruncated: content.ContentTruncated,
+            ContentLength: content.ContentLength));
     }
 
     private static bool IsTerminal(WorkflowRunStatus status) =>

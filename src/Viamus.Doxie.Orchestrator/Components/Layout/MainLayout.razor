@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@using System.Text.Encodings.Web
 @using Viamus.Doxie.Orchestrator.ReleaseNotes
 @using Viamus.Doxie.Orchestrator.Components.Shared
 @inject Viamus.Doxie.Orchestrator.Notifications.NotificationsBus NotificationsBus
@@ -264,33 +265,96 @@
             _ => MudBlazor.Severity.Normal,
         };
 
-        var body = string.IsNullOrWhiteSpace(notification.AgentId)
-            ? $"{notification.Title} - {notification.Body}"
-            : $"{notification.Title} ({notification.AgentId}) - {notification.Body}";
-        if (!string.IsNullOrWhiteSpace(notification.Content))
+        var markup = new MarkupString(BuildToastMarkup(notification));
+        await InvokeAsync(() => Snackbar.Add(markup, severity, options =>
         {
-            body += " · preview available";
-        }
-
-        await InvokeAsync(() => Snackbar.Add(body, severity, options =>
-        {
+            options.Icon = IconFor(notification.Severity);
+            options.SnackbarTypeClass = $"doxie-toast-snackbar {ToastSeverityClass(notification.Severity)}";
+            options.ShowTransitionDuration = 160;
+            options.VisibleStateDuration = HasInlineOutput(notification) ? 4000 : 3000;
+            options.HideTransitionDuration = 220;
+            options.ShowCloseIcon = false;
+            options.RequireInteraction = false;
+            options.Action = HasInlineOutput(notification) ? "View output" : "Open";
+            options.ActionColor = Color.Primary;
+            options.CloseAfterNavigation = true;
             if (!string.IsNullOrWhiteSpace(notification.Href))
             {
                 options.OnClick = _ =>
                 {
-                    var href = notification.Href!;
-                    if (href.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                        || href.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                    {
-                        Nav.NavigateTo(href, forceLoad: true);
-                    }
-                    else
-                    {
-                        Nav.NavigateTo(href);
-                    }
+                    NavigateFromToast(notification);
                     return Task.CompletedTask;
                 };
             }
         }));
+    }
+
+    private void NavigateFromToast(Viamus.Doxie.Orchestrator.Notifications.Notification notification)
+    {
+        var href = HasInlineOutput(notification) ? "/notifications" : notification.Href;
+        if (string.IsNullOrWhiteSpace(href))
+        {
+            href = "/notifications";
+        }
+
+        if (href.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || href.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo(href, forceLoad: true);
+        }
+        else
+        {
+            Nav.NavigateTo(href);
+        }
+    }
+
+    private static bool HasInlineOutput(Viamus.Doxie.Orchestrator.Notifications.Notification notification) =>
+        !string.IsNullOrWhiteSpace(notification.Content);
+
+    private static string BuildToastMarkup(Viamus.Doxie.Orchestrator.Notifications.Notification notification)
+    {
+        var title = HtmlEncoder.Default.Encode(notification.Title);
+        var body = HtmlEncoder.Default.Encode(Compact(notification.Body, 220));
+        var agent = string.IsNullOrWhiteSpace(notification.AgentId)
+            ? string.Empty
+            : $"<span class=\"doxie-toast-chip\">{HtmlEncoder.Default.Encode(notification.AgentId)}</span>";
+        var signal = HasInlineOutput(notification)
+            ? notification.ContentTruncated ? "Output preview embedded" : "Full output embedded"
+            : "Details available";
+
+        return $"""
+            <div class="doxie-toast">
+                <div class="doxie-toast-topline">
+                    <span class="doxie-toast-title">{title}</span>
+                    {agent}
+                </div>
+                <div class="doxie-toast-body">{body}</div>
+                <div class="doxie-toast-foot">{HtmlEncoder.Default.Encode(signal)}</div>
+            </div>
+            """;
+    }
+
+    private static string IconFor(string? severity) => severity?.ToLowerInvariant() switch
+    {
+        "success" => Icons.Material.Filled.CheckCircle,
+        "warning" => Icons.Material.Filled.Warning,
+        "error" => Icons.Material.Filled.Error,
+        _ => Icons.Material.Filled.Notifications,
+    };
+
+    private static string ToastSeverityClass(string? severity) => severity?.ToLowerInvariant() switch
+    {
+        "success" => "doxie-toast-success",
+        "warning" => "doxie-toast-warning",
+        "error" => "doxie-toast-error",
+        _ => "doxie-toast-info",
+    };
+
+    private static string Compact(string? value, int maxChars)
+    {
+        var clean = string.Join(' ', (value ?? string.Empty)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (clean.Length <= maxChars) return clean;
+        return clean[..Math.Max(0, maxChars - 3)].TrimEnd() + "...";
     }
 }

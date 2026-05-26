@@ -1,0 +1,272 @@
+.notifications-page {
+    gap: 16px;
+}
+
+.notifications-header {
+    align-items: center;
+}
+
+.notifications-tools {
+    width: min(420px, 100%);
+}
+
+.notifications-search {
+    width: 100%;
+}
+
+.notifications-empty {
+    color: var(--mud-palette-text-secondary);
+}
+
+.notifications-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 12px;
+}
+
+.notification-card {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid color-mix(in srgb, var(--mud-palette-divider) 82%, transparent);
+    border-left-width: 3px;
+    border-radius: var(--doxie-radius-panel);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+        var(--mud-palette-surface);
+}
+
+.notification-card.is-success {
+    border-left-color: var(--mud-palette-success);
+}
+
+.notification-card.is-warning {
+    border-left-color: var(--mud-palette-warning);
+}
+
+.notification-card.is-error {
+    border-left-color: var(--mud-palette-error);
+}
+
+.notification-card.is-info {
+    border-left-color: var(--mud-palette-info);
+}
+
+.notification-card-icon {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--doxie-radius-compact);
+    background: color-mix(in srgb, var(--mud-palette-text-primary) 5%, transparent);
+    border: 1px solid color-mix(in srgb, var(--mud-palette-divider) 72%, transparent);
+}
+
+.notification-card-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.notification-card-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+}
+
+.notification-title-wrap {
+    min-width: 0;
+}
+
+.notification-title {
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.notification-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.74rem;
+}
+
+.notification-meta > span {
+    min-width: 0;
+}
+
+.notification-severity,
+.notification-agent {
+    display: inline-flex;
+    align-items: center;
+    min-height: 21px;
+    padding: 0 7px;
+    border-radius: var(--doxie-radius-compact);
+    border: 1px solid color-mix(in srgb, var(--mud-palette-divider) 78%, transparent);
+    background: color-mix(in srgb, var(--mud-palette-text-primary) 4%, transparent);
+}
+
+.notification-agent {
+    max-width: 100%;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notification-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+}
+
+.notification-body {
+    color: var(--mud-palette-text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.notification-output {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border-radius: var(--doxie-radius-compact);
+    border: 1px solid color-mix(in srgb, var(--mud-palette-primary) 16%, var(--mud-palette-divider));
+    background: color-mix(in srgb, var(--mud-palette-background) 42%, var(--mud-palette-surface));
+}
+
+.notification-output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+}
+
+.notification-output-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    color: var(--mud-palette-text-primary);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.notification-output-title span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notification-output-size {
+    flex: 0 0 auto;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.72rem;
+}
+
+.notification-output-size.is-truncated {
+    color: var(--mud-palette-warning);
+}
+
+.notification-preview {
+    max-height: min(58vh, 680px);
+    overflow: auto;
+    border: 1px solid color-mix(in srgb, var(--mud-palette-divider) 74%, transparent);
+    border-radius: var(--doxie-radius-compact);
+    padding: 12px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+        #151513;
+}
+
+.notification-preview-code pre {
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: #E8E6DD;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+.notification-preview-markdown {
+    color: var(--mud-palette-text-primary);
+}
+
+.notification-preview-frame {
+    width: 100%;
+    min-height: 340px;
+    max-height: min(58vh, 680px);
+    border: 1px solid color-mix(in srgb, var(--mud-palette-divider) 74%, transparent);
+    border-radius: var(--doxie-radius-compact);
+    background: var(--mud-palette-surface);
+}
+
+.notification-source {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: var(--mud-palette-text-secondary);
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: 0.72rem;
+}
+
+.notification-source span {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.notification-source-action.mud-icon-button {
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+    margin-left: auto;
+}
+
+@media (max-width: 760px) {
+    .notifications-header {
+        align-items: stretch;
+    }
+
+    .notifications-tools {
+        width: 100%;
+    }
+
+    .notification-card {
+        grid-template-columns: 1fr;
+    }
+
+    .notification-card-icon {
+        display: none;
+    }
+
+    .notification-card-top,
+    .notification-output-header {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .notification-actions {
+        justify-content: flex-start;
+    }
+
+    .notification-output-header {
+        flex-direction: column;
+    }
+}

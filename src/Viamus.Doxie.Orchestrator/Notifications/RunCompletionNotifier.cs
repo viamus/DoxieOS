@@ -80,7 +80,9 @@ public sealed class RunCompletionNotifier : IHostedService, IDisposable
             Href: $"/agents/{Uri.EscapeDataString(run.AgentId)}?run={Uri.EscapeDataString(run.Id)}",
             Content: content.Content,
             ContentFormat: content.ContentFormat,
-            SourcePath: content.SourcePath));
+            SourcePath: content.SourcePath,
+            ContentTruncated: content.ContentTruncated,
+            ContentLength: content.ContentLength));
     }
 
     private static bool IsTerminal(AgentRunStatus status) =>

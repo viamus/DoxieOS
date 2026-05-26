@@ -8,7 +8,7 @@ namespace Viamus.Doxie.Orchestrator.Notifications;
 
 internal static class NotificationArtifactFormatter
 {
-    private const int MaxContentChars = 12_000;
+    private const int MaxContentChars = 300_000;
     private const int MaxBodyExcerptChars = 180;
 
     public static NotificationContentSnapshot ForAgentRun(AgentRun run, string body)
@@ -19,23 +19,24 @@ internal static class NotificationArtifactFormatter
             if (fromDir is not null) return fromDir;
         }
 
-        var stdout = run.Output
-            .Where(line => line.Source == AgentRunOutputSource.Stdout)
-            .Select(line => line.Text)
+        var consoleLines = run.Output
+            .Select(FormatConsoleLine)
             .Where(line => !string.IsNullOrWhiteSpace(line))
-            .TakeLast(80)
             .ToArray();
 
-        if (stdout.Length == 0) return NotificationContentSnapshot.Empty(body);
+        if (consoleLines.Length == 0) return NotificationContentSnapshot.Empty(body);
 
-        var text = OutputArtifactText.Clean(string.Join(Environment.NewLine, stdout));
+        var text = OutputArtifactText.Clean(string.Join(Environment.NewLine, consoleLines));
+        var clipped = ClipContent(text);
         return string.IsNullOrWhiteSpace(text)
             ? NotificationContentSnapshot.Empty(body)
             : new NotificationContentSnapshot(
-                WithExcerpt(body, text, "stdout"),
-                TrimContent(text),
+                WithExcerpt(body, text, "console"),
+                clipped.Content,
                 "text",
-                null);
+                null,
+                clipped.Truncated,
+                clipped.OriginalLength);
     }
 
     public static NotificationContentSnapshot ForWorkflowRun(WorkflowRun run, string runsRoot, string body)
@@ -83,11 +84,14 @@ internal static class NotificationArtifactFormatter
             ? StripHtmlForExcerpt(text)
             : OutputArtifactText.Clean(text);
 
+        var clipped = ClipContent(text);
         return new NotificationContentSnapshot(
             WithExcerpt(body, previewText, Path.GetFileName(candidate)),
-            TrimContent(text),
+            clipped.Content,
             format,
-            candidate);
+            candidate,
+            clipped.Truncated,
+            clipped.OriginalLength);
     }
 
     private static IEnumerable<string> CandidateFiles(string directory)
@@ -198,10 +202,24 @@ internal static class NotificationArtifactFormatter
         return sb.ToString();
     }
 
-    private static string TrimContent(string content)
+    private static string FormatConsoleLine(AgentRunOutputLine line)
     {
-        if (content.Length <= MaxContentChars) return content;
-        return content[..MaxContentChars].TrimEnd() + Environment.NewLine + "\n...";
+        var prefix = line.Source switch
+        {
+            AgentRunOutputSource.Stderr => "[stderr] ",
+            _ => string.Empty,
+        };
+
+        return prefix + line.Text;
+    }
+
+    private static (string Content, bool Truncated, int OriginalLength) ClipContent(string content)
+    {
+        if (content.Length <= MaxContentChars) return (content, false, content.Length);
+        return (
+            content[..MaxContentChars].TrimEnd() + Environment.NewLine + "\n[output truncated in notification]",
+            true,
+            content.Length);
     }
 
     private static string Compact(string? value, int maxChars)
@@ -217,7 +235,9 @@ internal sealed record NotificationContentSnapshot(
     string Body,
     string? Content,
     string ContentFormat,
-    string? SourcePath)
+    string? SourcePath,
+    bool ContentTruncated = false,
+    int? ContentLength = null)
 {
     public static NotificationContentSnapshot Empty(string body) => new(body, null, "text", null);
 }
