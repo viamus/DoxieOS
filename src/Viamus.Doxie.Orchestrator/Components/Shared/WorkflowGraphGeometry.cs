@@ -91,6 +91,18 @@ internal static class WorkflowGraphGeometry
         var regions = LoopRegions(nodes, nodeWidth, nodeHeight)
             .ToDictionary(r => r.Id, StringComparer.OrdinalIgnoreCase);
 
+        var offset = LaneOffset(edge, edges);
+        if (regions.TryGetValue(edge.ToNodeId, out var targetRegion))
+        {
+            return RouteIntoLoopRegion(edge, from, targetRegion, offset, nodeWidth, nodeHeight);
+        }
+
+        if (regions.TryGetValue(edge.FromNodeId, out var sourceRegion)
+            && !string.Equals(to.LoopId, sourceRegion.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            return RouteOutOfLoopRegion(edge, sourceRegion, to, offset, nodeHeight);
+        }
+
         var start = StartPoint(edge, from, to, regions, nodeWidth, nodeHeight);
         var end = EndPoint(edge, to, regions, nodeHeight);
         if (start is null || end is null) return null;
@@ -103,7 +115,6 @@ internal static class WorkflowGraphGeometry
             return new WorkflowEdgeRoute(path, label.X, label.Y);
         }
 
-        var offset = LaneOffset(edge, edges);
         var deltaX = end.Value.X - start.Value.X;
         if (deltaX >= 72)
         {
@@ -130,6 +141,62 @@ internal static class WorkflowGraphGeometry
                            $"L {F(end.Value.X)} {F(end.Value.Y)}";
         var fallbackLabel = LabelPoint(edge, start.Value, end.Value, outerX, (start.Value.Y + end.Value.Y) / 2, offset);
         return new WorkflowEdgeRoute(fallbackPath, fallbackLabel.X, fallbackLabel.Y);
+    }
+
+    private static WorkflowEdgeRoute RouteIntoLoopRegion(
+        WorkflowEdge edge,
+        WorkflowNode from,
+        WorkflowLoopRegion region,
+        double laneOffset,
+        int nodeWidth,
+        int nodeHeight)
+    {
+        var start = new WorkflowPoint(from.X + nodeWidth, from.Y + nodeHeight / 2d);
+        var topEntryX = Clamp(start.X + laneOffset, region.X + 44, region.Right - 44);
+
+        if (start.Y <= region.Y - 8)
+        {
+            var end = new WorkflowPoint(topEntryX, region.Y + 8);
+            var path = Math.Abs(start.X - topEntryX) < 1
+                ? $"M {F(start.X)} {F(start.Y)} L {F(end.X)} {F(end.Y)}"
+                : $"M {F(start.X)} {F(start.Y)} L {F(topEntryX)} {F(start.Y)} L {F(end.X)} {F(end.Y)}";
+            var label = LabelPoint(edge, start, end, topEntryX, (start.Y + end.Y) / 2, laneOffset);
+            return new WorkflowEdgeRoute(path, label.X, label.Y);
+        }
+
+        var sideY = Clamp(start.Y, region.Y + 36, region.Bottom - 36);
+        var sideEnd = start.X <= region.X
+            ? new WorkflowPoint(region.X + 8, sideY)
+            : new WorkflowPoint(region.Right - 8, sideY);
+        var sidePath = $"M {F(start.X)} {F(start.Y)} L {F(sideEnd.X)} {F(sideEnd.Y)}";
+        var sideLabel = LabelPoint(edge, start, sideEnd, (start.X + sideEnd.X) / 2, sideEnd.Y, laneOffset);
+        return new WorkflowEdgeRoute(sidePath, sideLabel.X, sideLabel.Y);
+    }
+
+    private static WorkflowEdgeRoute RouteOutOfLoopRegion(
+        WorkflowEdge edge,
+        WorkflowLoopRegion region,
+        WorkflowNode to,
+        double laneOffset,
+        int nodeHeight)
+    {
+        var end = new WorkflowPoint(to.X, to.Y + nodeHeight / 2d);
+
+        if (end.Y <= region.Y - 8)
+        {
+            var exitX = Clamp(end.X - 72 + laneOffset, region.X + 44, region.Right - 44);
+            var start = new WorkflowPoint(exitX, region.Y + 8);
+            var path = $"M {F(start.X)} {F(start.Y)} L {F(start.X)} {F(end.Y)} L {F(end.X)} {F(end.Y)}";
+            var label = LabelPoint(edge, start, end, start.X, (start.Y + end.Y) / 2, laneOffset);
+            return new WorkflowEdgeRoute(path, label.X, label.Y);
+        }
+
+        var startSide = end.X >= region.Right
+            ? new WorkflowPoint(region.Right - 8, Clamp(end.Y, region.Y + 36, region.Bottom - 36))
+            : new WorkflowPoint(region.X + 8, Clamp(end.Y, region.Y + 36, region.Bottom - 36));
+        var sidePath = $"M {F(startSide.X)} {F(startSide.Y)} L {F(end.X)} {F(end.Y)}";
+        var sideLabel = LabelPoint(edge, startSide, end, (startSide.X + end.X) / 2, end.Y, laneOffset);
+        return new WorkflowEdgeRoute(sidePath, sideLabel.X, sideLabel.Y);
     }
 
     private static WorkflowPoint LabelPoint(
@@ -233,6 +300,9 @@ internal static class WorkflowGraphGeometry
 
     private static string F(double value) =>
         value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static double Clamp(double value, double min, double max) =>
+        max < min ? (min + max) / 2d : Math.Clamp(value, min, max);
 
     private readonly record struct WorkflowPoint(double X, double Y);
 }
