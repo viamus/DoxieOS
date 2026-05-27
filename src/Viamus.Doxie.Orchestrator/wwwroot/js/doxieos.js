@@ -307,6 +307,65 @@ window.doxieOs.createWorkflow = async function (payload) {
     }
 };
 
+window.doxieOs.exportWorkflow = function (workflowId, includeAgents) {
+    const a = document.createElement('a');
+    const qs = includeAgents === false ? '?includeAgents=false' : '';
+    a.href = `/api/workflows/${encodeURIComponent(workflowId)}/export${qs}`;
+    a.download = `${workflowId}-workflow.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+};
+
+window.doxieOs.pickWorkflowZip = function () {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.zip,application/zip,application/x-zip-compressed';
+        input.style.display = 'none';
+        let settled = false;
+        const settle = (val) => { if (!settled) { settled = true; resolve(val); } };
+        input.addEventListener('change', () => {
+            settle(input.files && input.files[0] ? input.files[0] : null);
+        });
+        input.addEventListener('cancel', () => settle(null));
+        document.body.appendChild(input);
+        input.click();
+        setTimeout(() => settle(null), 60000);
+    });
+};
+
+window.doxieOs.importWorkflow = async function (file, overwrite, catalogId) {
+    if (!file) return { ok: false, status: 0, message: 'No file selected' };
+    try {
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        if (overwrite) fd.append('overwrite', 'true');
+        if (catalogId) fd.append('catalogId', catalogId);
+        const resp = await fetch('/api/workflows/import', { method: 'POST', body: fd });
+        let body = null;
+        try { body = await resp.json(); } catch (_) { /* server may have returned plain text */ }
+        return {
+            ok: resp.ok,
+            status: resp.status,
+            workflowId: body && body.workflowId,
+            href: body && body.href,
+            workflowAction: body && body.workflowAction,
+            agents: body && body.agents ? body.agents : [],
+            code: body && body.code,
+            message: body && (body.error || body.message),
+        };
+    } catch (err) {
+        return { ok: false, status: 0, message: String(err) };
+    }
+};
+
+window.doxieOs.pickAndImportWorkflow = async function (overwrite, catalogId) {
+    const file = await window.doxieOs.pickWorkflowZip();
+    if (!file) return { ok: false, status: 0, message: 'cancelled', cancelled: true };
+    return await window.doxieOs.importWorkflow(file, overwrite, catalogId);
+};
+
 window.doxieOs.updateWorkflow = async function (workflowId, payload) {
     try {
         const resp = await fetch(`/api/workflows/${encodeURIComponent(workflowId)}`, {

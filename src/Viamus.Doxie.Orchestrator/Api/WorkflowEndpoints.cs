@@ -30,6 +30,160 @@ internal static class WorkflowEndpoints
             return wf is null ? Results.NotFound() : Results.Ok(wf);
         });
 
+        // Export a workflow as a Doxie bundle. The workflow folder is
+        // always included; referenced agents are nested as normal agent zips
+        // by default so another machine can import the runnable graph.
+        app.MapGet("/api/workflows/{workflowId}/export", (
+                string workflowId,
+                bool? includeAgents,
+                IWorkflowStore workflowStore,
+                IDoxieCatalogStore catalogStore,
+                StorageOptions storageOptions,
+                IAgentCatalog catalog) =>
+        {
+            if (string.IsNullOrEmpty(workflowId)
+                || !System.Text.RegularExpressions.Regex.IsMatch(workflowId, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+            {
+                return Results.BadRequest("Invalid workflow id (must be kebab-case)");
+            }
+
+            var wf = workflowStore.GetById(workflowId);
+            if (wf is null) return Results.NotFound($"Workflow '{workflowId}' not found");
+
+            var workflowCatalog = catalogStore.FindCatalog(wf.CatalogId) ?? catalogStore.FindCatalog(null);
+            if (workflowCatalog is null)
+            {
+                return Results.Problem("No workflow catalog is configured.", statusCode: 500);
+            }
+
+            var workflowPath = Path.Combine(workflowCatalog.WorkflowsDirectory, wf.Id);
+            var agentSources = new List<WorkflowTransfer.AgentBundleSource>();
+            if (includeAgents != false)
+            {
+                foreach (var agentId in wf.Nodes
+                    .Select(n => n.AgentId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    var agent = catalog.FindById(agentId!);
+                    if (agent is null) continue;
+                    agentSources.Add(new WorkflowTransfer.AgentBundleSource(
+                        agent.Id,
+                        AgentApiPaths.ResolveSkillsRoot(storageOptions, agent),
+                        AgentApiPaths.ResolveAgentsRoot(storageOptions, agent)));
+                }
+            }
+
+            try
+            {
+                var ms = new MemoryStream();
+                WorkflowTransfer.ExportToZip(workflowPath, wf.Id, agentSources, ms);
+                ms.Position = 0;
+                return Results.File(ms, "application/zip", $"{wf.Id}-workflow.zip");
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return Results.NotFound($"Workflow '{workflowId}' not found");
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(ex.Message);
+            }
+            catch (IOException ex)
+            {
+                return Results.Problem($"Could not export workflow: {ex.Message}", statusCode: 500);
+            }
+        });
+
+        // Import a workflow bundle. multipart/form-data with a file part,
+        // optional overwrite=true, and optional catalogId for the workflow
+        // plus any missing/replaced agents. Identical existing artifacts are
+        // skipped; differing workflows or agents return 409 unless overwrite=true.
+        app.MapPost("/api/workflows/import", async (
+                Microsoft.AspNetCore.Http.HttpRequest request,
+                IDoxieCatalogStore catalogStore,
+                IAgentCatalog catalog,
+                DoxieRegenerator regenerator) =>
+        {
+            if (!request.HasFormContentType)
+            {
+                return Results.BadRequest(new { error = "Expected multipart/form-data with a 'file' part." });
+            }
+
+            var form = await request.ReadFormAsync();
+            var file = form.Files["file"];
+            if (file is null || file.Length == 0)
+            {
+                return Results.BadRequest(new { error = "Missing 'file' part." });
+            }
+
+            var selectedCatalog = catalogStore.FindCatalog(form["catalogId"].ToString());
+            if (selectedCatalog is null)
+            {
+                return Results.BadRequest(new { error = $"Catalog '{form["catalogId"]}' was not found." });
+            }
+
+            var overwrite = string.Equals(form["overwrite"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            var destination = ToWorkflowImportCatalog(selectedCatalog);
+            var allCatalogs = catalogStore.ListCatalogs()
+                .Select(ToWorkflowImportCatalog)
+                .ToList();
+
+            WorkflowTransfer.ImportResult result;
+            try
+            {
+                await using var stream = file.OpenReadStream();
+                result = WorkflowTransfer.ImportFromZip(stream, destination, allCatalogs, overwrite);
+            }
+            catch (IOException ex)
+            {
+                return Results.Problem($"Could not import workflow: {ex.Message}", statusCode: 500);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Results.Problem($"Permission denied importing: {ex.Message}", statusCode: 500);
+            }
+            catch (InvalidDataException ex)
+            {
+                return Results.Json(new { error = ex.Message, code = WorkflowTransfer.ImportError.InvalidJson.ToString() }, statusCode: 400);
+            }
+
+            if (!result.Ok)
+            {
+                var status = result.Error is WorkflowTransfer.ImportError.Collision or WorkflowTransfer.ImportError.AgentCollision
+                    ? 409
+                    : 400;
+                return Results.Json(new
+                {
+                    error = result.Message,
+                    code = result.Error?.ToString(),
+                    agents = result.Agents.Select(a => new
+                    {
+                        agentId = a.AgentId,
+                        action = a.Action.ToString(),
+                        existingCatalogId = a.ExistingCatalogId,
+                    }),
+                }, statusCode: status);
+            }
+
+            regenerator.Regenerate();
+            catalog.Refresh();
+            return Results.Ok(new
+            {
+                ok = true,
+                workflowId = result.WorkflowId,
+                href = $"/workflows/{result.WorkflowId}",
+                workflowAction = result.WorkflowAction.ToString(),
+                agents = result.Agents.Select(a => new
+                {
+                    agentId = a.AgentId,
+                    action = a.Action.ToString(),
+                    existingCatalogId = a.ExistingCatalogId,
+                }),
+            });
+        })
+           .DisableAntiforgery();
+
         // Create a workflow. Body is a fully-formed WorkflowDefinition (with
         // nodes + edges already attached). The store layers a kebab-case
         // regex check on the id, so we re-validate here for a friendly
@@ -531,4 +685,7 @@ internal static class WorkflowEndpoints
 
         return supplied;
     }
+
+    private static WorkflowTransfer.ImportCatalog ToWorkflowImportCatalog(DoxieCatalogRoot catalog) =>
+        new(catalog.Id, catalog.SkillsDirectory, catalog.AgentsDirectory, catalog.WorkflowsDirectory);
 }
