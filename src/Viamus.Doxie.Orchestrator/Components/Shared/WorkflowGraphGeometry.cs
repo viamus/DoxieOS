@@ -99,7 +99,8 @@ internal static class WorkflowGraphGeometry
             && string.Equals(to.LoopId, fromRegion.Id, StringComparison.OrdinalIgnoreCase))
         {
             var path = $"M {F(start.Value.X)} {F(start.Value.Y)} L {F(end.Value.X)} {F(end.Value.Y)}";
-            return new WorkflowEdgeRoute(path, (start.Value.X + end.Value.X) / 2, end.Value.Y);
+            var label = LabelPoint(edge, start.Value, end.Value, (start.Value.X + end.Value.X) / 2, end.Value.Y, 0);
+            return new WorkflowEdgeRoute(path, label.X, label.Y);
         }
 
         var offset = LaneOffset(edge, edges);
@@ -118,7 +119,8 @@ internal static class WorkflowGraphGeometry
                        $"L {F(midX)} {F(start.Value.Y)} " +
                        $"L {F(midX)} {F(end.Value.Y)} " +
                        $"L {F(end.Value.X)} {F(end.Value.Y)}";
-            return new WorkflowEdgeRoute(path, midX, (start.Value.Y + end.Value.Y) / 2);
+            var label = LabelPoint(edge, start.Value, end.Value, midX, (start.Value.Y + end.Value.Y) / 2, offset);
+            return new WorkflowEdgeRoute(path, label.X, label.Y);
         }
 
         var outerX = Math.Max(start.Value.X, end.Value.X) + 70 + Math.Abs(offset);
@@ -126,7 +128,32 @@ internal static class WorkflowGraphGeometry
                            $"L {F(outerX)} {F(start.Value.Y)} " +
                            $"L {F(outerX)} {F(end.Value.Y)} " +
                            $"L {F(end.Value.X)} {F(end.Value.Y)}";
-        return new WorkflowEdgeRoute(fallbackPath, outerX, (start.Value.Y + end.Value.Y) / 2);
+        var fallbackLabel = LabelPoint(edge, start.Value, end.Value, outerX, (start.Value.Y + end.Value.Y) / 2, offset);
+        return new WorkflowEdgeRoute(fallbackPath, fallbackLabel.X, fallbackLabel.Y);
+    }
+
+    private static WorkflowPoint LabelPoint(
+        WorkflowEdge edge,
+        WorkflowPoint start,
+        WorkflowPoint end,
+        double defaultX,
+        double defaultY,
+        double laneOffset)
+    {
+        if (string.IsNullOrWhiteSpace(edge.Condition))
+        {
+            return new WorkflowPoint(defaultX, defaultY);
+        }
+
+        var condition = edge.Condition.Trim();
+        var verticalOffset = condition.Equals("true", StringComparison.OrdinalIgnoreCase) ? -20d : 20d;
+        var horizontalRoom = Math.Abs(end.X - start.X);
+        var labelX = horizontalRoom >= 120
+            ? start.X + 66 + Math.Clamp(laneOffset, -12d, 12d)
+            : Math.Max(start.X, end.X) + 54;
+        var labelY = Math.Max(24d, start.Y + verticalOffset);
+
+        return new WorkflowPoint(labelX, labelY);
     }
 
     private static WorkflowPoint? StartPoint(
