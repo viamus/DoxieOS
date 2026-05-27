@@ -153,6 +153,98 @@ public sealed class WorkflowLoopTests : IDisposable
     }
 
     [Fact]
+    public async Task Body_inputs_can_use_loop_item_placeholders()
+    {
+        var runner = new AutoCompletingAgentRunner();
+        var catalog = new MultiAgentCatalog(
+            new AgentDescriptor(
+                "body-step",
+                "body-step",
+                "",
+                "body-step",
+                AgentCategory.Builder,
+                Modes: new[]
+                {
+                    new AgentMode(
+                        "default",
+                        "Default",
+                        "",
+                        "run --url \"{work-item-url}\" --title \"{title}\" --index \"{index}\" --total \"{total}\" --language \"{language}\"",
+                        new[]
+                        {
+                            new AgentModeField("work-item-url", "Work item URL", "", true),
+                            new AgentModeField("title", "Title", "", false),
+                            new AgentModeField("index", "Index", "", false),
+                            new AgentModeField("total", "Total", "", false),
+                            new AgentModeField("language", "Language", "", false),
+                        }),
+                }));
+        var orchestrator = new OrchestratedWorkflowRunner(
+            runStore: new InMemoryWorkflowRunStore(),
+            workspaceStore: new EmptyWorkspaceStore(),
+            agentCatalog: catalog,
+            agentRunner: runner,
+            runsDirectory: _runsDir);
+
+        var wf = new WorkflowDefinition(
+            Id: "wf-loop-inputs",
+            Name: "Loop Inputs",
+            Description: "",
+            Trigger: new WorkflowTrigger(WorkflowTriggerKind.Manual),
+            Nodes: new[]
+            {
+                NewNode("trigger", WorkflowNodeKind.Trigger),
+                LoopNode("loop"),
+                new WorkflowNode(
+                    "body-step",
+                    WorkflowNodeKind.Agent,
+                    "Body",
+                    0,
+                    0,
+                    AgentId: "body-step",
+                    AgentMode: "default",
+                    Inputs: new Dictionary<string, string>
+                    {
+                        ["work-item-url"] = "{{loop.item.workItemUrl}}",
+                        ["title"] = "{{loop.item.title}}",
+                        ["index"] = "{{loop.index}}",
+                        ["total"] = "{{loop.total}}",
+                        ["language"] = "{{trigger.language}}",
+                    },
+                    LoopId: "loop"),
+            },
+            Edges: new[]
+            {
+                new WorkflowEdge("trigger", "loop"),
+                new WorkflowEdge("loop", "body-step"),
+            },
+            CreatedAt: DateTime.UtcNow,
+            UpdatedAt: DateTime.UtcNow);
+
+        var run = orchestrator.Start(wf, "test", new Dictionary<string, string> { ["language"] = "pt-BR" });
+        await StageUpstreamArrayAsync(wf, run.Id, "trigger",
+            JsonSerializer.Serialize(new[]
+            {
+                new
+                {
+                    workItemUrl = "https://dev.azure.com/org/project/_workitems/edit/123",
+                    title = "Refine this",
+                },
+            }));
+
+        await WaitForTerminal(run);
+
+        run.Status.Should().Be(WorkflowRunStatus.Succeeded);
+        runner.Dispatches.Should().ContainSingle();
+        runner.Dispatches[0].Arguments.Should()
+            .Contain("--url \"https://dev.azure.com/org/project/_workitems/edit/123\"")
+            .And.Contain("--title \"Refine this\"")
+            .And.Contain("--index \"0\"")
+            .And.Contain("--total \"1\"")
+            .And.Contain("--language \"pt-BR\"");
+    }
+
+    [Fact]
     public async Task Multi_node_body_chain_runs_in_dep_order_per_iteration()
     {
         // Body: step-a â†’ step-b. Both run per iteration.
