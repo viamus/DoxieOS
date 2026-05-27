@@ -867,13 +867,16 @@ public sealed class ClaudeProcessAgentRunnerTests : IDisposable
         public Workspace? GetById(string id) =>
             string.Equals(id, _workspace.Id, StringComparison.OrdinalIgnoreCase) ? _workspace : null;
 
-        public Workspace Create(string id, string? displayName, string? description, IReadOnlyList<string>? mountedLibraryIds = null) =>
+        public Workspace Create(string id, string? displayName, string? description, IReadOnlyList<string>? mountedLibraryIds = null, IReadOnlyList<string>? mountedAgentIds = null) =>
             throw new NotSupportedException();
 
         public void Delete(string id) =>
             throw new NotSupportedException();
 
         public Workspace SetMountedLibraries(string id, IReadOnlyList<string> libraryIds) =>
+            throw new NotSupportedException();
+
+        public Workspace SetMountedAgents(string id, IReadOnlyList<string> agentIds) =>
             throw new NotSupportedException();
     }
 

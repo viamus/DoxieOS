@@ -70,6 +70,21 @@ public sealed class FilesystemWorkspaceStoreTests : IDisposable
     }
 
     [Fact]
+    public void SetMountedAgents_replaces_set_idempotently()
+    {
+        var store = new FilesystemWorkspaceStore(directory: _root, librariesDirectory: _librariesRoot);
+        store.Create("agent-room", displayName: null, description: null, mountedAgentIds: new[] { "reviewer" });
+
+        var afterFirst = store.SetMountedAgents("agent-room", new[] { "reviewer", "builder", "reviewer" });
+        var fetched = store.GetById("agent-room");
+        var afterEmpty = store.SetMountedAgents("agent-room", Array.Empty<string>());
+
+        afterFirst.MountedAgentIds.Should().Equal("reviewer", "builder");
+        fetched!.MountedAgentIds.Should().Equal("reviewer", "builder");
+        afterEmpty.MountedAgentIds.Should().BeEmpty();
+    }
+
+    [Fact]
     public void SetMountedLibraries_writes_claude_imports_and_codex_inline_context()
     {
         WriteMemory("lib-a", "feedback_naming.md", "Naming", "feedback", body: "Use clear names.");

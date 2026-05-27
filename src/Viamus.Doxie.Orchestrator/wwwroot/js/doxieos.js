@@ -199,6 +199,23 @@ window.doxieOs.setWorkspaceLibraries = async function (workspaceId, libraries) {
     }
 };
 
+window.doxieOs.setWorkspaceAgents = async function (workspaceId, agents) {
+    try {
+        const resp = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/agents`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ agents: agents || [] }),
+        });
+        let message = null;
+        if (!resp.ok) {
+            try { message = await resp.text(); } catch (_) { message = resp.statusText; }
+        }
+        return { ok: resp.ok, status: resp.status, message };
+    } catch (err) {
+        return { ok: false, status: 0, message: String(err) };
+    }
+};
+
 window.doxieOs.deleteWorkspace = async function (workspaceId) {
     try {
         const resp = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
@@ -212,6 +229,65 @@ window.doxieOs.deleteWorkspace = async function (workspaceId) {
     } catch (err) {
         return { ok: false, status: 0, message: String(err) };
     }
+};
+
+window.doxieOs.exportWorkspace = function (workspaceId, includeAgents) {
+    const a = document.createElement('a');
+    const qs = includeAgents === false ? '?includeAgents=false' : '';
+    a.href = `/api/workspaces/${encodeURIComponent(workspaceId)}/export${qs}`;
+    a.download = `${workspaceId}-workspace.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+};
+
+window.doxieOs.pickWorkspaceZip = function () {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.zip,application/zip,application/x-zip-compressed';
+        input.style.display = 'none';
+        let settled = false;
+        const settle = (val) => { if (!settled) { settled = true; resolve(val); } };
+        input.addEventListener('change', () => {
+            settle(input.files && input.files[0] ? input.files[0] : null);
+        });
+        input.addEventListener('cancel', () => settle(null));
+        document.body.appendChild(input);
+        input.click();
+        setTimeout(() => settle(null), 60000);
+    });
+};
+
+window.doxieOs.importWorkspace = async function (file, overwrite, catalogId) {
+    if (!file) return { ok: false, status: 0, message: 'No file selected' };
+    try {
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        if (overwrite) fd.append('overwrite', 'true');
+        if (catalogId) fd.append('catalogId', catalogId);
+        const resp = await fetch('/api/workspaces/import', { method: 'POST', body: fd });
+        let body = null;
+        try { body = await resp.json(); } catch (_) { /* server may have returned plain text */ }
+        return {
+            ok: resp.ok,
+            status: resp.status,
+            workspaceId: body && body.workspaceId,
+            href: body && body.href,
+            workspaceAction: body && body.workspaceAction,
+            agents: body && body.agents ? body.agents : [],
+            code: body && body.code,
+            message: body && (body.error || body.message),
+        };
+    } catch (err) {
+        return { ok: false, status: 0, message: String(err) };
+    }
+};
+
+window.doxieOs.pickAndImportWorkspace = async function (overwrite, catalogId) {
+    const file = await window.doxieOs.pickWorkspaceZip();
+    if (!file) return { ok: false, status: 0, message: 'cancelled', cancelled: true };
+    return await window.doxieOs.importWorkspace(file, overwrite, catalogId);
 };
 
 window.doxieOs.createWorkflow = async function (payload) {

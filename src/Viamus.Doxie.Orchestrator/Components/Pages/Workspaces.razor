@@ -1,12 +1,18 @@
 @page "/workspaces"
 @inject IWorkspaceStore WorkspaceStore
 @inject ILibraryStore LibraryStore
+@inject IAgentCatalog AgentCatalog
+@inject IDoxieCatalogStore CatalogStore
 @inject IJSRuntime Js
 @inject ISnackbar Snackbar
+@inject IDialogService DialogService
 @inject NavigationManager Nav
 @inject IRequestLocalityService Locality
 @inject Viamus.Doxie.Orchestrator.Services.AppLanguageService Lang
 @using Viamus.Doxie.Orchestrator.Runtime
+@using Viamus.Doxie.Orchestrator.Agents
+@using Viamus.Doxie.Orchestrator.Agents.Doxie
+@using Viamus.Doxie.Orchestrator.Common
 
 <PageTitle>@Lang["Workspaces.Title"] - DoxieOS</PageTitle>
 
@@ -26,6 +32,13 @@
         </MudText>
     </div>
     <div class="doxie-page-actions">
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Default"
+                   StartIcon="@Icons.Material.Filled.FileUpload"
+                   OnClick="ImportWorkspace"
+                   Disabled="@_importing">
+            @(_importing ? Lang["Common.Importing"] : Lang["Common.Import"])
+        </MudButton>
         <MudButton Variant="Variant.Filled"
                    Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.Add"
@@ -82,6 +95,17 @@ else
                         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
                             @LibraryCountLabel(ws.MountedLibraryIds.Count)
                         </MudChip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                            @AgentCountLabel(ws.MountedAgentIds.Count)
+                        </MudChip>
+                        <span @onclick:stopPropagation="true">
+                            <MudTooltip Text="Download workspace bundle">
+                                <MudIconButton Icon="@Icons.Material.Filled.FileDownload"
+                                               Size="Size.Small"
+                                               Color="Color.Default"
+                                               OnClick="@(() => ExportWorkspace(ws))" />
+                            </MudTooltip>
+                        </span>
                         <span @onclick:stopPropagation="true">
                             @if (_isLocal)
                             {
@@ -204,6 +228,58 @@ else
                         </MudButton>
                     </MudStack>
 
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-4 mb-2">
+                        <MudIcon Icon="@Icons.Material.Filled.SmartToy" Color="Color.Primary" Size="Size.Small" />
+                        <MudText Typo="Typo.subtitle2">Mounted agents</MudText>
+                    </MudStack>
+
+                    @if (ws.MountedAgentIds.Count == 0)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Default" Class="mb-2 d-block">
+                            No agents mounted. Workspace export will include only the workspace files.
+                        </MudText>
+                    }
+                    else
+                    {
+                        <MudStack Row="true" Spacing="1" Class="flex-wrap mb-2">
+                            @foreach (var agentId in ws.MountedAgentIds)
+                            {
+                                var agent = _agentsById.GetValueOrDefault(agentId);
+                                <MudChip T="string"
+                                         Size="Size.Small"
+                                         Variant="Variant.Outlined"
+                                         Color="@(agent is null ? Color.Warning : Color.Primary)"
+                                         Icon="@Icons.Material.Filled.SmartToy"
+                                         OnClose="@(() => UnmountAgent(ws, agentId))">
+                                    @(agent?.Name ?? agentId)@(agent is null ? " (missing)" : $" · {agent.CatalogName}")
+                                </MudChip>
+                            }
+                        </MudStack>
+                    }
+
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-2">
+                        <MudSelect T="string"
+                                   Label="Mount another agent"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   Value="@_pendingAgentByWs.GetValueOrDefault(ws.Id)"
+                                   ValueChanged="@(v => _pendingAgentByWs[ws.Id] = v)"
+                                   Style="min-width: 280px;">
+                            @foreach (var agent in _agents.Where(a => !ws.MountedAgentIds.Contains(a.Id, StringComparer.OrdinalIgnoreCase)))
+                            {
+                                <MudSelectItem Value="@agent.Id">@agent.Name <MudText Typo="Typo.caption" Color="Color.Default" Inline="true">@($" ({agent.Id} · {agent.CatalogName})")</MudText></MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudButton Variant="Variant.Outlined"
+                                   Color="Color.Primary"
+                                   Size="Size.Small"
+                                   StartIcon="@Icons.Material.Filled.Add"
+                                   OnClick="@(() => MountAgent(ws))"
+                                   Disabled="@string.IsNullOrEmpty(_pendingAgentByWs.GetValueOrDefault(ws.Id))">
+                            @Lang["Workspaces.Mount"]
+                        </MudButton>
+                    </MudStack>
+
                     <MudText Typo="Typo.caption" Color="Color.Default" Class="d-block mt-3" Style="font-family: 'Cascadia Code', Consolas, monospace; word-break: break-all;">@ws.Path</MudText>
                 </ChildContent>
             </MudExpansionPanel>
@@ -262,6 +338,23 @@ else
                 }
             </MudSelect>
 
+            <MudSelect T="string"
+                       Label="Mount agents"
+                       MultiSelection="true"
+                       SelectedValues="_createSelectedAgents"
+                       SelectedValuesChanged="@(v => _createSelectedAgents = v?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase))"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       MultiSelectionTextFunc="@(values => values is null || values.Count == 0 ? "(none)" : $"{values.Count} selected")"
+                       FullWidth="true"
+                       Class="mt-3"
+                       HelperText="Mounted agents are bundled when this workspace is exported.">
+                @foreach (var agent in _agents)
+                {
+                    <MudSelectItem T="string" Value="@agent.Id">@agent.Name <MudText Typo="Typo.caption" Color="Color.Default" Inline="true">@($" ({agent.CatalogName})")</MudText></MudSelectItem>
+                }
+            </MudSelect>
+
             @if (!string.IsNullOrEmpty(_createError))
             {
                 <MudAlert Severity="Severity.Error" Class="mt-3">@_createError</MudAlert>
@@ -290,7 +383,11 @@ else
     private string _searchText = string.Empty;
     private IReadOnlyList<Library> _libraries = Array.Empty<Library>();
     private Dictionary<string, Library> _librariesById = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<AgentDescriptor> _agents = Array.Empty<AgentDescriptor>();
+    private Dictionary<string, AgentDescriptor> _agentsById = new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<DoxieCatalogRoot> _catalogs = Array.Empty<DoxieCatalogRoot>();
     private readonly Dictionary<string, string> _pendingMountByWs = new();
+    private readonly Dictionary<string, string> _pendingAgentByWs = new();
     // True when the request to /workspaces is coming from the same machine
     // as the orchestrator (so we can launch explorer.exe). False when the
     // user is reaching DoxieOS over the network and needs the in-browser
@@ -302,8 +399,11 @@ else
     private string _createName = string.Empty;
     private string _createDescription = string.Empty;
     private HashSet<string> _createSelectedLibraries = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _createSelectedAgents = new(StringComparer.OrdinalIgnoreCase);
     private string _createError = string.Empty;
     private bool _creating;
+    private bool _importing;
+    private string _importCatalogId = DoxieCatalogStore.DefaultCatalogId;
 
     protected override void OnInitialized()
     {
@@ -316,6 +416,9 @@ else
         _workspaces = WorkspaceStore.ListAll();
         _libraries = LibraryStore.ListAll();
         _librariesById = _libraries.ToDictionary(l => l.Id, StringComparer.OrdinalIgnoreCase);
+        _agents = AgentCatalog.GetAll();
+        _agentsById = _agents.ToDictionary(a => a.Id, StringComparer.OrdinalIgnoreCase);
+        _catalogs = CatalogStore.ListCatalogs();
         ApplySearch();
     }
 
@@ -335,6 +438,25 @@ else
         {
             "pt-BR" or "es" => $"{count} biblioteca{(count == 1 ? "" : "s")}",
             _ => $"{count} librar{(count == 1 ? "y" : "ies")}",
+        };
+    }
+
+    private string AgentCountLabel(int count)
+    {
+        if (count == 0)
+        {
+            return Lang.CurrentLanguage switch
+            {
+                "pt-BR" => "sem agentes",
+                "es" => "sin agentes",
+                _ => "no agents",
+            };
+        }
+
+        return Lang.CurrentLanguage switch
+        {
+            "pt-BR" or "es" => $"{count} agente{(count == 1 ? "" : "s")}",
+            _ => $"{count} agent{(count == 1 ? "" : "s")}",
         };
     }
 
@@ -367,6 +489,7 @@ else
         _createName = string.Empty;
         _createDescription = string.Empty;
         _createSelectedLibraries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _createSelectedAgents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _createError = string.Empty;
         _showCreateDialog = true;
     }
@@ -393,6 +516,7 @@ else
             name = string.IsNullOrWhiteSpace(_createName) ? null : _createName.Trim(),
             description = string.IsNullOrWhiteSpace(_createDescription) ? null : _createDescription.Trim(),
             libraries = _createSelectedLibraries.ToList(),
+            agents = _createSelectedAgents.ToList(),
         };
 
         _creating = true;
@@ -528,6 +652,150 @@ else
         }
     }
 
+    private async Task MountAgent(Workspace ws)
+    {
+        if (!_pendingAgentByWs.TryGetValue(ws.Id, out var agentId) || string.IsNullOrEmpty(agentId)) return;
+
+        var newSet = ws.MountedAgentIds.ToList();
+        if (!newSet.Contains(agentId, StringComparer.OrdinalIgnoreCase))
+        {
+            newSet.Add(agentId);
+        }
+        await PersistMountedAgents(ws, newSet, $"Mounted \"{_agentsById.GetValueOrDefault(agentId)?.Name ?? agentId}\" into {ws.Name}");
+        _pendingAgentByWs.Remove(ws.Id);
+    }
+
+    private async Task UnmountAgent(Workspace ws, string agentId)
+    {
+        var newSet = ws.MountedAgentIds.Where(x => !string.Equals(x, agentId, StringComparison.OrdinalIgnoreCase)).ToList();
+        await PersistMountedAgents(ws, newSet, $"Unmounted \"{_agentsById.GetValueOrDefault(agentId)?.Name ?? agentId}\" from {ws.Name}");
+    }
+
+    private async Task PersistMountedAgents(Workspace ws, IReadOnlyList<string> agentIds, string successMessage)
+    {
+        SetAgentsResult? result;
+        try
+        {
+            result = await Js.InvokeAsync<SetAgentsResult?>("doxieOs.setWorkspaceAgents", ws.Id, agentIds);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not update agents: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        if (result is null)
+        {
+            Snackbar.Add("Could not update agents: no response from server.", Severity.Error);
+            return;
+        }
+
+        if (result.Ok)
+        {
+            Snackbar.Add(successMessage, Severity.Success);
+            Reload();
+        }
+        else
+        {
+            var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
+            Snackbar.Add($"Could not update agents: {detail}", Severity.Error);
+        }
+    }
+
+    private async Task ExportWorkspace(Workspace ws)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("doxieOs.exportWorkspace", ws.Id, true);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not start download: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ImportWorkspace()
+    {
+        if (_importing) return;
+        var catalogId = await ChooseImportCatalog();
+        if (catalogId is null) return;
+
+        _importCatalogId = catalogId;
+        _importing = true;
+        try
+        {
+            var result = await Js.InvokeAsync<WorkspaceImportResult?>("doxieOs.pickAndImportWorkspace", false, _importCatalogId);
+            if (result is null || result.Cancelled) return;
+
+            if (!result.Ok
+                && (string.Equals(result.Code, "AgentCollision", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(result.Code, "Collision", StringComparison.OrdinalIgnoreCase)))
+            {
+                bool confirmed;
+                try
+                {
+                    confirmed = await Js.InvokeAsync<bool>("doxieOs.confirm",
+                        $"{result.Message}\n\nReplace the existing workspace or differing agents with the imported bundle?");
+                }
+                catch (JSException) { confirmed = false; }
+                if (!confirmed)
+                {
+                    Snackbar.Add("Import cancelled - existing items kept.", Severity.Info);
+                    return;
+                }
+
+                result = await Js.InvokeAsync<WorkspaceImportResult?>("doxieOs.pickAndImportWorkspace", true, _importCatalogId);
+                if (result is null || result.Cancelled) return;
+            }
+
+            if (result.Ok)
+            {
+                var imported = result.Agents?.Count(a => string.Equals(a.Action, "Imported", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                var replaced = result.Agents?.Count(a => string.Equals(a.Action, "Replaced", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                var skipped = result.Agents?.Count(a => string.Equals(a.Action, "SkippedIdentical", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                var agentSummary = imported + replaced + skipped > 0
+                    ? $" Agents: {imported} imported, {replaced} replaced, {skipped} already identical."
+                    : string.Empty;
+                Snackbar.Add($"Imported workspace \"{result.WorkspaceId}\".{agentSummary}", Severity.Success);
+                Reload();
+            }
+            else
+            {
+                Snackbar.Add($"Workspace import failed: {result.Message ?? "unknown error"}", Severity.Error);
+            }
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Workspace import failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private async Task<string?> ChooseImportCatalog()
+    {
+        _catalogs = CatalogStore.ListCatalogs();
+        if (_catalogs.Count <= 1)
+        {
+            return _catalogs.FirstOrDefault()?.Id ?? DoxieCatalogStore.DefaultCatalogId;
+        }
+
+        var parameters = new DialogParameters<AgentImportDialog>
+        {
+            { x => x.Catalogs, _catalogs },
+            { x => x.CurrentCatalogId, _importCatalogId },
+            { x => x.Header, "Import workspace agents" },
+        };
+        var dialog = await DialogService.ShowAsync<AgentImportDialog>(
+            "Import bundled agents to",
+            parameters,
+            new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.ExtraSmall, FullWidth = true });
+        var result = await dialog.Result;
+        return result is { Canceled: false, Data: string id } ? id : null;
+    }
+
     private async Task StartConsole(Workspace ws)
     {
         CreateConsoleResult? result;
@@ -643,6 +911,9 @@ else
     private sealed record CreateResult(bool Ok, int Status, string? Name, string? Message);
     private sealed record DeleteResult(bool Ok, int Status, string? Message);
     private sealed record SetLibrariesResult(bool Ok, int Status, string? Message);
+    private sealed record SetAgentsResult(bool Ok, int Status, string? Message);
     private sealed record OpenResult(bool Ok, int Status, string? Message);
     private sealed record CreateConsoleResult(bool Ok, int Status, string? Id, string? Label, string? Message);
+    private sealed record WorkspaceImportResult(bool Ok, int Status, string? WorkspaceId, string? Href, string? WorkspaceAction, List<WorkspaceAgentImportResult>? Agents, string? Code, string? Message, bool Cancelled);
+    private sealed record WorkspaceAgentImportResult(string AgentId, string Action, string? ExistingCatalogId);
 }

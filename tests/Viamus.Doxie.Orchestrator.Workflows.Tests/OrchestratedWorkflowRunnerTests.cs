@@ -1267,10 +1267,12 @@ public sealed class OrchestratedWorkflowRunnerTests : IDisposable
     {
         public IReadOnlyList<Workspace> ListAll() => Array.Empty<Workspace>();
         public Workspace? GetById(string id) => null;
-        public Workspace Create(string id, string? n, string? d, IReadOnlyList<string>? l = null) =>
+        public Workspace Create(string id, string? n, string? d, IReadOnlyList<string>? l = null, IReadOnlyList<string>? a = null) =>
             throw new NotSupportedException();
         public void Delete(string id) => throw new NotSupportedException();
         public Workspace SetMountedLibraries(string id, IReadOnlyList<string> ids) =>
+            throw new NotSupportedException();
+        public Workspace SetMountedAgents(string id, IReadOnlyList<string> ids) =>
             throw new NotSupportedException();
     }
 
@@ -1285,12 +1287,15 @@ public sealed class OrchestratedWorkflowRunnerTests : IDisposable
         public Workspace? GetById(string id) =>
             string.Equals(id, _workspace.Id, StringComparison.OrdinalIgnoreCase) ? _workspace : null;
 
-        public Workspace Create(string id, string? n, string? d, IReadOnlyList<string>? l = null) =>
+        public Workspace Create(string id, string? n, string? d, IReadOnlyList<string>? l = null, IReadOnlyList<string>? a = null) =>
             throw new NotSupportedException();
 
         public void Delete(string id) => throw new NotSupportedException();
 
         public Workspace SetMountedLibraries(string id, IReadOnlyList<string> ids) =>
+            throw new NotSupportedException();
+
+        public Workspace SetMountedAgents(string id, IReadOnlyList<string> ids) =>
             throw new NotSupportedException();
     }
 

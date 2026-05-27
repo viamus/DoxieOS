@@ -59,7 +59,12 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
         return null;
     }
 
-    public Workspace Create(string id, string? displayName, string? description, IReadOnlyList<string>? mountedLibraryIds = null)
+    public Workspace Create(
+        string id,
+        string? displayName,
+        string? description,
+        IReadOnlyList<string>? mountedLibraryIds = null,
+        IReadOnlyList<string>? mountedAgentIds = null)
     {
         var targetRoot = _directory;
         Directory.CreateDirectory(targetRoot);
@@ -81,6 +86,11 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
             .Select(x => x.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var dedupedAgents = (mountedAgentIds ?? Array.Empty<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         var manifest = new WorkspaceManifest
         {
@@ -88,6 +98,7 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
             Description = resolvedDescription,
             CreatedAt = createdAt,
             MountedLibraries = deduped,
+            MountedAgents = dedupedAgents,
         };
         File.WriteAllText(
             Path.Combine(dir, "workspace.json"),
@@ -122,7 +133,10 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
             Description: resolvedDescription,
             CreatedAt: createdAt,
             MountedLibraryIds: deduped,
-            Path: dir);
+            Path: dir)
+        {
+            MountedAgentIds = dedupedAgents,
+        };
     }
 
     public void Delete(string id)
@@ -174,7 +188,47 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
             Description: existing.Description!,
             CreatedAt: existing.CreatedAt!.Value,
             MountedLibraryIds: deduped,
-            Path: dir);
+            Path: dir)
+        {
+            MountedAgentIds = existing.MountedAgents ?? new List<string>(),
+        };
+    }
+
+    public Workspace SetMountedAgents(string id, IReadOnlyList<string> agentIds)
+    {
+        var dir = FindWorkspaceDir(id);
+        if (dir is null || !Directory.Exists(dir))
+        {
+            throw new InvalidOperationException($"Workspace '{id}' not found.");
+        }
+
+        var deduped = agentIds
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var existing = LoadManifest(dir) ?? new WorkspaceManifest();
+        existing.MountedAgents = deduped;
+        existing.CreatedAt ??= Directory.GetCreationTimeUtc(dir);
+        existing.Name ??= ToDisplayName(id);
+        existing.Description ??= string.Empty;
+        existing.MountedLibraries ??= new List<string>();
+
+        File.WriteAllText(
+            Path.Combine(dir, "workspace.json"),
+            JsonSerializer.Serialize(existing, new JsonSerializerOptions { WriteIndented = true }));
+
+        return new Workspace(
+            Id: id,
+            Name: existing.Name!,
+            Description: existing.Description!,
+            CreatedAt: existing.CreatedAt!.Value,
+            MountedLibraryIds: existing.MountedLibraries,
+            Path: dir)
+        {
+            MountedAgentIds = deduped,
+        };
     }
 
     private void WriteContextFiles(string workspaceDir, string workspaceName, IReadOnlyList<string> mountedLibraryIds)
@@ -391,6 +445,7 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
         var description = manifest?.Description ?? string.Empty;
         var createdAt = manifest?.CreatedAt ?? Directory.GetCreationTimeUtc(dir);
         var mounted = (IReadOnlyList<string>)(manifest?.MountedLibraries ?? new List<string>());
+        var mountedAgents = (IReadOnlyList<string>)(manifest?.MountedAgents ?? new List<string>());
 
         return new Workspace(
             Id: id,
@@ -398,7 +453,10 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
             Description: description,
             CreatedAt: createdAt,
             MountedLibraryIds: mounted,
-            Path: dir);
+            Path: dir)
+        {
+            MountedAgentIds = mountedAgents,
+        };
     }
 
     private static WorkspaceManifest? LoadManifest(string dir)
@@ -425,5 +483,6 @@ public sealed class FilesystemWorkspaceStore : IWorkspaceStore
         public string? Description { get; set; }
         public DateTime? CreatedAt { get; set; }
         public List<string>? MountedLibraries { get; set; }
+        public List<string>? MountedAgents { get; set; }
     }
 }
