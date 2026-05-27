@@ -47,8 +47,9 @@ internal static class AgentApiPaths
             : Path.Combine(agent.CatalogRoot, "agents");
 }
 
-internal sealed record WorkspaceCreateRequest(string Id, string? Name, string? Description, List<string>? Libraries);
+internal sealed record WorkspaceCreateRequest(string Id, string? Name, string? Description, List<string>? Libraries, List<string>? Agents);
 internal sealed record WorkspaceLibrariesRequest(List<string>? Libraries);
+internal sealed record WorkspaceAgentsRequest(List<string>? Agents);
 internal sealed record ConsoleCreateRequest(string WorkspaceId);
 internal sealed record ProviderConsoleCreateRequest(string ProviderId);
 internal sealed record WorkflowEnabledRequest(bool Enabled);

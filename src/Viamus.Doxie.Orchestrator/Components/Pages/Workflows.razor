@@ -1,5 +1,6 @@
 @page "/workflows"
 @using Viamus.Doxie.Orchestrator.Agents.Doxie
+@using Viamus.Doxie.Orchestrator.Components.Shared
 @using Viamus.Doxie.Orchestrator.Common
 
 @inject IWorkflowStore WorkflowStore
@@ -31,6 +32,13 @@
         </MudText>
     </div>
     <div class="doxie-page-actions">
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Default"
+                   StartIcon="@Icons.Material.Filled.FileUpload"
+                   OnClick="ImportWorkflow"
+                   Disabled="@_importing">
+            @(_importing ? Lang["Common.Importing"] : Lang["Common.Import"])
+        </MudButton>
         <MudButton Variant="Variant.Outlined"
                    Color="Color.Primary"
                    StartIcon="@Icons.Material.Filled.AutoAwesome"
@@ -168,7 +176,7 @@ else
             <MudTh Style="width: 120px;">@Lang["Workflows.Trigger"]</MudTh>
             <MudTh Style="width: 70px;">@Lang["Workflows.Nodes"]</MudTh>
             <MudTh Style="width: 170px;">@Lang["Workflows.LastRun"]</MudTh>
-            <MudTh Style="width: 210px; text-align: right;">@Lang["Common.Actions"]</MudTh>
+            <MudTh Style="width: 250px; text-align: right;">@Lang["Common.Actions"]</MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Name">
@@ -253,6 +261,12 @@ else
                                        Color="Color.Primary"
                                        Href="@($"/workflows/new/chat?edit={context.Id}")" />
                     </MudTooltip>
+                    <MudTooltip Text="Download workflow bundle">
+                        <MudIconButton Icon="@Icons.Material.Filled.FileDownload"
+                                       Size="Size.Small"
+                                       Color="Color.Default"
+                                       OnClick="@(() => ExportWorkflow(context))" />
+                    </MudTooltip>
                     <MudTooltip Text="@Lang["Workflows.Delete"]">
                         <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline"
                                        Size="Size.Small"
@@ -281,6 +295,8 @@ else
     private IReadOnlyList<DoxieCatalogRoot> _catalogs = Array.Empty<DoxieCatalogRoot>();
     private string _searchText = string.Empty;
     private string _selectedCatalogId = AllCatalogs;
+    private string _importCatalogId = DoxieCatalogStore.DefaultCatalogId;
+    private bool _importing;
 
     protected override void OnInitialized()
     {
@@ -391,6 +407,100 @@ else
         Nav.NavigateTo($"/workflows/{wf.Id}?run={run.Id}");
     }
 
+    private async Task ExportWorkflow(WorkflowDefinition wf)
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("doxieOs.exportWorkflow", wf.Id, true);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not start download: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ImportWorkflow()
+    {
+        if (_importing) return;
+        var catalogId = await ChooseImportCatalog();
+        if (catalogId is null) return;
+
+        _importCatalogId = catalogId;
+        _importing = true;
+        try
+        {
+            var result = await Js.InvokeAsync<WorkflowImportResult?>("doxieOs.pickAndImportWorkflow", false, _importCatalogId);
+            if (result is null || result.Cancelled) return;
+
+            if (!result.Ok
+                && (string.Equals(result.Code, "AgentCollision", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(result.Code, "Collision", StringComparison.OrdinalIgnoreCase)))
+            {
+                bool confirmed;
+                try
+                {
+                    confirmed = await Js.InvokeAsync<bool>("doxieOs.confirm",
+                        $"{result.Message}\n\nReplace the existing workflow or differing agents with the imported bundle?");
+                }
+                catch (JSException) { confirmed = false; }
+                if (!confirmed)
+                {
+                    Snackbar.Add("Import cancelled - existing items kept.", Severity.Info);
+                    return;
+                }
+
+                result = await Js.InvokeAsync<WorkflowImportResult?>("doxieOs.pickAndImportWorkflow", true, _importCatalogId);
+                if (result is null || result.Cancelled) return;
+            }
+
+            if (result.Ok)
+            {
+                var imported = result.Agents?.Count(a => string.Equals(a.Action, "Imported", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                var replaced = result.Agents?.Count(a => string.Equals(a.Action, "Replaced", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                var skipped = result.Agents?.Count(a => string.Equals(a.Action, "SkippedIdentical", StringComparison.OrdinalIgnoreCase)) ?? 0;
+                var agentSummary = imported + replaced + skipped > 0
+                    ? $" Agents: {imported} imported, {replaced} replaced, {skipped} already identical."
+                    : string.Empty;
+                Snackbar.Add($"Imported workflow \"{result.WorkflowId}\".{agentSummary}", Severity.Success);
+                Reload();
+            }
+            else
+            {
+                Snackbar.Add($"Workflow import failed: {result.Message ?? "unknown error"}", Severity.Error);
+            }
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Workflow import failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _importing = false;
+        }
+    }
+
+    private async Task<string?> ChooseImportCatalog()
+    {
+        _catalogs = CatalogStore.ListCatalogs();
+        if (_catalogs.Count <= 1)
+        {
+            return _catalogs.FirstOrDefault()?.Id ?? DoxieCatalogStore.DefaultCatalogId;
+        }
+
+        var parameters = new DialogParameters<AgentImportDialog>
+        {
+            { x => x.Catalogs, _catalogs },
+            { x => x.CurrentCatalogId, _importCatalogId },
+            { x => x.Header, "Import workflow agents" },
+        };
+        var dialog = await Dialog.ShowAsync<AgentImportDialog>(
+            "Import bundled agents to",
+            parameters,
+            new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.ExtraSmall, FullWidth = true });
+        var result = await dialog.Result;
+        return result is { Canceled: false, Data: string id } ? id : null;
+    }
+
     private async Task DeleteWorkflow(WorkflowDefinition wf)
     {
         bool confirmed;
@@ -456,4 +566,7 @@ else
         if (delta.TotalHours < 24) return $"{(int)delta.TotalHours}h ago";
         return $"{(int)delta.TotalDays}d ago";
     }
+
+    private sealed record WorkflowImportResult(bool Ok, int Status, string? WorkflowId, string? Href, string? WorkflowAction, List<WorkflowAgentImportResult>? Agents, string? Code, string? Message, bool Cancelled);
+    private sealed record WorkflowAgentImportResult(string AgentId, string Action, string? ExistingCatalogId);
 }

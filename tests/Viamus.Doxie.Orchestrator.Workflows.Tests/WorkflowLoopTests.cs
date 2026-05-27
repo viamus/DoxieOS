@@ -397,10 +397,12 @@ public sealed class WorkflowLoopTests : IDisposable
     {
         public IReadOnlyList<Workspace> ListAll() => Array.Empty<Workspace>();
         public Workspace? GetById(string id) => null;
-        public Workspace Create(string id, string? n, string? d, IReadOnlyList<string>? l = null) =>
+        public Workspace Create(string id, string? n, string? d, IReadOnlyList<string>? l = null, IReadOnlyList<string>? a = null) =>
             throw new NotSupportedException();
         public void Delete(string id) => throw new NotSupportedException();
         public Workspace SetMountedLibraries(string id, IReadOnlyList<string> ids) =>
+            throw new NotSupportedException();
+        public Workspace SetMountedAgents(string id, IReadOnlyList<string> ids) =>
             throw new NotSupportedException();
     }
 

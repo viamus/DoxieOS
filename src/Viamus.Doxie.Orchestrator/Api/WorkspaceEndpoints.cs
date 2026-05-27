@@ -36,10 +36,20 @@ internal static class WorkspaceEndpoints
                     }
                 }
             }
+            if (payload.Agents is { Count: > 0 } agents)
+            {
+                foreach (var agentId in agents)
+                {
+                    if (!System.Text.RegularExpressions.Regex.IsMatch(agentId, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+                    {
+                        return Results.BadRequest($"Invalid agent id '{agentId}' (must be kebab-case)");
+                    }
+                }
+            }
 
             try
             {
-                var workspace = store.Create(payload.Id, payload.Name, payload.Description, payload.Libraries);
+                var workspace = store.Create(payload.Id, payload.Name, payload.Description, payload.Libraries, payload.Agents);
                 return Results.Created($"/api/workspaces/{workspace.Id}", new
                 {
                     id = workspace.Id,
@@ -48,6 +58,7 @@ internal static class WorkspaceEndpoints
                     path = workspace.Path,
                     createdAt = workspace.CreatedAt,
                     mountedLibraries = workspace.MountedLibraryIds,
+                    mountedAgents = workspace.MountedAgentIds,
                 });
             }
             catch (InvalidOperationException ex)
@@ -102,6 +113,200 @@ internal static class WorkspaceEndpoints
             {
                 return Results.Problem($"Could not update workspace: {ex.Message}", statusCode: 500);
             }
+        })
+           .DisableAntiforgery();
+
+        // Replace the mounted-agent set on a workspace. The list is also
+        // used by workspace export to decide which agent zips travel with
+        // the workspace bundle.
+        app.MapPut("/api/workspaces/{workspaceId}/agents", (
+                string workspaceId,
+                WorkspaceAgentsRequest payload,
+                IWorkspaceStore store) =>
+        {
+            if (string.IsNullOrEmpty(workspaceId)
+                || !System.Text.RegularExpressions.Regex.IsMatch(workspaceId, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+            {
+                return Results.BadRequest("Invalid workspace id (must be kebab-case)");
+            }
+            var agents = payload?.Agents ?? new List<string>();
+            foreach (var agentId in agents)
+            {
+                if (!System.Text.RegularExpressions.Regex.IsMatch(agentId, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+                {
+                    return Results.BadRequest($"Invalid agent id '{agentId}' (must be kebab-case)");
+                }
+            }
+
+            try
+            {
+                var workspace = store.SetMountedAgents(workspaceId, agents);
+                return Results.Ok(new
+                {
+                    id = workspace.Id,
+                    mountedAgents = workspace.MountedAgentIds,
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.NotFound(ex.Message);
+            }
+            catch (IOException ex)
+            {
+                return Results.Problem($"Could not update workspace: {ex.Message}", statusCode: 500);
+            }
+        })
+           .DisableAntiforgery();
+
+        // Export a workspace as a Doxie bundle. The workspace folder is
+        // always included; mounted agents are nested as normal agent zips by
+        // default so another machine can import the full working context.
+        app.MapGet("/api/workspaces/{workspaceId}/export", (
+                string workspaceId,
+                bool? includeAgents,
+                IWorkspaceStore store,
+                StorageOptions storageOptions,
+                IAgentCatalog catalog) =>
+        {
+            if (string.IsNullOrEmpty(workspaceId)
+                || !System.Text.RegularExpressions.Regex.IsMatch(workspaceId, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+            {
+                return Results.BadRequest("Invalid workspace id (must be kebab-case)");
+            }
+
+            var ws = store.GetById(workspaceId);
+            if (ws is null) return Results.NotFound($"Workspace '{workspaceId}' not found");
+
+            var agentSources = new List<WorkspaceTransfer.AgentBundleSource>();
+            if (includeAgents != false)
+            {
+                foreach (var agentId in ws.MountedAgentIds)
+                {
+                    var agent = catalog.FindById(agentId);
+                    if (agent is null) continue;
+                    agentSources.Add(new WorkspaceTransfer.AgentBundleSource(
+                        agent.Id,
+                        AgentApiPaths.ResolveSkillsRoot(storageOptions, agent),
+                        AgentApiPaths.ResolveAgentsRoot(storageOptions, agent)));
+                }
+            }
+
+            try
+            {
+                var ms = new MemoryStream();
+                WorkspaceTransfer.ExportToZip(ws.Path, ws.Id, agentSources, ms);
+                ms.Position = 0;
+                return Results.File(ms, "application/zip", $"{ws.Id}-workspace.zip");
+            }
+            catch (DirectoryNotFoundException)
+            {
+                return Results.NotFound($"Workspace '{workspaceId}' not found");
+            }
+            catch (ArgumentException ex)
+            {
+                return Results.BadRequest(ex.Message);
+            }
+            catch (IOException ex)
+            {
+                return Results.Problem($"Could not export workspace: {ex.Message}", statusCode: 500);
+            }
+        });
+
+        // Import a workspace bundle. multipart/form-data with a file part,
+        // optional overwrite=true, and optional catalogId for any missing or
+        // replaced agents. Identical existing agents are skipped; differing
+        // agents or workspaces return 409 unless overwrite=true.
+        app.MapPost("/api/workspaces/import", async (
+                Microsoft.AspNetCore.Http.HttpRequest request,
+                StorageOptions storageOptions,
+                IDoxieCatalogStore catalogStore,
+                IAgentCatalog catalog,
+                DoxieRegenerator regenerator) =>
+        {
+            if (!request.HasFormContentType)
+            {
+                return Results.BadRequest(new { error = "Expected multipart/form-data with a 'file' part." });
+            }
+
+            var form = await request.ReadFormAsync();
+            var file = form.Files["file"];
+            if (file is null || file.Length == 0)
+            {
+                return Results.BadRequest(new { error = "Missing 'file' part." });
+            }
+
+            var selectedCatalog = catalogStore.FindCatalog(form["catalogId"].ToString());
+            if (selectedCatalog is null)
+            {
+                return Results.BadRequest(new { error = $"Catalog '{form["catalogId"]}' was not found." });
+            }
+
+            var overwrite = string.Equals(form["overwrite"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+            var destination = new WorkspaceTransfer.AgentImportCatalog(
+                selectedCatalog.Id,
+                selectedCatalog.SkillsDirectory,
+                selectedCatalog.AgentsDirectory);
+            var allCatalogs = catalogStore.ListCatalogs()
+                .Select(c => new WorkspaceTransfer.AgentImportCatalog(c.Id, c.SkillsDirectory, c.AgentsDirectory))
+                .ToList();
+
+            WorkspaceTransfer.ImportResult result;
+            try
+            {
+                await using var stream = file.OpenReadStream();
+                result = WorkspaceTransfer.ImportFromZip(
+                    stream,
+                    StorageOptions.ResolvePath(storageOptions.WorkspacesDirectory),
+                    destination,
+                    allCatalogs,
+                    overwrite);
+            }
+            catch (IOException ex)
+            {
+                return Results.Problem($"Could not import workspace: {ex.Message}", statusCode: 500);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Results.Problem($"Permission denied importing: {ex.Message}", statusCode: 500);
+            }
+            catch (InvalidDataException ex)
+            {
+                return Results.Json(new { error = ex.Message, code = WorkspaceTransfer.ImportError.InvalidJson.ToString() }, statusCode: 400);
+            }
+
+            if (!result.Ok)
+            {
+                var status = result.Error is WorkspaceTransfer.ImportError.Collision or WorkspaceTransfer.ImportError.AgentCollision
+                    ? 409
+                    : 400;
+                return Results.Json(new
+                {
+                    error = result.Message,
+                    code = result.Error?.ToString(),
+                    agents = result.Agents.Select(a => new
+                    {
+                        agentId = a.AgentId,
+                        action = a.Action.ToString(),
+                        existingCatalogId = a.ExistingCatalogId,
+                    }),
+                }, statusCode: status);
+            }
+
+            regenerator.Regenerate();
+            catalog.Refresh();
+            return Results.Ok(new
+            {
+                ok = true,
+                workspaceId = result.WorkspaceId,
+                href = "/workspaces",
+                workspaceAction = result.WorkspaceAction.ToString(),
+                agents = result.Agents.Select(a => new
+                {
+                    agentId = a.AgentId,
+                    action = a.Action.ToString(),
+                    existingCatalogId = a.ExistingCatalogId,
+                }),
+            });
         })
            .DisableAntiforgery();
 

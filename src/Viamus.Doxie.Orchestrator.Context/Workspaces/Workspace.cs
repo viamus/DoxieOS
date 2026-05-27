@@ -20,4 +20,12 @@ public sealed record Workspace(
     string Description,
     DateTime CreatedAt,
     IReadOnlyList<string> MountedLibraryIds,
-    string Path);
+    string Path)
+{
+    /// <summary>
+    /// Agent ids explicitly carried with this workspace. Export uses this
+    /// list to bundle the workspace's agent dependencies; import compares
+    /// each bundled agent against the local catalog before writing.
+    /// </summary>
+    public IReadOnlyList<string> MountedAgentIds { get; init; } = Array.Empty<string>();
+}

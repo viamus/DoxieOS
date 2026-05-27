@@ -5,7 +5,7 @@
 <MudDialog>
     <DialogContent>
         <MudStack Spacing="2">
-            <MudText Typo="Typo.h6">Import agent</MudText>
+            <MudText Typo="Typo.h6">@Header</MudText>
             <MudSelect T="string"
                        Value="_selectedCatalogId"
                        ValueChanged="@(v => _selectedCatalogId = string.IsNullOrWhiteSpace(v) ? DoxieCatalogStore.DefaultCatalogId : v)"
@@ -37,6 +37,7 @@
     [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter] public IReadOnlyList<DoxieCatalogRoot> Catalogs { get; set; } = Array.Empty<DoxieCatalogRoot>();
     [Parameter] public string CurrentCatalogId { get; set; } = DoxieCatalogStore.DefaultCatalogId;
+    [Parameter] public string Header { get; set; } = "Import agent";
 
     private string _selectedCatalogId = DoxieCatalogStore.DefaultCatalogId;
 
