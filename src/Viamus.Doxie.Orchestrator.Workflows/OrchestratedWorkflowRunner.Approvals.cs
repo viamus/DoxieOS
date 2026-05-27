@@ -1,4 +1,5 @@
 ﻿using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Viamus.Doxie.Orchestrator.Workflows;
@@ -15,7 +16,7 @@ public sealed partial class OrchestratedWorkflowRunner
         nr.Status = WorkflowNodeRunStatus.AwaitingApproval;
         // Substitute {{trigger.<id>}} so the prompt the human sees
         // reflects the actual run values, not a literal placeholder.
-        var resolvedInputs = ApplyTriggerSubstitutions(node.Inputs, run.TriggerInputs);
+        var resolvedInputs = ApplyInputSubstitutions(node.Inputs, run.TriggerInputs);
         var prompt = resolvedInputs?.GetValueOrDefault("prompt");
         nr.AppendLog("[approval-gate] paused Ã¢â‚¬â€ waiting for human decision");
         if (!string.IsNullOrWhiteSpace(prompt))
@@ -171,6 +172,10 @@ public sealed partial class OrchestratedWorkflowRunner
         new(@"\{\{\s*trigger\.([a-zA-Z][\w-]*)\s*\}\}",
             System.Text.RegularExpressions.RegexOptions.Compiled);
 
+    private static readonly System.Text.RegularExpressions.Regex LoopPlaceholder =
+        new(@"\{\{\s*loop\.([a-zA-Z][\w-]*(?:\.[a-zA-Z0-9_-]+)*)\s*\}\}",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
     /// <summary>
     /// Returns a copy of <paramref name="inputs"/> with every
     /// <c>{{trigger.&lt;id&gt;}}</c> placeholder replaced by the
@@ -181,45 +186,149 @@ public sealed partial class OrchestratedWorkflowRunner
     /// when <paramref name="inputs"/> is null (preserves the
     /// "no inputs declared" semantic).
     /// </summary>
-    private static IReadOnlyDictionary<string, string>? ApplyTriggerSubstitutions(
+    private static IReadOnlyDictionary<string, string>? ApplyInputSubstitutions(
         IReadOnlyDictionary<string, string>? inputs,
-        IReadOnlyDictionary<string, string> triggerInputs)
+        IReadOnlyDictionary<string, string> triggerInputs,
+        IReadOnlyDictionary<string, string>? runtimeInputs = null)
     {
         if (inputs is null) return null;
         if (inputs.Count == 0) return inputs;
 
         // Cheap fast path: skip the dictionary copy when no value in
-        // the node's inputs even contains a "{{trigger." token.
-        var anyMatch = inputs.Values.Any(v => v is not null && v.Contains("{{trigger.", StringComparison.OrdinalIgnoreCase));
+        // the node's inputs contains a runtime token.
+        var anyMatch = inputs.Values.Any(v => v is not null
+            && (v.Contains("{{trigger.", StringComparison.OrdinalIgnoreCase)
+                || v.Contains("{{loop.", StringComparison.OrdinalIgnoreCase)));
         if (!anyMatch) return inputs;
 
         var result = new Dictionary<string, string>(inputs.Count, StringComparer.OrdinalIgnoreCase);
         foreach (var (key, value) in inputs)
         {
-            result[key] = value is null
-                ? string.Empty
-                : TriggerPlaceholder.Replace(value, m =>
-                {
-                    var id = m.Groups[1].Value;
-                    return triggerInputs.TryGetValue(id, out var v) ? v : string.Empty;
-                });
+            result[key] = ApplyInputSubstitution(value, triggerInputs, runtimeInputs) ?? string.Empty;
         }
         return result;
     }
 
-    private static string? ApplyTriggerSubstitution(string? value, IReadOnlyDictionary<string, string> triggerInputs)
+    private static IReadOnlyDictionary<string, string>? ApplyTriggerSubstitutions(
+        IReadOnlyDictionary<string, string>? inputs,
+        IReadOnlyDictionary<string, string> triggerInputs) =>
+        ApplyInputSubstitutions(inputs, triggerInputs);
+
+    private static string? ApplyInputSubstitution(
+        string? value,
+        IReadOnlyDictionary<string, string> triggerInputs,
+        IReadOnlyDictionary<string, string>? runtimeInputs = null)
     {
-        if (string.IsNullOrEmpty(value) || !value.Contains("{{trigger.", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(value)
+            || (!value.Contains("{{trigger.", StringComparison.OrdinalIgnoreCase)
+                && !value.Contains("{{loop.", StringComparison.OrdinalIgnoreCase)))
         {
             return value;
         }
 
-        return TriggerPlaceholder.Replace(value, m =>
+        var resolved = TriggerPlaceholder.Replace(value, m =>
         {
             var id = m.Groups[1].Value;
             return triggerInputs.TryGetValue(id, out var v) ? v : string.Empty;
         });
+        return LoopPlaceholder.Replace(resolved, m => ResolveLoopPlaceholder(m.Groups[1].Value, runtimeInputs));
     }
+
+    private static string? ApplyTriggerSubstitution(string? value, IReadOnlyDictionary<string, string> triggerInputs) =>
+        ApplyInputSubstitution(value, triggerInputs);
+
+    private static string ResolveLoopPlaceholder(string selector, IReadOnlyDictionary<string, string>? runtimeInputs)
+    {
+        if (runtimeInputs is null || runtimeInputs.Count == 0) return string.Empty;
+
+        if (selector.Equals("index", StringComparison.OrdinalIgnoreCase))
+        {
+            return runtimeInputs.TryGetValue(WorkflowRunPaths.LoopIndexEnvVar, out var index) ? index : string.Empty;
+        }
+        if (selector.Equals("total", StringComparison.OrdinalIgnoreCase))
+        {
+            return runtimeInputs.TryGetValue(WorkflowRunPaths.LoopTotalEnvVar, out var total) ? total : string.Empty;
+        }
+        if (selector.Equals("item", StringComparison.OrdinalIgnoreCase))
+        {
+            return runtimeInputs.TryGetValue(WorkflowRunPaths.LoopItemEnvVar, out var item) ? JsonScalarOrRaw(item) : string.Empty;
+        }
+        if (selector.StartsWith("item.", StringComparison.OrdinalIgnoreCase)
+            && runtimeInputs.TryGetValue(WorkflowRunPaths.LoopItemEnvVar, out var itemJson))
+        {
+            return ResolveLoopItemPath(itemJson, selector["item.".Length..]);
+        }
+
+        return string.Empty;
+    }
+
+    private static string ResolveLoopItemPath(string itemJson, string path)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(itemJson);
+            var current = doc.RootElement;
+            foreach (var segment in path.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (current.ValueKind == JsonValueKind.Object)
+                {
+                    if (!TryGetPropertyCaseInsensitive(current, segment, out current)) return string.Empty;
+                    continue;
+                }
+                if (current.ValueKind == JsonValueKind.Array && int.TryParse(segment, out var index))
+                {
+                    if (index < 0 || index >= current.GetArrayLength()) return string.Empty;
+                    current = current.EnumerateArray().ElementAt(index);
+                    continue;
+                }
+
+                return string.Empty;
+            }
+
+            return JsonElementToString(current);
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool TryGetPropertyCaseInsensitive(JsonElement obj, string name, out JsonElement value)
+    {
+        if (obj.TryGetProperty(name, out value)) return true;
+        foreach (var property in obj.EnumerateObject())
+        {
+            if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static string JsonScalarOrRaw(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return JsonElementToString(doc.RootElement);
+        }
+        catch (JsonException)
+        {
+            return json;
+        }
+    }
+
+    private static string JsonElementToString(JsonElement element) =>
+        element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString() ?? string.Empty,
+            JsonValueKind.Null or JsonValueKind.Undefined => string.Empty,
+            _ => element.GetRawText(),
+        };
 
     /// <summary>
     /// Best-effort POST to the DoxieOS notifications endpoint so any
