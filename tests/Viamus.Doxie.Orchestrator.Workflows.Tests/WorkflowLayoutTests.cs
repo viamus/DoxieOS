@@ -87,4 +87,40 @@ public sealed class WorkflowLayoutTests
 
         positioned.Should().BeEmpty();
     }
+
+    [Fact]
+    public void AutoPositionMissing_preserves_manual_positions()
+    {
+        var nodes = new List<WorkflowNode>
+        {
+            new("a", WorkflowNodeKind.Trigger, "A", 123, 234),
+            new("b", WorkflowNodeKind.Agent,   "B", 456, 345),
+        };
+        var edges = new List<WorkflowEdge> { new("a", "b") };
+
+        var positioned = WorkflowLayout.AutoPositionMissing(nodes, edges);
+
+        positioned[0].X.Should().Be(123);
+        positioned[0].Y.Should().Be(234);
+        positioned[1].X.Should().Be(456);
+        positioned[1].Y.Should().Be(345);
+    }
+
+    [Fact]
+    public void AutoPositionMissing_positions_only_unplaced_nodes()
+    {
+        var nodes = new List<WorkflowNode>
+        {
+            new("a", WorkflowNodeKind.Trigger, "A", 120, 140),
+            new("b", WorkflowNodeKind.Agent,   "B", 0, 0),
+        };
+        var edges = new List<WorkflowEdge> { new("a", "b") };
+
+        var positioned = WorkflowLayout.AutoPositionMissing(nodes, edges);
+
+        positioned[0].X.Should().Be(120);
+        positioned[0].Y.Should().Be(140);
+        positioned[1].X.Should().Be(WorkflowLayout.MarginX + WorkflowLayout.ColumnSpacing);
+        positioned[1].Y.Should().Be(WorkflowLayout.MarginY);
+    }
 }

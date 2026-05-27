@@ -60,6 +60,22 @@ public static class WorkflowLayout
         return positioned;
     }
 
+    public static IReadOnlyList<WorkflowNode> AutoPositionMissing(
+        IReadOnlyList<WorkflowNode> nodes,
+        IReadOnlyList<WorkflowEdge> edges)
+    {
+        if (nodes.Count == 0) return nodes;
+
+        var fallback = AutoPosition(nodes, edges)
+            .ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
+
+        return nodes
+            .Select(n => n.X == 0 && n.Y == 0 && fallback.TryGetValue(n.Id, out var positioned)
+                ? n with { X = positioned.X, Y = positioned.Y }
+                : n)
+            .ToList();
+    }
+
     private static int MaxColumnHeight(Dictionary<int, List<string>> columns) =>
         columns.Values.Max(c => c.Count) * RowSpacing;
 

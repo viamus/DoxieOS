@@ -1,14 +1,15 @@
-﻿using Viamus.Doxie.Orchestrator.Workflows;
+﻿using Viamus.Doxie.Orchestrator.Components.Shared;
+using Viamus.Doxie.Orchestrator.Workflows;
 
 namespace Viamus.Doxie.Orchestrator.Components.Workflows;
 
 public partial class WorkflowForm
 {
     private static int CanvasWidth(IReadOnlyList<WorkflowNode> nodes) =>
-        nodes.Count == 0 ? 800 : Math.Max(800, nodes.Max(n => n.X + WorkflowLayout.NodeWidth + 80));
+        WorkflowGraphGeometry.CanvasWidth(nodes, WorkflowLayout.NodeWidth, WorkflowLayout.NodeHeight);
 
     private static int CanvasHeight(IReadOnlyList<WorkflowNode> nodes) =>
-        nodes.Count == 0 ? 440 : Math.Max(440, nodes.Max(n => n.Y + WorkflowLayout.NodeHeight + 80));
+        WorkflowGraphGeometry.CanvasHeight(nodes, WorkflowLayout.NodeWidth, WorkflowLayout.NodeHeight);
 
     private static string TriggerLabel(WorkflowTrigger t) => t.Kind switch
     {

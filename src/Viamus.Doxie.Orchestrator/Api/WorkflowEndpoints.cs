@@ -212,9 +212,9 @@ internal static class WorkflowEndpoints
             }
             try
             {
-                // Auto-position before saving so newly authored workflows render
-                // cleanly on first open even if the client supplied X/Y = 0.
-                var positioned = WorkflowLayout.AutoPosition(payload.Nodes, payload.Edges ?? Array.Empty<WorkflowEdge>());
+                // Auto-position only unplaced nodes so manual canvas edits
+                // survive round-trips through the API.
+                var positioned = WorkflowLayout.AutoPositionMissing(payload.Nodes, payload.Edges ?? Array.Empty<WorkflowEdge>());
                 var ts = DateTime.UtcNow;
                 var saved = (payload with
                 {
@@ -261,7 +261,7 @@ internal static class WorkflowEndpoints
 
             try
             {
-                var positioned = WorkflowLayout.AutoPosition(payload.Nodes, payload.Edges ?? Array.Empty<WorkflowEdge>());
+                var positioned = WorkflowLayout.AutoPositionMissing(payload.Nodes, payload.Edges ?? Array.Empty<WorkflowEdge>());
                 var saved = payload with
                 {
                     Id = workflowId,
