@@ -14,7 +14,12 @@ public sealed partial class OrchestratedWorkflowRunner
     /// real markdown stub into the workspace if one is configured (so
     /// the user sees an actual file appear on disk).
     /// </summary>
-    private async Task SimulateNodeAsync(WorkflowNode node, WorkflowRun run, WorkflowDefinition definition, CancellationToken cancellation)
+    private async Task SimulateNodeAsync(
+        WorkflowNode node,
+        WorkflowRun run,
+        WorkflowDefinition definition,
+        ConcurrentDictionary<string, string> branchDecisions,
+        CancellationToken cancellation)
     {
         var nr = run.NodeRun(node.Id);
         nr.Status = WorkflowNodeRunStatus.Running;
@@ -68,6 +73,10 @@ public sealed partial class OrchestratedWorkflowRunner
 
                 case WorkflowNodeKind.Loop:
                     await SimulateLoopNodeAsync(node, run, definition, nr, cancellation).ConfigureAwait(false);
+                    break;
+
+                case WorkflowNodeKind.Decision:
+                    await SimulateDecisionNodeAsync(node, run, definition, nr, branchDecisions, cancellation).ConfigureAwait(false);
                     break;
             }
 
@@ -235,7 +244,7 @@ public sealed partial class OrchestratedWorkflowRunner
         // workspace's CLAUDE.md / AGENTS.md / mounted libraries act as
         // iterative memory for every agent in the workflow.
         string? cwd = null;
-        var resolvedNodeWorkspaceId = ApplyTriggerSubstitution(node.WorkspaceId, run.TriggerInputs);
+        var resolvedNodeWorkspaceId = ApplyInputSubstitution(node.WorkspaceId, run.TriggerInputs, extraEnv);
         var dispatchWorkspaceId = !string.IsNullOrWhiteSpace(resolvedNodeWorkspaceId)
             ? resolvedNodeWorkspaceId
             : workflowWorkspace?.Id;
@@ -260,7 +269,7 @@ public sealed partial class OrchestratedWorkflowRunner
         // (before BuildArguments + log lines) so the dispatched
         // arguments and the displayed log both reflect the resolved
         // string instead of leaking the placeholder.
-        var effectiveInputs = ApplyTriggerSubstitutions(node.Inputs, run.TriggerInputs);
+        var effectiveInputs = ApplyInputSubstitutions(node.Inputs, run.TriggerInputs, extraEnv);
 
         // Build the arguments string by substituting effectiveInputs
         // into the mode's template. Falls back to whatever inputs are

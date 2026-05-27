@@ -65,8 +65,13 @@ public partial class WorkflowDetail
             ? null
             : _workflow?.Nodes.FirstOrDefault(n => n.Id == _selectedNodeId);
 
-    private int CanvasWidth => Math.Max(800, (_workflow?.Nodes.Max(n => n.X + NodeWidth + 80) ?? 800));
-    private int CanvasHeight => Math.Max(440, (_workflow?.Nodes.Max(n => n.Y + NodeHeight + 80) ?? 440));
+    private int CanvasWidth => _workflow is null
+        ? 800
+        : WorkflowGraphGeometry.CanvasWidth(_workflow.Nodes, NodeWidth, NodeHeight);
+
+    private int CanvasHeight => _workflow is null
+        ? 440
+        : WorkflowGraphGeometry.CanvasHeight(_workflow.Nodes, NodeWidth, NodeHeight);
 
     protected override void OnInitialized()
     {

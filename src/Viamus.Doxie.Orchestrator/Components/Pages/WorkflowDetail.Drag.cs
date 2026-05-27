@@ -7,10 +7,14 @@ namespace Viamus.Doxie.Orchestrator.Components.Pages;
 public partial class WorkflowDetail
 {
     private NodeDragState? _drag;
+    private LoopBodyDragState? _loopBodyDrag;
     private NodeContextMenu? _nodeMenu;
 
     private string NodeCursor(string nodeId) =>
         _drag?.NodeId == nodeId ? "grabbing" : "grab";
+
+    private string LoopBodyCursor(string loopId) =>
+        _loopBodyDrag?.LoopId == loopId ? "grabbing" : "grab";
 
     private void BeginNodeDrag(WorkflowNode node, PointerEventArgs e)
     {
@@ -18,7 +22,41 @@ public partial class WorkflowDetail
 
         CloseNodeMenu();
         SelectNode(node.Id);
+        _loopBodyDrag = null;
         _drag = new NodeDragState(node.Id, e.ClientX, e.ClientY, node.X, node.Y, Moved: false);
+    }
+
+    private void BeginLoopBodyDrag(
+        string loopId,
+        IReadOnlyList<WorkflowNode> bodyNodes,
+        PointerEventArgs e)
+    {
+        if (e.Button != 0 || bodyNodes.Count == 0 || _workflow is null) return;
+
+        CloseNodeMenu();
+        SelectNode(loopId);
+        _drag = null;
+
+        var startPositions = bodyNodes.ToDictionary(
+            n => n.Id,
+            n => new NodePosition(n.X, n.Y),
+            StringComparer.OrdinalIgnoreCase);
+
+        _loopBodyDrag = new LoopBodyDragState(loopId, e.ClientX, e.ClientY, startPositions, Moved: false);
+    }
+
+    private void DragCanvas(PointerEventArgs e)
+    {
+        if (_drag is not null)
+        {
+            DragNode(e);
+            return;
+        }
+
+        if (_loopBodyDrag is not null)
+        {
+            DragLoopBody(e);
+        }
     }
 
     private void DragNode(PointerEventArgs e)
@@ -34,15 +72,38 @@ public partial class WorkflowDetail
         _drag = _drag with { Moved = true };
     }
 
-    private void EndNodeDrag()
+    private void DragLoopBody(PointerEventArgs e)
     {
-        if (_drag?.Moved == true && _workflow is not null)
+        if (_loopBodyDrag is null || _workflow is null) return;
+
+        var deltaX = (int)Math.Round(e.ClientX - _loopBodyDrag.StartClientX);
+        var deltaY = (int)Math.Round(e.ClientY - _loopBodyDrag.StartClientY);
+        var minX = _loopBodyDrag.StartPositions.Min(p => p.Value.X);
+        var minY = _loopBodyDrag.StartPositions.Min(p => p.Value.Y);
+
+        deltaX = Math.Max(deltaX, 20 - minX);
+        deltaY = Math.Max(deltaY, 20 - minY);
+
+        if (deltaX == 0 && deltaY == 0) return;
+
+        foreach (var (nodeId, start) in _loopBodyDrag.StartPositions)
+        {
+            MoveWorkflowNode(nodeId, start.X + deltaX, start.Y + deltaY);
+        }
+
+        _loopBodyDrag = _loopBodyDrag with { Moved = true };
+    }
+
+    private void EndCanvasDrag()
+    {
+        if ((_drag?.Moved == true || _loopBodyDrag?.Moved == true) && _workflow is not null)
         {
             _workflow = _workflow with { UpdatedAt = DateTime.UtcNow };
             WorkflowStore.Save(_workflow);
         }
 
         _drag = null;
+        _loopBodyDrag = null;
     }
 
     private void OpenNodeMenu(WorkflowNode node)
@@ -51,6 +112,7 @@ public partial class WorkflowDetail
 
         SelectNode(node.Id);
         _drag = null;
+        _loopBodyDrag = null;
         _nodeMenu = new NodeContextMenu(
             node.Id,
             node.AgentId,
@@ -127,4 +189,13 @@ public partial class WorkflowDetail
         string? AgentId,
         int X,
         int Y);
+
+    private sealed record LoopBodyDragState(
+        string LoopId,
+        double StartClientX,
+        double StartClientY,
+        IReadOnlyDictionary<string, NodePosition> StartPositions,
+        bool Moved);
+
+    private readonly record struct NodePosition(int X, int Y);
 }

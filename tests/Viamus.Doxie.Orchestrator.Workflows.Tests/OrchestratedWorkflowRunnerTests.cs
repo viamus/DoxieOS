@@ -231,6 +231,102 @@ public sealed class OrchestratedWorkflowRunnerTests : IDisposable
     }
 
     [Fact]
+    public async Task If_else_node_routes_only_selected_branch()
+    {
+        var producer = new AgentDescriptor(
+            Id: "producer",
+            Name: "Producer",
+            Description: "test",
+            SkillName: "producer",
+            Category: AgentCategory.Builder,
+            Modes: new[] { new AgentMode("run", "Run", "", "run") });
+        var trueAgent = new AgentDescriptor(
+            Id: "true-agent",
+            Name: "True Agent",
+            Description: "test",
+            SkillName: "true-agent",
+            Category: AgentCategory.Builder,
+            Modes: new[] { new AgentMode("run", "Run", "", "run") });
+        var falseAgent = new AgentDescriptor(
+            Id: "false-agent",
+            Name: "False Agent",
+            Description: "test",
+            SkillName: "false-agent",
+            Category: AgentCategory.Builder,
+            Modes: new[] { new AgentMode("run", "Run", "", "run") });
+
+        var runner = new FakeAgentRunner();
+        var orchestrator = new OrchestratedWorkflowRunner(
+            runStore: new InMemoryWorkflowRunStore(),
+            workspaceStore: new EmptyWorkspaceStore(),
+            agentCatalog: new MultiFakeCatalog(producer, trueAgent, falseAgent),
+            agentRunner: runner,
+            runsDirectory: _runsDir);
+
+        var wf = new WorkflowDefinition(
+            Id: "decision-wf",
+            Name: "Decision WF",
+            Description: "",
+            Trigger: new WorkflowTrigger(WorkflowTriggerKind.Manual),
+            Nodes: new[]
+            {
+                new WorkflowNode("trigger", WorkflowNodeKind.Trigger, "Manual", 0, 0),
+                new WorkflowNode("producer", WorkflowNodeKind.Agent, "Producer", 0, 0,
+                    AgentId: "producer",
+                    AgentMode: "run"),
+                new WorkflowNode("decision", WorkflowNodeKind.Decision, "Has candidates?", 0, 0,
+                    AgentId: "if-else",
+                    AgentMode: "route",
+                    Inputs: new Dictionary<string, string>
+                    {
+                        ["source"] = "result.json",
+                        ["path"] = "hasNewInteractionSinceDoxie",
+                        ["operator"] = "equals",
+                        ["value"] = "true",
+                    }),
+                new WorkflowNode("true-step", WorkflowNodeKind.Agent, "Refine", 0, 0,
+                    AgentId: "true-agent",
+                    AgentMode: "run"),
+                new WorkflowNode("false-step", WorkflowNodeKind.Agent, "Skip", 0, 0,
+                    AgentId: "false-agent",
+                    AgentMode: "run"),
+            },
+            Edges: new[]
+            {
+                new WorkflowEdge("trigger", "producer"),
+                new WorkflowEdge("producer", "decision"),
+                new WorkflowEdge("decision", "true-step", "true"),
+                new WorkflowEdge("decision", "false-step", "false"),
+            },
+            CreatedAt: DateTime.UtcNow,
+            UpdatedAt: DateTime.UtcNow);
+
+        var run = orchestrator.Start(wf, triggeredBy: "test");
+
+        await WaitUntil(() => runner.LastDispatch?.AgentId == "producer", TimeSpan.FromSeconds(30));
+        var producerOutputDir = runner.LastDispatch!.EnvOverrides[WorkflowRunPaths.OutputDirEnvVar];
+        Directory.CreateDirectory(producerOutputDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(producerOutputDir, "result.json"),
+            """{ "hasNewInteractionSinceDoxie": false }""");
+        runner.CompleteCurrent(AgentRunStatus.Completed, exitCode: 0);
+
+        await WaitUntil(() => runner.LastDispatch?.AgentId == "false-agent", TimeSpan.FromSeconds(30));
+        runner.Dispatches.Select(d => d.AgentId).Should().NotContain("true-agent");
+        runner.CompleteCurrent(AgentRunStatus.Completed, exitCode: 0);
+        await WaitUntil(() => run.Status is WorkflowRunStatus.Succeeded or WorkflowRunStatus.Failed, TimeSpan.FromSeconds(30));
+
+        run.Status.Should().Be(WorkflowRunStatus.Succeeded);
+        run.NodeRun("decision").OutputSummary.Should().Be("if/else: false");
+        run.NodeRun("true-step").Status.Should().Be(WorkflowNodeRunStatus.Skipped);
+        run.NodeRun("false-step").Status.Should().Be(WorkflowNodeRunStatus.Succeeded);
+
+        var decisionJson = await File.ReadAllTextAsync(
+            Path.Combine(WorkflowRunPaths.NodeDir(_runsDir, run.Id, "decision"), "decision.json"));
+        decisionJson.Should().Contain("\"selectedBranch\": \"false\"");
+    }
+
+    [Fact]
     public async Task StartFrom_reuses_upstream_artifacts_and_dispatches_selected_node_with_guidance()
     {
         var firstAgent = new AgentDescriptor(

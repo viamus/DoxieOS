@@ -28,4 +28,11 @@ public enum WorkflowNodeKind
     /// <c>"loop"</c>; same connector pattern as aggregate / approval-gate.
     /// </summary>
     Loop,
+
+    /// <summary>
+    /// If/else decision primitive. Evaluates a condition against upstream
+    /// JSON and activates only outgoing edges whose condition matches the
+    /// selected branch (<c>true</c> or <c>false</c>).
+    /// </summary>
+    Decision,
 }

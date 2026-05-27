@@ -435,14 +435,13 @@ public sealed partial class OrchestratedWorkflowRunner
             _ => new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
             StringComparer.OrdinalIgnoreCase);
 
-        var iterDeps = bodyNodes.ToDictionary(
+        var iterDependencyEdges = bodyNodes.ToDictionary(
             n => n.Id,
             n => bodyEdges
                 .Where(e => string.Equals(e.ToNodeId, n.Id, StringComparison.OrdinalIgnoreCase))
-                .Select(e => e.FromNodeId)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             StringComparer.OrdinalIgnoreCase);
+        var branchDecisions = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         // Spawn one task per body node.
         var bodyTasks = bodyNodes.Select(bodyNode => Task.Run(async () =>
@@ -452,10 +451,17 @@ public sealed partial class OrchestratedWorkflowRunner
 
             try
             {
-                var deps = iterDeps[bodyNode.Id];
-                var depResults = deps.Count == 0
+                var depEdges = iterDependencyEdges[bodyNode.Id];
+                var depNodeIds = depEdges
+                    .Select(e => e.FromNodeId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var depResults = depNodeIds.Count == 0
                     ? Array.Empty<bool>()
-                    : await Task.WhenAll(deps.Select(d => iterCompletion[d].Task)).ConfigureAwait(false);
+                    : await Task.WhenAll(depNodeIds.Select(d => iterCompletion[d].Task)).ConfigureAwait(false);
+                var upstreamById = depNodeIds
+                    .Select((id, index) => (id, ok: depResults[index]))
+                    .ToDictionary(x => x.id, x => x.ok, StringComparer.OrdinalIgnoreCase);
 
                 if (cancellation.IsCancellationRequested)
                 {
@@ -466,10 +472,10 @@ public sealed partial class OrchestratedWorkflowRunner
                     return;
                 }
 
-                if (depResults.Any(ok => !ok))
+                if (TryFindUnsatisfiedDependency(depEdges, upstreamById, branchDecisions, out _, out var skipReason))
                 {
                     bodyNr.Status = WorkflowNodeRunStatus.Skipped;
-                    bodyNr.AppendLog("[skipped â€” body-upstream failed]");
+                    bodyNr.AppendLog(skipReason ?? "[skipped — body-upstream failed]");
                     Notify(run);
                     iterCompletion[bodyNode.Id].TrySetResult(false);
                     return;
@@ -503,23 +509,37 @@ public sealed partial class OrchestratedWorkflowRunner
                         .ToList();
                 }
 
-                if (bodyNode.Kind != WorkflowNodeKind.Agent)
+                switch (EffectiveKind(bodyNode))
                 {
-                    throw new InvalidOperationException(
-                        $"Loop body node '{bodyNode.Id}' has Kind={bodyNode.Kind}; only Agent body nodes are supported in V1.");
-                }
-                if (string.IsNullOrEmpty(bodyNode.AgentId))
-                {
-                    throw new InvalidOperationException(
-                        $"Loop body node '{bodyNode.Id}' has no agentId bound.");
-                }
+                    case WorkflowNodeKind.Agent:
+                        if (string.IsNullOrEmpty(bodyNode.AgentId))
+                        {
+                            throw new InvalidOperationException(
+                                $"Loop body node '{bodyNode.Id}' has no agentId bound.");
+                        }
 
-                await DispatchAgentInScopeAsync(
-                    bodyNode, run, definition, bodyNr,
-                    outputDir: bodyOutputDir,
-                    upstreamDirs: bodyUpstreamDirs,
-                    extraEnv: loopEnv,
-                    cancellation: cancellation).ConfigureAwait(false);
+                        await DispatchAgentInScopeAsync(
+                            bodyNode, run, definition, bodyNr,
+                            outputDir: bodyOutputDir,
+                            upstreamDirs: bodyUpstreamDirs,
+                            extraEnv: loopEnv,
+                            cancellation: cancellation).ConfigureAwait(false);
+                        break;
+
+                    case WorkflowNodeKind.Decision:
+                        await SimulateDecisionNodeInScopeAsync(
+                            bodyNode, run, definition, bodyNr,
+                            outputDir: bodyOutputDir,
+                            upstreamDirs: bodyUpstreamDirs,
+                            extraEnv: loopEnv,
+                            branchDecisions: branchDecisions,
+                            cancellation: cancellation).ConfigureAwait(false);
+                        break;
+
+                    default:
+                        throw new InvalidOperationException(
+                            $"Loop body node '{bodyNode.Id}' has Kind={EffectiveKind(bodyNode)}; only Agent and Decision body nodes are supported.");
+                }
 
                 bodyNr.Status = WorkflowNodeRunStatus.Succeeded;
                 bodyNr.FinishedAt = DateTimeOffset.UtcNow;

@@ -123,9 +123,9 @@ else
         <svg width="@CanvasWidth" height="@CanvasHeight"
              style="display: block; min-width: 100%; min-height: 100%; touch-action: none; user-select: none;"
              @onpointerdown="CloseNodeMenu"
-             @onpointermove="DragNode"
-             @onpointerup="EndNodeDrag"
-             @onpointerleave="EndNodeDrag"
+             @onpointermove="DragCanvas"
+             @onpointerup="EndCanvasDrag"
+             @onpointerleave="EndCanvasDrag"
              xmlns="http://www.w3.org/2000/svg">
                     <defs>
                         <linearGradient id="workflow-canvas-bg" x1="0" y1="0" x2="0" y2="1">
@@ -144,36 +144,37 @@ else
                     </defs>
                     <rect width="100%" height="100%" fill="url(#workflow-canvas-bg)" />
                     <rect width="100%" height="100%" fill="url(#workflow-grid)" />
-                    @* Loop body containers — drawn first (behind edges
-                       + nodes in z-order) so the user can see at a
-                       glance which nodes are "inside" each Loop. *@
-                    @foreach (var loopGroup in _workflow.Nodes
-                        .Where(n => !string.IsNullOrEmpty(n.LoopId))
-                        .GroupBy(n => n.LoopId!, StringComparer.OrdinalIgnoreCase))
+                    @* Loop regions are drawn first; the structural loop
+                       node stays in the model while the canvas exposes the
+                       movable body as the visible loop surface. *@
+                    @foreach (var loopRegion in WorkflowGraphGeometry.LoopRegions(_workflow.Nodes, NodeWidth, NodeHeight))
                     {
-                        var bodyNodes = loopGroup.ToList();
-                        if (bodyNodes.Count == 0) continue;
-                        const int padX = 18;
-                        const int padTop = 30;
-                        const int padBottom = 14;
-                        var bMinX = bodyNodes.Min(n => n.X) - padX;
-                        var bMinY = bodyNodes.Min(n => n.Y) - padTop;
-                        var bMaxX = bodyNodes.Max(n => n.X) + NodeWidth + padX;
-                        var bMaxY = bodyNodes.Max(n => n.Y) + NodeHeight + padBottom;
-                        var loopOwner = _workflow.Nodes.FirstOrDefault(n =>
-                            string.Equals(n.Id, loopGroup.Key, StringComparison.OrdinalIgnoreCase));
-                        var loopLabel = loopOwner?.Label ?? loopGroup.Key;
+                        var dragNodes = _workflow.Nodes
+                            .Where(n => string.Equals(n.Id, loopRegion.Id, StringComparison.OrdinalIgnoreCase)
+                                        || string.Equals(n.LoopId, loopRegion.Id, StringComparison.OrdinalIgnoreCase))
+                            .ToList();
 
-                        <g>
-                            <rect x="@bMinX" y="@bMinY"
-                                  width="@(bMaxX - bMinX)" height="@(bMaxY - bMinY)"
+                        <g style="@($"cursor: {LoopBodyCursor(loopRegion.Id)}; touch-action: none; user-select: none;")"
+                           @onpointerdown="@((PointerEventArgs e) => BeginLoopBodyDrag(loopRegion.Id, dragNodes, e))"
+                           @onpointerdown:preventDefault="true"
+                           @onpointerdown:stopPropagation="true">
+                            <rect x="@loopRegion.X" y="@loopRegion.Y"
+                                  width="@loopRegion.Width" height="@loopRegion.Height"
                                   fill="rgba(217, 119, 87, 0.065)"
                                   stroke="rgba(217, 119, 87, 0.58)" stroke-dasharray="8 6" stroke-width="1.5"
                                   rx="16" ry="16" />
-                            <text x="@(bMinX + 14)" y="@(bMinY + 18)"
+                            <rect x="@loopRegion.X" y="@loopRegion.Y"
+                                  width="@loopRegion.Width" height="40"
+                                  fill="rgba(217, 119, 87, 0.10)"
+                                  rx="16" ry="16" />
+                            <text x="@(loopRegion.X + 14)" y="@(loopRegion.Y + 17)"
                                   font-size="10.5" font-weight="700" fill="#D97757"
                                   style="text-transform: uppercase; letter-spacing: 0;">
-                                Loop body - @Truncate(loopLabel, 32)
+                                @Truncate(loopRegion.Label, 42)
+                            </text>
+                            <text x="@(loopRegion.X + 14)" y="@(loopRegion.Y + 33)"
+                                  font-size="10" fill="#A9A39A" font-family="Cascadia Code, Consolas, monospace">
+                                @Truncate(loopRegion.Summary, 84)
                             </text>
                         </g>
                     }
@@ -185,20 +186,30 @@ else
                         var to = NodeOrNull(edge.ToNodeId);
                         if (from is null || to is null) continue;
 
-                        var x1 = from.X + NodeWidth;
-                        var y1 = from.Y + NodeHeight / 2;
-                        var x2 = to.X;
-                        var y2 = to.Y + NodeHeight / 2;
-                        var midX = (x1 + x2) / 2;
-                        var path = $"M {x1} {y1} C {midX} {y1}, {midX} {y2}, {x2} {y2}";
+                        var route = WorkflowGraphGeometry.RouteEdge(edge, _workflow.Nodes, _workflow.Edges, NodeWidth, NodeHeight);
+                        if (route is null) continue;
 
                         var color = EdgeColor(from.Id, to.Id);
-                        <path d="@path" stroke="rgba(242,239,231,0.075)" stroke-width="7" fill="none" stroke-linecap="round" />
-                        <path d="@path" stroke="@color" stroke-width="2.4" fill="none" opacity="0.95" stroke-linecap="round" marker-end="url(#workflow-arrow)" />
+                        var conditionLabel = EdgeConditionLabel(edge);
+                        <path d="@route.Path" stroke="rgba(242,239,231,0.075)" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="@route.Path" stroke="@color" stroke-width="2.4" fill="none" opacity="0.95" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#workflow-arrow)" />
+                        @if (!string.IsNullOrEmpty(conditionLabel))
+                        {
+                            var labelX = route.LabelX - 22;
+                            var labelY = route.LabelY - 12;
+                            <g>
+                                <rect x="@labelX" y="@labelY" width="44" height="20" rx="10" ry="10"
+                                      fill="#171816" stroke="rgba(223,165,214,0.72)" stroke-width="1" />
+                                <text x="@route.LabelX" y="@(labelY + 13)" font-size="10" font-weight="700" text-anchor="middle" fill="#DFA5D6"
+                                      style="text-transform: uppercase; letter-spacing: 0;">@Truncate(conditionLabel, 8)</text>
+                            </g>
+                        }
                     }
 
                     @foreach (var node in _workflow.Nodes)
                     {
+                        if (WorkflowGraphGeometry.IsCollapsedLoopNode(node, _workflow.Nodes)) continue;
+
                         var status = _activeRun is null
                             ? WorkflowNodeRunStatus.Pending
                             : _activeRun.NodeRun(node.Id).Status;

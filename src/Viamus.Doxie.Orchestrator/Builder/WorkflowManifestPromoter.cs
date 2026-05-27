@@ -258,7 +258,8 @@ public sealed class WorkflowManifestPromoter
                 }
                 else
                 {
-                    errors.Add($"{label}: kind '{n.Kind}' must be one of: Agent, Aggregate, Output");
+                    var knownKinds = string.Join(", ", Enum.GetNames<WorkflowNodeKind>().Where(k => k != nameof(WorkflowNodeKind.Trigger)));
+                    errors.Add($"{label}: kind '{n.Kind}' must be one of: {knownKinds}");
                 }
 
                 // Per-kind required-field checks
@@ -347,10 +348,14 @@ public sealed class WorkflowManifestPromoter
             Inputs: n.Inputs is { Count: > 0 } ? new Dictionary<string, string>(n.Inputs, StringComparer.OrdinalIgnoreCase) : null,
             OutputWorkspaceId: string.IsNullOrEmpty(n.OutputWorkspaceId) ? null : n.OutputWorkspaceId,
             OutputFileName: string.IsNullOrEmpty(n.OutputFileName) ? null : n.OutputFileName,
-            WorkspaceId: string.IsNullOrEmpty(n.WorkspaceId) ? null : n.WorkspaceId)).ToList();
+            WorkspaceId: string.IsNullOrEmpty(n.WorkspaceId) ? null : n.WorkspaceId,
+            LoopId: string.IsNullOrEmpty(n.LoopId) ? null : n.LoopId)).ToList();
 
         var edges = (m.Edges ?? new List<WorkflowManifestEdge>())
-            .Select(e => new WorkflowEdge(e.FromNodeId!, e.ToNodeId!))
+            .Select(e => new WorkflowEdge(
+                e.FromNodeId!,
+                e.ToNodeId!,
+                string.IsNullOrWhiteSpace(e.Condition) ? null : e.Condition.Trim()))
             .ToList();
 
         // Auto-position so newly authored workflows render cleanly on

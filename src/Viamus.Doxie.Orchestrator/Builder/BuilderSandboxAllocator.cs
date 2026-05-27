@@ -219,13 +219,14 @@ public sealed class BuilderSandboxAllocator
                 AgentMode = n.AgentMode,
                 Inputs = n.Inputs is null ? null : new Dictionary<string, string>(n.Inputs, StringComparer.OrdinalIgnoreCase),
                 WorkspaceId = n.WorkspaceId,
+                LoopId = n.LoopId,
                 OutputWorkspaceId = n.OutputWorkspaceId,
                 OutputFileName = n.OutputFileName,
             })
             .ToList(),
         Edges = w.Edges
             .Where(e => !string.Equals(e.FromNodeId, "trigger", StringComparison.OrdinalIgnoreCase))
-            .Select(e => new WorkflowManifestEdge { FromNodeId = e.FromNodeId, ToNodeId = e.ToNodeId })
+            .Select(e => new WorkflowManifestEdge { FromNodeId = e.FromNodeId, ToNodeId = e.ToNodeId, Condition = e.Condition })
             .ToList(),
     };
 

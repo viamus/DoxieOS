@@ -348,13 +348,16 @@ public sealed partial class OrchestratedWorkflowRunner : IWorkflowRunner
             // body's Loop owner. Body-internal edges are dropped from
             // this dict entirely (they're consumed by the iteration
             // logic, not the main scheduler).
-            var dependsOn = schedulableNodes.ToDictionary(
+            var dependencyEdges = schedulableNodes.ToDictionary(
                 n => n.Id,
                 n => definition.Edges
                     .Where(e => string.Equals(e.ToNodeId, n.Id, StringComparison.OrdinalIgnoreCase))
-                    .Select(e => bodyToLoopOwner.TryGetValue(e.FromNodeId, out var owner) ? owner : e.FromNodeId)
-                    .Where(id => !bodyNodeIds.Contains(id)) // defensive: shouldn't happen post-remap
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(e => bodyToLoopOwner.TryGetValue(e.FromNodeId, out var owner)
+                        ? e with { FromNodeId = owner }
+                        : e)
+                    .Where(e => !bodyNodeIds.Contains(e.FromNodeId)) // defensive: shouldn't happen post-remap
+                    .GroupBy(e => $"{e.FromNodeId}\u0000{NormalizeEdgeCondition(e.Condition) ?? ""}", StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
                     .ToList(),
                 StringComparer.OrdinalIgnoreCase);
 
@@ -362,6 +365,7 @@ public sealed partial class OrchestratedWorkflowRunner : IWorkflowRunner
                 n => n.Id,
                 _ => new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously),
                 StringComparer.OrdinalIgnoreCase);
+            var branchDecisions = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             if (rerunFrom is not null)
             {
@@ -385,10 +389,17 @@ public sealed partial class OrchestratedWorkflowRunner : IWorkflowRunner
                     // Wait for upstream gates. If any failed/skipped,
                     // skip this node too — the result propagates
                     // downstream automatically.
-                    var deps = dependsOn[node.Id];
-                    var upstreamResults = deps.Count == 0
+                    var depEdges = dependencyEdges[node.Id];
+                    var depNodeIds = depEdges
+                        .Select(e => e.FromNodeId)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    var upstreamResults = depNodeIds.Count == 0
                         ? Array.Empty<bool>()
-                        : await Task.WhenAll(deps.Select(d => completion[d].Task)).ConfigureAwait(false);
+                        : await Task.WhenAll(depNodeIds.Select(d => completion[d].Task)).ConfigureAwait(false);
+                    var upstreamById = depNodeIds
+                        .Select((id, index) => (id, ok: upstreamResults[index]))
+                        .ToDictionary(x => x.id, x => x.ok, StringComparer.OrdinalIgnoreCase);
 
                     if (cancellation.IsCancellationRequested)
                     {
@@ -399,16 +410,16 @@ public sealed partial class OrchestratedWorkflowRunner : IWorkflowRunner
                         return;
                     }
 
-                    if (upstreamResults.Any(ok => !ok))
+                    if (TryFindUnsatisfiedDependency(depEdges, upstreamById, branchDecisions, out var blockedEdge, out var skipReason))
                     {
                         nr.Status = WorkflowNodeRunStatus.Skipped;
-                        nr.AppendLog("[skipped — upstream failed]");
+                        nr.AppendLog(skipReason ?? "[skipped — upstream failed]");
                         Notify(run);
                         completion[node.Id].TrySetResult(false);
                         return;
                     }
 
-                    await SimulateNodeAsync(node, run, definition, cancellation).ConfigureAwait(false);
+                    await SimulateNodeAsync(node, run, definition, branchDecisions, cancellation).ConfigureAwait(false);
                     completion[node.Id].TrySetResult(nr.Status == WorkflowNodeRunStatus.Succeeded);
                 }, cancellation))
                 .ToList();
@@ -474,6 +485,7 @@ public sealed partial class OrchestratedWorkflowRunner : IWorkflowRunner
     private const string AggregateAgentId = "aggregate";
     private const string WriteToWorkspaceAgentId = "write-to-workspace";
     private const string LoopAgentId = "loop";
+    private const string IfElseAgentId = "if-else";
 
     private static WorkflowNodeKind EffectiveKind(WorkflowNode node)
     {
@@ -485,8 +497,76 @@ public sealed partial class OrchestratedWorkflowRunner : IWorkflowRunner
                 return WorkflowNodeKind.Output;
             if (string.Equals(node.AgentId, LoopAgentId, StringComparison.OrdinalIgnoreCase))
                 return WorkflowNodeKind.Loop;
+            if (string.Equals(node.AgentId, IfElseAgentId, StringComparison.OrdinalIgnoreCase))
+                return WorkflowNodeKind.Decision;
         }
         return node.Kind;
+    }
+
+    private static bool TryFindUnsatisfiedDependency(
+        IReadOnlyList<WorkflowEdge> dependencyEdges,
+        IReadOnlyDictionary<string, bool> upstreamById,
+        IReadOnlyDictionary<string, string> branchDecisions,
+        out WorkflowEdge? blockedEdge,
+        out string? skipReason)
+    {
+        blockedEdge = null;
+        skipReason = null;
+
+        foreach (var edge in dependencyEdges)
+        {
+            if (!upstreamById.TryGetValue(edge.FromNodeId, out var upstreamOk) || !upstreamOk)
+            {
+                blockedEdge = edge;
+                skipReason = "[skipped — upstream failed]";
+                return true;
+            }
+
+            var expected = NormalizeEdgeCondition(edge.Condition);
+            if (expected is null) continue;
+
+            if (!branchDecisions.TryGetValue(edge.FromNodeId, out var selected))
+            {
+                blockedEdge = edge;
+                skipReason = $"[skipped — conditional upstream '{edge.FromNodeId}' did not publish a decision for branch '{expected}']";
+                return true;
+            }
+
+            var normalizedSelected = NormalizeEdgeCondition(selected) ?? selected.Trim();
+            if (!string.Equals(normalizedSelected, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                blockedEdge = edge;
+                skipReason = $"[skipped — condition '{expected}' not selected by '{edge.FromNodeId}' (selected '{normalizedSelected}')]";
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string? NormalizeEdgeCondition(string? condition)
+    {
+        if (string.IsNullOrWhiteSpace(condition)) return null;
+        var value = condition.Trim();
+        return value.ToLowerInvariant() switch
+        {
+            "always" => null,
+            "any" => null,
+            "then" => "true",
+            "yes" => "true",
+            "y" => "true",
+            "pass" => "true",
+            "passed" => "true",
+            "match" => "true",
+            "matched" => "true",
+            "else" => "false",
+            "no" => "false",
+            "n" => "false",
+            "fail" => "false",
+            "failed" => "false",
+            "unmatched" => "false",
+            _ => value,
+        };
     }
 
     private IReadOnlyList<string> SnapshotOperatorHints(string runId)

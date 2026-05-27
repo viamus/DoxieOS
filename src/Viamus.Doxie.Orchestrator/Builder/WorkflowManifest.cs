@@ -89,6 +89,9 @@ public sealed class WorkflowManifestNode
     [JsonPropertyName("workspaceId")]
     public string? WorkspaceId { get; set; }
 
+    [JsonPropertyName("loopId")]
+    public string? LoopId { get; set; }
+
     [JsonPropertyName("outputWorkspaceId")]
     public string? OutputWorkspaceId { get; set; }
 
@@ -103,4 +106,7 @@ public sealed class WorkflowManifestEdge
 
     [JsonPropertyName("toNodeId")]
     public string? ToNodeId { get; set; }
+
+    [JsonPropertyName("condition")]
+    public string? Condition { get; set; }
 }

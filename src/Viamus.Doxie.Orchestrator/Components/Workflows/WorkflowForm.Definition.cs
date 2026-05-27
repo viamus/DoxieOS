@@ -30,6 +30,8 @@ public partial class WorkflowForm
             {
                 "aggregate" => WorkflowNodeKind.Aggregate,
                 "write-to-workspace" => WorkflowNodeKind.Output,
+                "loop" => WorkflowNodeKind.Loop,
+                "if-else" => WorkflowNodeKind.Decision,
                 _ => WorkflowNodeKind.Agent,
             };
 
@@ -41,7 +43,8 @@ public partial class WorkflowForm
                 AgentId: string.IsNullOrEmpty(step.AgentId) ? null : step.AgentId,
                 AgentMode: string.IsNullOrEmpty(step.Mode) ? null : step.Mode,
                 Inputs: step.Inputs.Count == 0 ? null : new Dictionary<string, string>(step.Inputs, StringComparer.OrdinalIgnoreCase),
-                WorkspaceId: step.WorkspaceId));
+                WorkspaceId: step.WorkspaceId,
+                LoopId: string.IsNullOrWhiteSpace(step.LoopId) ? null : step.LoopId));
         }
 
         var edges = new List<WorkflowEdge>();
@@ -57,7 +60,10 @@ public partial class WorkflowForm
             {
                 foreach (var dep in step.DependsOn)
                 {
-                    edges.Add(new WorkflowEdge(dep, step.Id));
+                    var condition = step.DependencyConditions.TryGetValue(dep, out var rawCondition)
+                        ? (string.IsNullOrWhiteSpace(rawCondition) ? null : rawCondition.Trim())
+                        : null;
+                    edges.Add(new WorkflowEdge(dep, step.Id, condition));
                 }
             }
         }
