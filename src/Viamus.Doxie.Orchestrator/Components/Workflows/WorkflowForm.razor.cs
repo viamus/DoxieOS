@@ -62,6 +62,7 @@ public partial class WorkflowForm
     private int? _triggerX;
     private int? _triggerY;
     private NodeDragState? _drag;
+    private LoopBodyDragState? _loopBodyDrag;
 
     protected override void OnInitialized()
     {
@@ -144,6 +145,7 @@ public partial class WorkflowForm
                 AgentId = node.AgentId ?? string.Empty,
                 Mode = node.AgentMode ?? string.Empty,
                 WorkspaceId = node.WorkspaceId,
+                LoopId = node.LoopId,
                 X = node.X,
                 Y = node.Y,
                 DependsOn = dependsOn,

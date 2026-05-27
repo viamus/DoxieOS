@@ -123,9 +123,9 @@ else
         <svg width="@CanvasWidth" height="@CanvasHeight"
              style="display: block; min-width: 100%; min-height: 100%; touch-action: none; user-select: none;"
              @onpointerdown="CloseNodeMenu"
-             @onpointermove="DragNode"
-             @onpointerup="EndNodeDrag"
-             @onpointerleave="EndNodeDrag"
+             @onpointermove="DragCanvas"
+             @onpointerup="EndCanvasDrag"
+             @onpointerleave="EndCanvasDrag"
              xmlns="http://www.w3.org/2000/svg">
                     <defs>
                         <linearGradient id="workflow-canvas-bg" x1="0" y1="0" x2="0" y2="1">
@@ -164,7 +164,10 @@ else
                             string.Equals(n.Id, loopGroup.Key, StringComparison.OrdinalIgnoreCase));
                         var loopLabel = loopOwner?.Label ?? loopGroup.Key;
 
-                        <g>
+                        <g style="@($"cursor: {LoopBodyCursor(loopGroup.Key)}; touch-action: none; user-select: none;")"
+                           @onpointerdown="@((PointerEventArgs e) => BeginLoopBodyDrag(loopGroup.Key, bodyNodes, e))"
+                           @onpointerdown:preventDefault="true"
+                           @onpointerdown:stopPropagation="true">
                             <rect x="@bMinX" y="@bMinY"
                                   width="@(bMaxX - bMinX)" height="@(bMaxY - bMinY)"
                                   fill="rgba(217, 119, 87, 0.065)"

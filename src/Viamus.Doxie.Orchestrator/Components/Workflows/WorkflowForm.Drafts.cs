@@ -15,6 +15,7 @@ public partial class WorkflowForm
         public string AgentId { get; set; } = string.Empty;
         public string Mode { get; set; } = string.Empty;
         public string? WorkspaceId { get; set; }
+        public string? LoopId { get; set; }
         public int? X { get; set; }
         public int? Y { get; set; }
         public HashSet<string> DependsOn { get; set; } = new(StringComparer.OrdinalIgnoreCase);

@@ -400,9 +400,9 @@
             <svg width="@CanvasWidth(previewNodes)" height="@CanvasHeight(previewNodes)"
                  style="display: block; min-width: 100%; min-height: 100%; touch-action: none; user-select: none;"
                  @onpointerdown="CloseNodeMenu"
-                 @onpointermove="DragPreviewNode"
-                 @onpointerup="EndPreviewNodeDrag"
-                 @onpointerleave="EndPreviewNodeDrag"
+                 @onpointermove="DragPreview"
+                 @onpointerup="EndPreviewDrag"
+                 @onpointerleave="EndPreviewDrag"
                  xmlns="http://www.w3.org/2000/svg">
                 <defs>
                     <linearGradient id="workflow-preview-bg" x1="0" y1="0" x2="0" y2="1">
@@ -443,7 +443,10 @@
                         string.Equals(n.Id, loopGroup.Key, StringComparison.OrdinalIgnoreCase));
                     var loopLabel = loopOwner?.Label ?? loopGroup.Key;
 
-                    <g>
+                    <g style="@($"cursor: {LoopBodyCursor(loopGroup.Key)}; touch-action: none; user-select: none;")"
+                       @onpointerdown="@((PointerEventArgs e) => BeginLoopBodyDrag(loopGroup.Key, bodyNodes, e))"
+                       @onpointerdown:preventDefault="true"
+                       @onpointerdown:stopPropagation="true">
                         <rect x="@minX" y="@minY"
                               width="@(maxX - minX)" height="@(maxY - minY)"
                               fill="rgba(217, 119, 87, 0.065)"
