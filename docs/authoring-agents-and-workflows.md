@@ -67,8 +67,13 @@ flowchart LR
 | `prompt` | Transform, summarize, extract, or map data between nodes. |
 | `aggregate` | Wait for multiple upstream nodes and merge their outputs. |
 | `loop` | Iterate over array-shaped input with controlled concurrency. |
+| `if-else` | Evaluate upstream JSON and route only the selected `true` or `false` edge. |
 | `approval-gate` | Pause until a human approves or rejects. |
 | `write-to-workspace` | Deliver final markdown output into a workspace. |
+
+Conditional workflow edges use the optional `condition` property. Edges leaving
+an `if-else` node normally set `"condition": "true"` or `"condition": "false"`;
+unconditioned edges still behave as regular dependencies.
 
 ## Output Contracts
 

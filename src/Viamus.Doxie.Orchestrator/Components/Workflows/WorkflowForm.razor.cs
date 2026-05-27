@@ -137,6 +137,11 @@ public partial class WorkflowForm
                 // in the draft so the round-trip is idempotent.
                 .Where(id => !string.Equals(id, "trigger", StringComparison.OrdinalIgnoreCase))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var dependencyConditions = wf.Edges
+                .Where(e => string.Equals(e.ToNodeId, node.Id, StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(e.FromNodeId, "trigger", StringComparison.OrdinalIgnoreCase)
+                            && !string.IsNullOrWhiteSpace(e.Condition))
+                .ToDictionary(e => e.FromNodeId, e => e.Condition!.Trim(), StringComparer.OrdinalIgnoreCase);
 
             _steps.Add(new StepDraft
             {
@@ -149,6 +154,7 @@ public partial class WorkflowForm
                 X = node.X,
                 Y = node.Y,
                 DependsOn = dependsOn,
+                DependencyConditions = dependencyConditions,
                 Inputs = node.Inputs is { Count: > 0 }
                     ? new Dictionary<string, string>(node.Inputs, StringComparer.OrdinalIgnoreCase)
                     : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
@@ -238,7 +244,37 @@ public partial class WorkflowForm
         step.DependsOn = values is null
             ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             : values.Where(v => !string.IsNullOrEmpty(v)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in step.DependencyConditions.Keys.ToList())
+        {
+            if (!step.DependsOn.Contains(key))
+            {
+                step.DependencyConditions.Remove(key);
+            }
+        }
     }
+
+    private void OnDependencyConditionChanged(StepDraft step, string dependencyId, string? condition)
+    {
+        if (string.IsNullOrWhiteSpace(condition))
+        {
+            step.DependencyConditions.Remove(dependencyId);
+            return;
+        }
+
+        step.DependencyConditions[dependencyId] = condition.Trim();
+    }
+
+    private bool IsDecisionDependency(string dependencyId)
+    {
+        var dependency = _steps.FirstOrDefault(s => string.Equals(s.Id, dependencyId, StringComparison.OrdinalIgnoreCase));
+        return dependency is not null
+            && string.Equals(dependency.AgentId, "if-else", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string DependencyDisplayName(string dependencyId) =>
+        _steps.FirstOrDefault(s => string.Equals(s.Id, dependencyId, StringComparison.OrdinalIgnoreCase)) is { } step
+            ? $"{step.Label} ({step.Id})"
+            : dependencyId;
 
     private void OnStepWorkspaceChanged(StepDraft step, string? value)
     {

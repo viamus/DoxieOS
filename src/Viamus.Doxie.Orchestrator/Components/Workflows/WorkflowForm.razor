@@ -385,6 +385,22 @@
                             <MudSelectItem T="string" Value="@other.Id">@other.Label (@other.Id)</MudSelectItem>
                         }
                     </MudSelect>
+
+                    @foreach (var dependencyId in step.DependsOn.Where(IsDecisionDependency).OrderBy(DependencyDisplayName))
+                    {
+                        <MudSelect T="string"
+                                   Label="@($"Decision branch from {DependencyDisplayName(dependencyId)}")"
+                                   Value="@(step.DependencyConditions.GetValueOrDefault(dependencyId) ?? string.Empty)"
+                                   ValueChanged="@(v => OnDependencyConditionChanged(step, dependencyId, v))"
+                                   Variant="Variant.Outlined"
+                                   Margin="Margin.Dense"
+                                   Class="mt-2"
+                                   HelperText="Blank runs after either branch. Choose true or false to make this edge conditional.">
+                            <MudSelectItem T="string" Value="@string.Empty">Any branch</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("true")">True branch</MudSelectItem>
+                            <MudSelectItem T="string" Value="@("false")">False branch</MudSelectItem>
+                        </MudSelect>
+                    }
                 </MudPaper>
             }
         </MudPaper>
@@ -472,9 +488,21 @@
                     var y2 = to.Y + WorkflowLayout.NodeHeight / 2;
                     var midX = (x1 + x2) / 2;
                     var d = $"M {x1} {y1} C {midX} {y1}, {midX} {y2}, {x2} {y2}";
+                    var conditionLabel = EdgeConditionLabel(edge);
 
                     <path d="@d" stroke="rgba(242,239,231,0.075)" stroke-width="7" fill="none" stroke-linecap="round" />
                     <path d="@d" stroke="#6F7168" stroke-width="2.4" fill="none" opacity="0.95" stroke-linecap="round" marker-end="url(#workflow-preview-arrow)" />
+                    @if (!string.IsNullOrEmpty(conditionLabel))
+                    {
+                        var labelX = midX - 22;
+                        var labelY = ((y1 + y2) / 2) - 12;
+                        <g>
+                            <rect x="@labelX" y="@labelY" width="44" height="20" rx="10" ry="10"
+                                  fill="#171816" stroke="rgba(223,165,214,0.72)" stroke-width="1" />
+                            <text x="@midX" y="@(labelY + 13)" font-size="10" font-weight="700" text-anchor="middle" fill="#DFA5D6"
+                                  style="text-transform: uppercase; letter-spacing: 0;">@Truncate(conditionLabel, 8)</text>
+                        </g>
+                    }
                 }
 
                 @foreach (var node in previewNodes)

@@ -45,6 +45,7 @@ public partial class WorkflowDetail
             WorkflowNodeKind.Aggregate => "#7FD1C4",
             WorkflowNodeKind.Output => "#D97757",
             WorkflowNodeKind.Loop => "#E1A34A",
+            WorkflowNodeKind.Decision => "#DFA5D6",
             _ => "#A9A39A",
         };
     }
@@ -62,6 +63,7 @@ public partial class WorkflowDetail
             "loop" => WorkflowNodeKind.Loop,
             "aggregate" => WorkflowNodeKind.Aggregate,
             "write-to-workspace" => WorkflowNodeKind.Output,
+            "if-else" => WorkflowNodeKind.Decision,
             _ => node.Kind,
         };
     }
@@ -83,6 +85,7 @@ public partial class WorkflowDetail
         WorkflowNodeKind.Aggregate => "aggregate",
         WorkflowNodeKind.Output => "output",
         WorkflowNodeKind.Loop => "loop",
+        WorkflowNodeKind.Decision => "if/else",
         _ => "node",
     };
 
@@ -93,8 +96,18 @@ public partial class WorkflowDetail
         WorkflowNodeKind.Aggregate => "join",
         WorkflowNodeKind.Output => Truncate($"â†’ {node.OutputWorkspaceId ?? "(none)"}", 26),
         WorkflowNodeKind.Loop => $"iterate · Ã—{node.Inputs?.GetValueOrDefault("concurrency") ?? "4"} · {node.Inputs?.GetValueOrDefault("on_failure") ?? "fail-fast"}",
+        WorkflowNodeKind.Decision => $"{node.Inputs?.GetValueOrDefault("operator") ?? "truthy"} · {node.Inputs?.GetValueOrDefault("path") ?? "(root)"}",
         _ => "",
     };
+
+    private static string EdgeConditionLabel(WorkflowEdge edge) =>
+        string.IsNullOrWhiteSpace(edge.Condition)
+            ? string.Empty
+            : edge.Condition.Trim().Equals("false", StringComparison.OrdinalIgnoreCase)
+                ? "else"
+                : edge.Condition.Trim().Equals("true", StringComparison.OrdinalIgnoreCase)
+                    ? "true"
+                    : edge.Condition.Trim();
 
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s.Substring(0, max - 1) + "…";

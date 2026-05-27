@@ -14,7 +14,12 @@ public sealed partial class OrchestratedWorkflowRunner
     /// real markdown stub into the workspace if one is configured (so
     /// the user sees an actual file appear on disk).
     /// </summary>
-    private async Task SimulateNodeAsync(WorkflowNode node, WorkflowRun run, WorkflowDefinition definition, CancellationToken cancellation)
+    private async Task SimulateNodeAsync(
+        WorkflowNode node,
+        WorkflowRun run,
+        WorkflowDefinition definition,
+        ConcurrentDictionary<string, string> branchDecisions,
+        CancellationToken cancellation)
     {
         var nr = run.NodeRun(node.Id);
         nr.Status = WorkflowNodeRunStatus.Running;
@@ -68,6 +73,10 @@ public sealed partial class OrchestratedWorkflowRunner
 
                 case WorkflowNodeKind.Loop:
                     await SimulateLoopNodeAsync(node, run, definition, nr, cancellation).ConfigureAwait(false);
+                    break;
+
+                case WorkflowNodeKind.Decision:
+                    await SimulateDecisionNodeAsync(node, run, definition, nr, branchDecisions, cancellation).ConfigureAwait(false);
                     break;
             }
 

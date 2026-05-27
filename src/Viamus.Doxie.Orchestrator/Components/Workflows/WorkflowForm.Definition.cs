@@ -30,6 +30,8 @@ public partial class WorkflowForm
             {
                 "aggregate" => WorkflowNodeKind.Aggregate,
                 "write-to-workspace" => WorkflowNodeKind.Output,
+                "loop" => WorkflowNodeKind.Loop,
+                "if-else" => WorkflowNodeKind.Decision,
                 _ => WorkflowNodeKind.Agent,
             };
 
@@ -58,7 +60,10 @@ public partial class WorkflowForm
             {
                 foreach (var dep in step.DependsOn)
                 {
-                    edges.Add(new WorkflowEdge(dep, step.Id));
+                    var condition = step.DependencyConditions.TryGetValue(dep, out var rawCondition)
+                        ? (string.IsNullOrWhiteSpace(rawCondition) ? null : rawCondition.Trim())
+                        : null;
+                    edges.Add(new WorkflowEdge(dep, step.Id, condition));
                 }
             }
         }

@@ -196,8 +196,20 @@ else
                         var path = $"M {x1} {y1} C {midX} {y1}, {midX} {y2}, {x2} {y2}";
 
                         var color = EdgeColor(from.Id, to.Id);
+                        var conditionLabel = EdgeConditionLabel(edge);
                         <path d="@path" stroke="rgba(242,239,231,0.075)" stroke-width="7" fill="none" stroke-linecap="round" />
                         <path d="@path" stroke="@color" stroke-width="2.4" fill="none" opacity="0.95" stroke-linecap="round" marker-end="url(#workflow-arrow)" />
+                        @if (!string.IsNullOrEmpty(conditionLabel))
+                        {
+                            var labelX = midX - 22;
+                            var labelY = ((y1 + y2) / 2) - 12;
+                            <g>
+                                <rect x="@labelX" y="@labelY" width="44" height="20" rx="10" ry="10"
+                                      fill="#171816" stroke="rgba(223,165,214,0.72)" stroke-width="1" />
+                                <text x="@midX" y="@(labelY + 13)" font-size="10" font-weight="700" text-anchor="middle" fill="#DFA5D6"
+                                      style="text-transform: uppercase; letter-spacing: 0;">@Truncate(conditionLabel, 8)</text>
+                            </g>
+                        }
                     }
 
                     @foreach (var node in _workflow.Nodes)

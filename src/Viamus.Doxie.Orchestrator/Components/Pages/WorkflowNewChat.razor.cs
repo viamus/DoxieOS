@@ -344,6 +344,8 @@ public partial class WorkflowNewChat
     private static string NodeIcon(string? kind) => (kind ?? "").ToLowerInvariant() switch
     {
         "aggregate" => Icons.Material.Filled.MergeType,
+        "decision" => Icons.Material.Filled.CallSplit,
+        "loop" => Icons.Material.Filled.Sync,
         "output" => Icons.Material.Filled.Folder,
         _ => Icons.Material.Filled.SmartToy,
     };
@@ -351,6 +353,8 @@ public partial class WorkflowNewChat
     private static string NodeAccent(string? kind) => (kind ?? "").ToLowerInvariant() switch
     {
         "aggregate" => "#26A69A",
+        "decision" => "#DFA5D6",
+        "loop" => "#E1A34A",
         "output" => "#D97757",
         _ => "#5A5A56",
     };

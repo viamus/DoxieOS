@@ -19,6 +19,7 @@ public partial class WorkflowForm
         public int? X { get; set; }
         public int? Y { get; set; }
         public HashSet<string> DependsOn { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> DependencyConditions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> Inputs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
