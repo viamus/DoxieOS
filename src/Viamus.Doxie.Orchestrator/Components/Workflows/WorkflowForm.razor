@@ -61,6 +61,24 @@
                           Class="mt-2" />
 
             <MudSelect T="string"
+                       Label="Category"
+                       Value="_category"
+                       ValueChanged="SetWorkflowCategory"
+                       Variant="Variant.Outlined"
+                       Margin="Margin.Dense"
+                       Class="mt-2"
+                       HelperText="Groups this workflow in the catalog list.">
+                @foreach (var category in WorkflowCategoryOptions)
+                {
+                    <MudSelectItem T="string" Value="@category">@category</MudSelectItem>
+                }
+                @if (!WorkflowCategoryOptions.Contains(_category, StringComparer.OrdinalIgnoreCase))
+                {
+                    <MudSelectItem T="string" Value="@_category">@_category</MudSelectItem>
+                }
+            </MudSelect>
+
+            <MudSelect T="string"
                        Label="Destination catalog"
                        Value="_selectedCatalogId"
                        ValueChanged="SetSelectedCatalog"

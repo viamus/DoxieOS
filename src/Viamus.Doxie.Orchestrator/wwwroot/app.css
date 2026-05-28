@@ -417,7 +417,7 @@ body {
 .doxie-command-bar {
     display: grid !important;
     grid-template-columns: minmax(320px, 1fr) minmax(240px, 320px) 42px;
-    align-items: center;
+    align-items: stretch;
     gap: 10px;
     padding: 12px;
 }
@@ -427,6 +427,8 @@ body {
 }
 
 .doxie-command-bar .mud-input-control {
+    align-self: stretch;
+    display: flex;
     margin-top: 0;
     margin-bottom: 0;
 }
@@ -436,8 +438,32 @@ body {
 }
 
 .doxie-command-bar > .mud-input-control {
-    height: 46px !important;
+    height: auto !important;
     flex: initial !important;
+}
+
+.doxie-command-bar .mud-input-control-input-container {
+    align-items: stretch;
+    display: flex;
+    height: 100%;
+}
+
+.doxie-command-bar .mud-input,
+.doxie-command-bar .mud-input-root,
+.doxie-command-bar .mud-input-slot {
+    min-height: 38px;
+}
+
+.doxie-command-bar .mud-input-root,
+.doxie-command-bar .mud-input-slot {
+    align-items: center;
+    display: flex;
+}
+
+.doxie-command-bar .mud-icon-button {
+    align-self: center;
+    height: 38px;
+    width: 38px;
 }
 
 .doxie-list-panels {

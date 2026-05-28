@@ -21,6 +21,9 @@ public sealed class WorkflowManifest
     [JsonPropertyName("description")]
     public string? Description { get; set; }
 
+    [JsonPropertyName("category")]
+    public string? Category { get; set; }
+
     [JsonPropertyName("trigger")]
     public WorkflowManifestTrigger? Trigger { get; set; }
 

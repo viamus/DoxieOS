@@ -77,6 +77,42 @@ internal static class DoxieMaintenanceEndpoints
             }
         }).DisableAntiforgery();
 
+        app.MapPost("/api/run-files/open", (RunFileOpenRequest payload, RunFileBrowser browser) =>
+        {
+            if (payload is null) return Results.BadRequest("payload is required");
+            if (string.IsNullOrWhiteSpace(payload.Identifier)) return Results.BadRequest("identifier is required");
+
+            string resolved;
+            try
+            {
+                resolved = payload.RootKind switch
+                {
+                    "workflow-run" => browser.ResolveWorkflowRunPath(payload.Identifier, payload.RelativePath ?? string.Empty),
+                    "sandbox" => browser.ResolveSandboxPath(payload.Identifier, payload.RelativePath ?? string.Empty),
+                    _ => throw new ArgumentException("rootKind must be 'workflow-run' or 'sandbox'."),
+                };
+            }
+            catch (Exception ex) when (ex is ArgumentException or DirectoryNotFoundException or UnauthorizedAccessException)
+            {
+                return Results.BadRequest(ex.Message);
+            }
+
+            if (!Directory.Exists(resolved) && !File.Exists(resolved))
+            {
+                return Results.NotFound($"Path does not exist: {resolved}");
+            }
+
+            try
+            {
+                OpenLocalPath(resolved);
+                return Results.Ok(new { path = resolved });
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem($"Could not open path: {ex.Message}", statusCode: 500);
+            }
+        }).DisableAntiforgery();
+
         app.MapPost("/api/doxie/migrate-legacy", (LegacySkillsMigrator migrator, DoxieRegenerator regenerator) =>
         {
             try
@@ -130,5 +166,37 @@ internal static class DoxieMaintenanceEndpoints
         // (no root folder) is also accepted and uses the zip's filename minus
 
         return app;
+    }
+
+    private static void OpenLocalPath(string resolved)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (Directory.Exists(resolved))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{resolved}\"",
+                    UseShellExecute = true,
+                });
+                return;
+            }
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = resolved,
+                UseShellExecute = true,
+            });
+            return;
+        }
+
+        var opener = OperatingSystem.IsMacOS() ? "open" : "xdg-open";
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = opener,
+            Arguments = $"\"{resolved}\"",
+            UseShellExecute = true,
+        });
     }
 }

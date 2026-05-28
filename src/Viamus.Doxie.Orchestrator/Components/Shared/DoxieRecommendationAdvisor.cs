@@ -72,6 +72,7 @@ public static class DoxieRecommendationAdvisor
 
         score += ScoreField(workflow.Name, terms, 7, hits, "name");
         score += ScoreField(workflow.Id, terms, 6, hits, "id");
+        score += ScoreField(workflow.DisplayCategory, terms, 4, hits, "category");
         score += ScoreField(workflow.Description, terms, 3, hits, "description");
         score += ScoreField(workflow.Trigger.Kind.ToString(), terms, 2, hits, "trigger");
         foreach (var node in workflow.Nodes)

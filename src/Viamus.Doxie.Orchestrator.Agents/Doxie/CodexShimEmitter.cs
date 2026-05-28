@@ -189,6 +189,7 @@ public sealed class CodexShimEmitter : IShimEmitter
         {
             sb.Append(FlattenSingleLine(w.Description)).Append("\n\n");
         }
+        sb.Append("**Category:** ").Append(w.DisplayCategory).Append("\n\n");
         sb.Append("**Trigger:** ").Append(w.TriggerKind);
         if (string.Equals(w.TriggerKind, "cron", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(w.CronExpression))
         {
