@@ -415,11 +415,14 @@ body {
 }
 
 .doxie-command-bar {
+    --doxie-command-control-height: 36px;
+    column-gap: 0 !important;
     display: grid !important;
-    grid-template-columns: minmax(320px, 1fr) minmax(240px, 320px) 42px;
-    align-items: stretch;
-    gap: 10px;
-    padding: 12px;
+    grid-template-columns: minmax(280px, 1fr) minmax(220px, 0.32fr) var(--doxie-command-control-height);
+    align-items: center;
+    gap: 0 !important;
+    padding: 8px;
+    row-gap: 0 !important;
 }
 
 .doxie-command-bar.d-flex {
@@ -427,10 +430,14 @@ body {
 }
 
 .doxie-command-bar .mud-input-control {
-    align-self: stretch;
+    align-self: center;
     display: flex;
-    margin-top: 0;
-    margin-bottom: 0;
+    height: var(--doxie-command-control-height) !important;
+    margin-bottom: 0 !important;
+    margin-top: 0 !important;
+    min-height: var(--doxie-command-control-height) !important;
+    min-width: 0;
+    width: 100%;
 }
 
 .doxie-command-bar > * {
@@ -438,32 +445,78 @@ body {
 }
 
 .doxie-command-bar > .mud-input-control {
-    height: auto !important;
+    height: var(--doxie-command-control-height) !important;
     flex: initial !important;
 }
 
-.doxie-command-bar .mud-input-control-input-container {
-    align-items: stretch;
-    display: flex;
-    height: 100%;
+.doxie-command-bar > .mud-select,
+.doxie-command-bar > .mud-tooltip-root {
+    align-self: center;
+    height: var(--doxie-command-control-height) !important;
+    min-height: var(--doxie-command-control-height) !important;
+    min-width: 0;
+    width: 100%;
 }
 
-.doxie-command-bar .mud-input,
-.doxie-command-bar .mud-input-root,
-.doxie-command-bar .mud-input-slot {
-    min-height: 38px;
+.doxie-command-bar .mud-input-control-input-container {
+    align-items: center;
+    display: flex;
+    height: var(--doxie-command-control-height) !important;
+    width: 100%;
+}
+
+.doxie-command-bar .mud-input {
+    align-items: center;
+    display: flex;
+    height: var(--doxie-command-control-height) !important;
+    min-height: var(--doxie-command-control-height) !important;
+    width: 100%;
 }
 
 .doxie-command-bar .mud-input-root,
 .doxie-command-bar .mud-input-slot {
     align-items: center;
     display: flex;
+    height: 100%;
+    min-height: var(--doxie-command-control-height);
+}
+
+.doxie-command-bar input.mud-input-root {
+    line-height: var(--doxie-command-control-height);
+    padding-bottom: 0 !important;
+    padding-top: 0 !important;
 }
 
 .doxie-command-bar .mud-icon-button {
     align-self: center;
-    height: 38px;
-    width: 38px;
+    border-bottom-left-radius: 0;
+    border-top-left-radius: 0;
+    height: var(--doxie-command-control-height);
+    margin-left: -1px;
+    width: var(--doxie-command-control-height);
+}
+
+.doxie-command-bar > .mud-input-control:first-child .mud-input-outlined {
+    border-bottom-right-radius: 0;
+    border-top-right-radius: 0;
+}
+
+.doxie-command-bar > .mud-select {
+    margin-left: -1px;
+}
+
+.doxie-command-bar > .mud-select .mud-input-outlined {
+    border-radius: 0;
+}
+
+.doxie-command-bar > .mud-select .mud-input-root,
+.doxie-command-bar > .mud-select .mud-select-input {
+    align-items: center;
+    display: flex;
+}
+
+.doxie-command-bar > .mud-select .mud-input-slot {
+    line-height: var(--doxie-command-control-height);
 }
 
 .doxie-list-panels {
