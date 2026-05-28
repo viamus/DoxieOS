@@ -188,6 +188,11 @@ public sealed class WorkflowManifestPromoter
         else if (!KebabCase.IsMatch(m.Id!)) errors.Add($"id '{m.Id}' must be kebab-case");
 
         if (string.IsNullOrWhiteSpace(m.Name)) errors.Add("name is required");
+        if (!string.IsNullOrWhiteSpace(m.Category)
+            && !AgentCategoryPalette.CustomLabelPattern.IsMatch(m.Category.Trim()))
+        {
+            errors.Add($"category '{m.Category}' is invalid - use 1-32 letters, digits, spaces, or hyphens, starting with a letter");
+        }
 
         // Trigger
         if (m.Trigger is null)
@@ -377,7 +382,15 @@ public sealed class WorkflowManifestPromoter
             Env: m.Env is { Count: > 0 } ? new Dictionary<string, string>(m.Env, StringComparer.OrdinalIgnoreCase) : null,
             Enabled: m.Enabled,
             IsPrivate: false,
-            CatalogId: string.IsNullOrWhiteSpace(catalogId) ? "default" : catalogId.Trim()).WithCreateTimeEnabledPolicy();
+            CatalogId: string.IsNullOrWhiteSpace(catalogId) ? "default" : catalogId.Trim(),
+            Category: NormaliseWorkflowCategory(m.Category)).WithCreateTimeEnabledPolicy();
+    }
+
+    private static string NormaliseWorkflowCategory(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "Other";
+        var trimmed = raw.Trim();
+        return AgentCategoryPalette.CustomLabelPattern.IsMatch(trimmed) ? trimmed : "Other";
     }
 }
 

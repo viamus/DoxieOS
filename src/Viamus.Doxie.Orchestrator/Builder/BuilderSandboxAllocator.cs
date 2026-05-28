@@ -197,6 +197,7 @@ public sealed class BuilderSandboxAllocator
         Id = w.Id,
         Name = w.Name,
         Description = w.Description,
+        Category = w.DisplayCategory,
         WorkspaceId = w.WorkspaceId,
         Enabled = w.Enabled,
         Trigger = new WorkflowManifestTrigger

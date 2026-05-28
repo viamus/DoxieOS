@@ -75,6 +75,7 @@ public sealed class DoxieWorkflowReader
             var id = GetString(root, "id") ?? Path.GetFileName(dir);
             var name = GetString(root, "name") ?? id;
             var description = GetString(root, "description") ?? string.Empty;
+            var category = GetString(root, "category") ?? "Other";
             var enabled = !root.TryGetProperty("enabled", out var en) || en.ValueKind != JsonValueKind.False;
 
             string triggerKind = "manual";
@@ -95,7 +96,8 @@ public sealed class DoxieWorkflowReader
                 IsPrivate: false,
                 CatalogId: catalog.Id,
                 CatalogName: catalog.Name,
-                CatalogRoot: catalog.RootPath);
+                CatalogRoot: catalog.RootPath,
+                Category: category);
         }
         catch (JsonException)
         {

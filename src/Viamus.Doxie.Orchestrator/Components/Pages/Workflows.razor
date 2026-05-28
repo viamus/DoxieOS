@@ -109,6 +109,28 @@
     </MudTooltip>
 </MudStack>
 
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-4 flex-wrap">
+    <MudIcon Icon="@Icons.Material.Filled.FilterList" Color="Color.Default" Size="Size.Small" />
+    <MudText Typo="Typo.caption" Color="Color.Default" Class="mr-2">@Lang["Workflows.Filter"]</MudText>
+    @foreach (var category in _allCategories)
+    {
+        var active = _selectedCategories.Contains(category);
+        var count = _countByCategory.GetValueOrDefault(category);
+        <MudChip T="string"
+                 Size="Size.Small"
+                 Variant="@(active ? Variant.Filled : Variant.Outlined)"
+                 Color="@(active ? Color.Primary : Color.Default)"
+                 Icon="@CategoryIcon(category)"
+                 OnClick="@(() => ToggleCategory(category))">
+            @category <MudText Typo="Typo.caption" Inline="true">&nbsp;(@count)</MudText>
+        </MudChip>
+    }
+    @if (_hiddenCount > 0)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Default" Class="ml-2">@_hiddenCount @Lang["Workflows.Hidden"]</MudText>
+    }
+</MudStack>
+
 @if (_workflowRecommendations.Count > 0)
 {
     <MudPaper Class="pa-3 mb-3 doxie-callout" Elevation="0">
@@ -171,8 +193,9 @@ else
               Style="table-layout: fixed; width: 100%;"
               T="WorkflowDefinition">
         <HeaderContent>
-            <MudTh Style="width: 22%;">@Lang["Common.Name"]</MudTh>
+            <MudTh Style="width: 20%;">@Lang["Common.Name"]</MudTh>
             <MudTh>@Lang["Common.Description"]</MudTh>
+            <MudTh Style="width: 140px;">@Lang["Workflows.Category"]</MudTh>
             <MudTh Style="width: 120px;">@Lang["Workflows.Trigger"]</MudTh>
             <MudTh Style="width: 70px;">@Lang["Workflows.Nodes"]</MudTh>
             <MudTh Style="width: 170px;">@Lang["Workflows.LastRun"]</MudTh>
@@ -200,6 +223,13 @@ else
                 <MudText Typo="Typo.body2"
                          title="@context.Description"
                          Style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4;">@context.Description</MudText>
+            </MudTd>
+            <MudTd DataLabel="Category">
+                <MudChip T="string"
+                         Size="Size.Small"
+                         Variant="Variant.Outlined"
+                         Color="Color.Default"
+                         Icon="@CategoryIcon(context.DisplayCategory)">@context.DisplayCategory</MudChip>
             </MudTd>
             <MudTd DataLabel="Trigger">
                 <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
@@ -282,6 +312,9 @@ else
 </div>
 
 @code {
+    [SupplyParameterFromQuery(Name = "categories")]
+    public string? CategoriesQuery { get; set; }
+
     private List<BreadcrumbItem> Breadcrumbs =>
     [
         new BreadcrumbItem(Lang["Common.Home"], href: "/"),
@@ -289,10 +322,26 @@ else
     ];
     private const string AllCatalogs = "__all";
 
+    private static readonly string[] BuiltInCategoryOrder =
+    [
+        "Product",
+        "Delivery",
+        "Developer",
+        "Quality",
+        "Operations",
+        "Architecture",
+        "Modernization",
+        "Other",
+    ];
+
     private IReadOnlyList<WorkflowDefinition> _workflows = Array.Empty<WorkflowDefinition>();
     private IReadOnlyList<WorkflowDefinition> _filteredWorkflows = Array.Empty<WorkflowDefinition>();
     private IReadOnlyList<WorkflowRecommendation> _workflowRecommendations = Array.Empty<WorkflowRecommendation>();
     private IReadOnlyList<DoxieCatalogRoot> _catalogs = Array.Empty<DoxieCatalogRoot>();
+    private Dictionary<string, int> _countByCategory = new(StringComparer.OrdinalIgnoreCase);
+    private List<string> _allCategories = new();
+    private HashSet<string> _selectedCategories = new(StringComparer.OrdinalIgnoreCase);
+    private int _hiddenCount;
     private string _searchText = string.Empty;
     private string _selectedCatalogId = AllCatalogs;
     private string _importCatalogId = DoxieCatalogStore.DefaultCatalogId;
@@ -301,8 +350,19 @@ else
     protected override void OnInitialized()
     {
         _catalogs = CatalogStore.ListCatalogs();
+        _selectedCategories = ParseSelectedFromQuery() ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Reload();
         WorkflowRunner.RunUpdated += OnRunUpdated;
+    }
+
+    protected override void OnParametersSet()
+    {
+        var fromUrl = ParseSelectedFromQuery();
+        if (fromUrl is not null && !fromUrl.SetEquals(_selectedCategories))
+        {
+            _selectedCategories = fromUrl;
+            ApplySearch();
+        }
     }
 
     public void Dispose()
@@ -319,7 +379,26 @@ else
     {
         _catalogs = CatalogStore.ListCatalogs();
         _workflows = WorkflowStore.ListAll();
+        RebuildCategoryIndex();
+        _selectedCategories.IntersectWith(_allCategories);
+        if (_selectedCategories.Count == 0)
+        {
+            _selectedCategories = _allCategories.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
         ApplySearch();
+    }
+
+    private void RebuildCategoryIndex()
+    {
+        _countByCategory = _workflows
+            .GroupBy(w => w.DisplayCategory, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+        var builtInsPresent = BuiltInCategoryOrder.Where(_countByCategory.ContainsKey);
+        var customPresent = _countByCategory.Keys
+            .Where(c => !BuiltInCategoryOrder.Contains(c, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase);
+        _allCategories = builtInsPresent.Concat(customPresent).ToList();
     }
 
     private void OnCatalogChanged(string value)
@@ -332,24 +411,35 @@ else
     private void ApplySearch()
     {
         var needle = _searchText?.Trim() ?? string.Empty;
+        bool MatchesSearch(WorkflowDefinition w) =>
+            needle.Length == 0
+            || w.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || w.Id.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || w.CatalogId.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || CatalogName(w.CatalogId).Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || w.DisplayCategory.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || w.Description.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || w.Nodes.Any(n =>
+                (n.Label?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (n.AgentId?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (n.AgentMode?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false));
+
         _filteredWorkflows = _workflows
             .Where(MatchesCatalog)
-            .Where(w => needle.Length == 0
-                || w.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
-                || w.Id.Contains(needle, StringComparison.OrdinalIgnoreCase)
-                || w.CatalogId.Contains(needle, StringComparison.OrdinalIgnoreCase)
-                || CatalogName(w.CatalogId).Contains(needle, StringComparison.OrdinalIgnoreCase)
-                || w.Description.Contains(needle, StringComparison.OrdinalIgnoreCase)
-                || w.Nodes.Any(n =>
-                    (n.Label?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
-                    || (n.AgentId?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
-                    || (n.AgentMode?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)))
+            .Where(MatchesCategory)
+            .Where(MatchesSearch)
             .ToList();
+
+        _hiddenCount = _workflows.Count(w =>
+            !MatchesCatalog(w) || !MatchesCategory(w) || !MatchesSearch(w));
     }
 
     private bool MatchesCatalog(WorkflowDefinition workflow) =>
         string.Equals(_selectedCatalogId, AllCatalogs, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(workflow.CatalogId, _selectedCatalogId, StringComparison.OrdinalIgnoreCase);
+
+    private bool MatchesCategory(WorkflowDefinition workflow) =>
+        _selectedCategories.Contains(workflow.DisplayCategory);
 
     private string CatalogName(string catalogId) =>
         _catalogs.FirstOrDefault(c => string.Equals(c.Id, catalogId, StringComparison.OrdinalIgnoreCase))?.Name
@@ -359,12 +449,47 @@ else
     {
         _workflowRecommendations = DoxieRecommendationAdvisor.RecommendWorkflows(
             _searchText,
-            _workflows.Where(MatchesCatalog),
+            _workflows.Where(MatchesCatalog).Where(MatchesCategory),
             take: 8);
         if (_workflowRecommendations.Count == 0)
         {
             Snackbar.Add("No strong workflow matches for this context yet.", Severity.Info);
         }
+    }
+
+    private void ToggleCategory(string category)
+    {
+        if (!_selectedCategories.Add(category)) _selectedCategories.Remove(category);
+        ApplySearch();
+
+        var ordered = _selectedCategories
+            .OrderBy(CategorySortKey)
+            .ThenBy(c => c, StringComparer.OrdinalIgnoreCase);
+        var qs = string.Join(",", ordered.Select(Uri.EscapeDataString));
+        var current = Nav.ToAbsoluteUri(Nav.Uri);
+        var baseUri = current.GetLeftPart(UriPartial.Path);
+        Nav.NavigateTo($"{baseUri}?categories={qs}", forceLoad: false, replace: true);
+    }
+
+    private static int CategorySortKey(string category)
+    {
+        for (var i = 0; i < BuiltInCategoryOrder.Length; i++)
+        {
+            if (string.Equals(BuiltInCategoryOrder[i], category, StringComparison.OrdinalIgnoreCase)) return i;
+        }
+        return BuiltInCategoryOrder.Length;
+    }
+
+    private HashSet<string>? ParseSelectedFromQuery()
+    {
+        if (string.IsNullOrWhiteSpace(CategoriesQuery)) return null;
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in CategoriesQuery.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var decoded = Uri.UnescapeDataString(raw.Trim());
+            if (!string.IsNullOrWhiteSpace(decoded)) selected.Add(decoded);
+        }
+        return selected;
     }
 
     private void OnRowClick(TableRowClickEventArgs<WorkflowDefinition> args)
@@ -538,6 +663,18 @@ else
         WorkflowTriggerKind.Event => Icons.Material.Filled.Bolt,
         WorkflowTriggerKind.Webhook => Icons.Material.Filled.Webhook,
         _ => Icons.Material.Filled.PlayArrow,
+    };
+
+    private static string CategoryIcon(string category) => category switch
+    {
+        var c when string.Equals(c, "Product", StringComparison.OrdinalIgnoreCase) => Icons.Material.Filled.Lightbulb,
+        var c when string.Equals(c, "Delivery", StringComparison.OrdinalIgnoreCase) => Icons.Material.Filled.RocketLaunch,
+        var c when string.Equals(c, "Developer", StringComparison.OrdinalIgnoreCase) => Icons.Material.Filled.Code,
+        var c when string.Equals(c, "Quality", StringComparison.OrdinalIgnoreCase) => Icons.Material.Filled.Rule,
+        var c when string.Equals(c, "Operations", StringComparison.OrdinalIgnoreCase) => Icons.Material.Filled.SettingsSuggest,
+        var c when string.Equals(c, "Architecture", StringComparison.OrdinalIgnoreCase) => Icons.Material.Filled.AccountTree,
+        var c when string.Equals(c, "Modernization", StringComparison.OrdinalIgnoreCase) => Icons.Material.Filled.AutoFixHigh,
+        _ => Icons.Material.Filled.BookmarkBorder,
     };
 
     private static Color TriggerColor(WorkflowTriggerKind kind) => kind switch

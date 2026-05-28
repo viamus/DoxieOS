@@ -43,8 +43,21 @@ public partial class WorkflowForm
     private string _id = string.Empty;
     private string _name = string.Empty;
     private string _description = string.Empty;
+    private string _category = "Other";
     private string _workflowWorkspaceId = string.Empty;
     private string _selectedCatalogId = DoxieCatalogStore.DefaultCatalogId;
+
+    private static readonly string[] WorkflowCategoryOptions =
+    [
+        "Product",
+        "Delivery",
+        "Developer",
+        "Quality",
+        "Operations",
+        "Architecture",
+        "Modernization",
+        "Other",
+    ];
 
     private WorkflowTriggerKind _triggerKind = WorkflowTriggerKind.Manual;
     private string _triggerCron = "0 8 * * *";
@@ -87,6 +100,7 @@ public partial class WorkflowForm
         _id = wf.Id;
         _name = wf.Name;
         _description = wf.Description;
+        _category = wf.DisplayCategory;
         _workflowWorkspaceId = wf.WorkspaceId ?? string.Empty;
         _selectedCatalogId = wf.CatalogId;
 
@@ -351,7 +365,8 @@ public partial class WorkflowForm
             WorkspaceId: string.IsNullOrEmpty(_workflowWorkspaceId) ? null : _workflowWorkspaceId,
             Env: env.Count == 0 ? null : env,
             IsPrivate: false,
-            CatalogId: _selectedCatalogId);
+            CatalogId: _selectedCatalogId,
+            Category: string.IsNullOrWhiteSpace(_category) ? "Other" : _category.Trim());
 
         _saving = true;
         try
@@ -367,6 +382,11 @@ public partial class WorkflowForm
     private void SetSelectedCatalog(string? value)
     {
         _selectedCatalogId = string.IsNullOrWhiteSpace(value) ? DoxieCatalogStore.DefaultCatalogId : value;
+    }
+
+    private void SetWorkflowCategory(string? value)
+    {
+        _category = string.IsNullOrWhiteSpace(value) ? "Other" : value.Trim();
     }
 
     private sealed record NodeDragState(

@@ -45,6 +45,16 @@ public sealed class FilesystemWorkflowStoreCatalogTests : IDisposable
         store.ListAll().Should().ContainSingle(w => w.Id == "movable-flow" && w.CatalogId == "shared-team" && !w.IsPrivate);
     }
 
+    [Fact]
+    public void Save_round_trips_workflow_category()
+    {
+        var store = CreateStore();
+
+        store.Save(MakeWorkflow("delivery-flow") with { Category = "Delivery" });
+
+        store.GetById("delivery-flow")!.DisplayCategory.Should().Be("Delivery");
+    }
+
     private FilesystemWorkflowStore CreateStore() =>
         new(
             Path.Combine(_root, ".doxie", "workflows"),

@@ -678,6 +678,27 @@ window.doxieOs.openFolder = async function (path) {
     }
 };
 
+window.doxieOs.openRunFile = async function (rootKind, identifier, relativePath) {
+    try {
+        const resp = await fetch('/api/run-files/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                rootKind: rootKind || '',
+                identifier: identifier || '',
+                relativePath: relativePath || '',
+            }),
+        });
+        let message = null;
+        if (!resp.ok) {
+            try { message = await resp.text(); } catch (_) { message = resp.statusText; }
+        }
+        return { ok: resp.ok, status: resp.status, message };
+    } catch (err) {
+        return { ok: false, status: 0, message: String(err) };
+    }
+};
+
 // PATCH the agent's category. Server enforces sealed-category rules
 // (Doxie and Connector cannot be moved into or out of via the UI).
 window.doxieOs.updateAgentCategory = async function (agentId, category, icon) {

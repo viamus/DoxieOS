@@ -20,4 +20,9 @@ public sealed record DoxieWorkflowCanon(
     bool IsPrivate = false,
     string CatalogId = DoxieCatalogStore.DefaultCatalogId,
     string CatalogName = "Default catalog",
-    string CatalogRoot = "");
+    string CatalogRoot = "",
+    string Category = "Other")
+{
+    public string DisplayCategory =>
+        string.IsNullOrWhiteSpace(Category) ? "Other" : Category.Trim();
+}

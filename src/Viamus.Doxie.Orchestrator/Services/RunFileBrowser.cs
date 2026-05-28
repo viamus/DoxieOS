@@ -65,6 +65,12 @@ public sealed class RunFileBrowser
         return ReadInternal(sandboxRoot, relativePath);
     }
 
+    public string ResolveSandboxPath(string tag, string relativePath)
+    {
+        var sandboxRoot = ResolveSandboxRoot(tag);
+        return ResolveRelativePath(sandboxRoot, relativePath);
+    }
+
     // --- Workflow runs -------------------------------------------------
 
     public DirectoryListing ListWorkflowRun(string runId, string relativePath)
@@ -77,6 +83,12 @@ public sealed class RunFileBrowser
     {
         var runRoot = ResolveWorkflowRunRoot(runId);
         return ReadInternal(runRoot, relativePath);
+    }
+
+    public string ResolveWorkflowRunPath(string runId, string relativePath)
+    {
+        var runRoot = ResolveWorkflowRunRoot(runId);
+        return ResolveRelativePath(runRoot, relativePath);
     }
 
     // --- Internals -----------------------------------------------------

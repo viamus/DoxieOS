@@ -1,5 +1,7 @@
 @using Viamus.Doxie.Orchestrator.Services
 @inject RunFileBrowser Browser
+@inject IJSRuntime Js
+@inject ISnackbar Snackbar
 
 @*
     Read-only explorer for run artefacts on disk. Two modes:
@@ -34,6 +36,13 @@
             <MudText Typo="Typo.body2" Style="font-family: 'Cascadia Code', Consolas, monospace;">
                 @Identifier@(string.IsNullOrEmpty(_currentRelativePath) || _currentRelativePath == "." ? "" : "/" + _currentRelativePath)
             </MudText>
+            <MudSpacer />
+            <MudTooltip Text="Open current folder outside DoxieOS">
+                <MudIconButton Icon="@Icons.Material.Filled.FolderOpen"
+                               Size="Size.Small"
+                               Color="Color.Primary"
+                               OnClick="OpenCurrentFolder" />
+            </MudTooltip>
         </MudStack>
 
         <MudGrid Spacing="2">
@@ -83,7 +92,15 @@
                     else if (_selectedFile.Text is null)
                     {
                         <MudStack Spacing="1">
-                            <MudText Typo="Typo.h6">@_selectedFile.Name</MudText>
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudText Typo="Typo.h6">@_selectedFile.Name</MudText>
+                                <MudTooltip Text="Open file outside DoxieOS">
+                                    <MudIconButton Icon="@Icons.Material.Filled.OpenInNew"
+                                                   Size="Size.Small"
+                                                   Color="Color.Primary"
+                                                   OnClick="OpenSelectedFile" />
+                                </MudTooltip>
+                            </MudStack>
                             <MudText Typo="Typo.caption" Color="Color.Default">
                                 @_selectedFile.ContentType · @FormatBytes(_selectedFile.Size)
                             </MudText>
@@ -97,6 +114,12 @@
                         <MudStack Spacing="1">
                             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
                                 <MudText Typo="Typo.h6">@_selectedFile.Name</MudText>
+                                <MudTooltip Text="Open file outside DoxieOS">
+                                    <MudIconButton Icon="@Icons.Material.Filled.OpenInNew"
+                                                   Size="Size.Small"
+                                                   Color="Color.Primary"
+                                                   OnClick="OpenSelectedFile" />
+                                </MudTooltip>
                                 <MudSpacer />
                                 <MudText Typo="Typo.caption" Color="Color.Default">
                                     @_selectedFile.ContentType · @FormatBytes(_selectedFile.Size)
@@ -192,6 +215,37 @@
         }
     }
 
+    private Task OpenCurrentFolder() => OpenPath(_currentRelativePath);
+
+    private Task OpenSelectedFile() =>
+        _selectedFile is null ? Task.CompletedTask : OpenPath(_selectedFile.RelativePath);
+
+    private async Task OpenPath(string? relativePath)
+    {
+        try
+        {
+            var result = await Js.InvokeAsync<OpenResult?>(
+                "doxieOs.openRunFile",
+                RootKind,
+                Identifier,
+                relativePath ?? string.Empty);
+            if (result is { Ok: true })
+            {
+                Snackbar.Add("Opened outside DoxieOS.", Severity.Success);
+                return;
+            }
+
+            var detail = result is null
+                ? "no response"
+                : string.IsNullOrWhiteSpace(result.Message) ? $"HTTP {result.Status}" : result.Message;
+            Snackbar.Add($"Could not open: {detail}", Severity.Error);
+        }
+        catch (JSException ex)
+        {
+            Snackbar.Add($"Could not open: {ex.Message}", Severity.Error);
+        }
+    }
+
     private static string FormatBytes(long bytes)
     {
         if (bytes < 1024) return $"{bytes} B";
@@ -199,4 +253,6 @@
         if (bytes < 1024L * 1024 * 1024) return $"{bytes / (1024.0 * 1024):0.##} MB";
         return $"{bytes / (1024.0 * 1024 * 1024):0.##} GB";
     }
+
+    private sealed record OpenResult(bool Ok, int Status, string? Message);
 }

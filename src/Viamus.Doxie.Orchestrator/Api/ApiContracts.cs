@@ -53,6 +53,7 @@ internal sealed record WorkspaceAgentsRequest(List<string>? Agents);
 internal sealed record ConsoleCreateRequest(string WorkspaceId);
 internal sealed record ProviderConsoleCreateRequest(string ProviderId);
 internal sealed record WorkflowEnabledRequest(bool Enabled);
+internal sealed record RunFileOpenRequest(string RootKind, string Identifier, string? RelativePath);
 internal sealed record AgentCategoryUpdate(string Category, string? Icon);
 internal sealed record AgentDraftIconUpdate(string? Icon);
 internal sealed record SaveAgentBody(bool Overwrite, string? CatalogId);

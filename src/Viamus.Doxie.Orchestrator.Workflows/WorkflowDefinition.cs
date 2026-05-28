@@ -35,8 +35,18 @@ public sealed record WorkflowDefinition(
     /// </summary>
     bool Enabled = true,
     bool IsPrivate = false,
-    string CatalogId = "default")
+    string CatalogId = "default",
+    string Category = "Other")
 {
+    /// <summary>
+    /// Human-facing category used to group and filter workflows in the
+    /// catalog UI. Older workflow.json files do not carry this field, so
+    /// the constructor default and this display helper keep them under
+    /// Other until the catalog author assigns a sharper bucket.
+    /// </summary>
+    public string DisplayCategory =>
+        string.IsNullOrWhiteSpace(Category) ? "Other" : Category.Trim();
+
     /// <summary>
     /// Returns a copy with the create-time enabled policy applied:
     /// cron-triggered workflows nascem desabilitados (the workspace's
