@@ -322,7 +322,7 @@
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not open artifact folder: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not open artifact folder: {ex.Message}", Severity.Error);
         }
     }
 

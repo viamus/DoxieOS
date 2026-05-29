@@ -1,4 +1,4 @@
-ï»¿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using MudBlazor;
@@ -28,13 +28,13 @@ public partial class WorkflowForm
     /// </summary>
     [Parameter] public EventCallback<WorkflowDefinition> OnSave { get; set; }
 
-    /// <summary>Header icon â€” defaults to a Create-ish AddCircle.</summary>
+    /// <summary>Header icon — defaults to a Create-ish AddCircle.</summary>
     [Parameter] public string HeaderIcon { get; set; } = Icons.Material.Filled.AddCircle;
 
     /// <summary>Header text shown next to the icon.</summary>
     [Parameter] public string HeaderText { get; set; } = "New workflow";
 
-    /// <summary>Save button label â€” varies between Create and Update.</summary>
+    /// <summary>Save button label — varies between Create and Update.</summary>
     [Parameter] public string SaveLabel { get; set; } = "Save workflow";
 
     /// <summary>Where the Cancel button navigates to.</summary>
@@ -190,7 +190,7 @@ public partial class WorkflowForm
     private void AddTriggerInput()
     {
         // Pre-fill the id with a sensible counter so multi-add works
-        // before the user types â€” matches the AddStep ergonomics.
+        // before the user types — matches the AddStep ergonomics.
         var counter = _triggerInputs.Count + 1;
         _triggerInputs.Add(new TriggerInputDraft { Id = $"input-{counter}" });
     }
@@ -314,17 +314,17 @@ public partial class WorkflowForm
         var rawId = (_id ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(rawId) || !System.Text.RegularExpressions.Regex.IsMatch(rawId, "^[a-z0-9]+(-[a-z0-9]+)*$"))
         {
-            Snackbar.Add("Id is required and must be kebab-case (lowercase letters, digits, hyphens).", Severity.Error);
+            Snackbar.AddDoxieToast("Id is required and must be kebab-case (lowercase letters, digits, hyphens).", Severity.Error);
             return;
         }
         if (_steps.Count == 0)
         {
-            Snackbar.Add("Add at least one step before saving.", Severity.Error);
+            Snackbar.AddDoxieToast("Add at least one step before saving.", Severity.Error);
             return;
         }
         if (_steps.Any(s => string.IsNullOrEmpty(s.AgentId)))
         {
-            Snackbar.Add("Every step needs an agent picked.", Severity.Error);
+            Snackbar.AddDoxieToast("Every step needs an agent picked.", Severity.Error);
             return;
         }
 
@@ -340,7 +340,7 @@ public partial class WorkflowForm
         }).ToList();
         if (missingWs.Count > 0)
         {
-            Snackbar.Add($"{missingWs.Count} step(s) need a workspace bound (their mode requires it).", Severity.Error);
+            Snackbar.AddDoxieToast($"{missingWs.Count} step(s) need a workspace bound (their mode requires it).", Severity.Error);
             return;
         }
 
@@ -349,7 +349,7 @@ public partial class WorkflowForm
             .ToDictionary(v => v.Key.Trim(), v => v.Value ?? string.Empty, StringComparer.OrdinalIgnoreCase);
 
         var (nodes, edges) = BuildPreview();
-        // Preserve CreatedAt across edits â€” only the create path stamps a
+        // Preserve CreatedAt across edits — only the create path stamps a
         // brand-new value. Server-side handlers re-stamp UpdatedAt on
         // every save anyway, so the client value here is informational.
         var createdAt = Existing?.CreatedAt ?? DateTime.UtcNow;

@@ -120,7 +120,7 @@
             if (!ok)
             {
                 _supported = false;
-                Snackbar.Add("Voice recognition couldn't start — your browser may not support the Web Speech API.", Severity.Warning);
+                Snackbar.AddDoxieToast("Voice recognition couldn't start — your browser may not support the Web Speech API.", Severity.Warning);
                 return;
             }
             await SetListeningAsync(true);
@@ -128,7 +128,7 @@
         }
         catch (Microsoft.JSInterop.JSException ex)
         {
-            Snackbar.Add($"Could not start voice input: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not start voice input: {ex.Message}", Severity.Error);
         }
     }
 
@@ -201,7 +201,7 @@
         if (!string.Equals(error, "no-speech", StringComparison.Ordinal)
             && !string.Equals(error, "aborted", StringComparison.Ordinal))
         {
-            Snackbar.Add($"Voice error: {FriendlyError(error)}", Severity.Warning);
+            Snackbar.AddDoxieToast($"Voice error: {FriendlyError(error)}", Severity.Warning);
         }
         await InvokeAsync(StateHasChanged);
     }

@@ -301,7 +301,7 @@
         }
         catch (Microsoft.JSInterop.JSException ex)
         {
-            Snackbar.Add($"Could not attach terminal: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not attach terminal: {ex.Message}", Severity.Error);
         }
     }
 
@@ -345,7 +345,7 @@
 
             if (result.Ok)
             {
-                Snackbar.Add($"Started console for \"{result.Label ?? _createWorkspaceId}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Started console for \"{result.Label ?? _createWorkspaceId}\"", Severity.Success);
                 _showCreateDialog = false;
                 Reload();
                 _active = _sessions.FirstOrDefault(s => s.Id == result.Id) ?? _sessions.FirstOrDefault();

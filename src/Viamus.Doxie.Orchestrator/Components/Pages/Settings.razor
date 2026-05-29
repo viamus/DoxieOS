@@ -293,7 +293,7 @@
     {
         _selectedLanguage = language;
         Lang.SetLanguage(language);
-        Snackbar.Add(Lang["Settings.LanguageSaved"], Severity.Success);
+        Snackbar.AddDoxieToast(Lang["Settings.LanguageSaved"], Severity.Success);
         return InvokeAsync(StateHasChanged);
     }
 
@@ -337,12 +337,12 @@
         {
             Resolver.SetDefault(providerId);
             ReloadRows();
-            Snackbar.Add($"Default agent CLI is now {providerId}.", Severity.Success);
+            Snackbar.AddDoxieToast($"Default agent CLI is now {providerId}.", Severity.Success);
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Could not change default: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not change default: {ex.Message}", Severity.Error);
         }
     }
 
@@ -371,7 +371,7 @@
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Could not open auth console: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not open auth console: {ex.Message}", Severity.Error);
         }
     }
 
@@ -424,7 +424,7 @@
         Regenerator.Regenerate();
         AgentCatalog.Refresh();
         ReloadCatalogs();
-        Snackbar.Add(message, Severity.Success);
+        Snackbar.AddDoxieToast(message, Severity.Success);
         return InvokeAsync(StateHasChanged);
     }
 
@@ -476,14 +476,14 @@
     {
         var saved = ProviderEnvironment.SaveMcpServers(_mcpRows.Select(r => r.ToDefinition()));
         _mcpRows = saved.Select(McpRow.FromDefinition).ToList();
-        Snackbar.Add(message, Severity.Success);
+        Snackbar.AddDoxieToast(message, Severity.Success);
     }
 
     private Task ImportMcpServers()
     {
         var imported = ProviderEnvironment.ImportGlobalMcpServers();
         ReloadMcpServers();
-        Snackbar.Add(
+        Snackbar.AddDoxieToast(
             imported == 0
                 ? "Provider MCP configs are already in sync."
                 : $"Imported {imported} MCP server(s) from provider configs.",

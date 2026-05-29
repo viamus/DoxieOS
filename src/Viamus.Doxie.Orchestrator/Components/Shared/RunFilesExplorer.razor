@@ -231,18 +231,18 @@
                 relativePath ?? string.Empty);
             if (result is { Ok: true })
             {
-                Snackbar.Add("Opened outside DoxieOS.", Severity.Success);
+                Snackbar.AddDoxieToast("Opened outside DoxieOS.", Severity.Success);
                 return;
             }
 
             var detail = result is null
                 ? "no response"
                 : string.IsNullOrWhiteSpace(result.Message) ? $"HTTP {result.Status}" : result.Message;
-            Snackbar.Add($"Could not open: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not open: {detail}", Severity.Error);
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not open: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not open: {ex.Message}", Severity.Error);
         }
     }
 

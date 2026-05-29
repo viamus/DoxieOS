@@ -32,7 +32,7 @@ public partial class AgentDetail
         }
         catch (JSException)
         {
-            Snackbar.Add($"Memories folder: {path}", Severity.Info);
+            Snackbar.AddDoxieToast($"Memories folder: {path}", Severity.Info);
         }
     }
 

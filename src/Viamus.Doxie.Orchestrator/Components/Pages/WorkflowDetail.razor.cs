@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using MudBlazor;
@@ -124,7 +124,7 @@ public partial class WorkflowDetail
     private Task StartManualRun() => StartRunWithSeed(seedFromRun: null);
 
     /// <summary>
-    /// "Run again" path — seeds the dialog with the trigger inputs of
+    /// "Run again" path � seeds the dialog with the trigger inputs of
     /// a specific past run. The user can adjust before firing or just
     /// hit Run to repeat.
     /// </summary>
@@ -137,11 +137,11 @@ public partial class WorkflowDetail
         {
             // Defence-in-depth: button is also Disabled when off, but
             // the keyboard / programmatic path lands here too.
-            Snackbar.Add("Workflow is disabled. Toggle it on first.", Severity.Warning);
+            Snackbar.AddDoxieToast("Workflow is disabled. Toggle it on first.", Severity.Warning);
             return;
         }
 
-        // Workflow declares trigger inputs â†’ collect via dialog before
+        // Workflow declares trigger inputs → collect via dialog before
         // firing. Pre-fill from the explicit seed run if given, else
         // from the most recent run, else empty.
         Dictionary<string, string>? triggerInputs = null;
@@ -164,7 +164,7 @@ public partial class WorkflowDetail
 
         var run = WorkflowRunner.Start(_workflow, "manual", triggerInputs);
         _activeRun = run;
-        Snackbar.Add("Run started", Severity.Info);
+        Snackbar.AddDoxieToast("Run started", Severity.Info);
     }
 
     private async Task OnEnabledToggled(bool enabled)
@@ -176,17 +176,17 @@ public partial class WorkflowDetail
             if (result is null || !result.Ok)
             {
                 var detail = result is null ? "no response" : (string.IsNullOrEmpty(result.Message) ? $"HTTP {result.Status}" : result.Message);
-                Snackbar.Add($"Could not toggle: {detail}", Severity.Error);
+                Snackbar.AddDoxieToast($"Could not toggle: {detail}", Severity.Error);
                 return;
             }
             // Re-read the definition so the UI reflects the new state +
             // bumped UpdatedAt without a page refresh.
             Reload();
-            Snackbar.Add(enabled ? "Workflow enabled" : "Workflow disabled", enabled ? Severity.Success : Severity.Warning);
+            Snackbar.AddDoxieToast(enabled ? "Workflow enabled" : "Workflow disabled", enabled ? Severity.Success : Severity.Warning);
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not toggle: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not toggle: {ex.Message}", Severity.Error);
         }
     }
 
@@ -196,7 +196,7 @@ public partial class WorkflowDetail
     {
         if (_activeRun is null) return;
         WorkflowRunner.Cancel(_activeRun.Id);
-        Snackbar.Add("Cancel signalled", Severity.Warning);
+        Snackbar.AddDoxieToast("Cancel signalled", Severity.Warning);
     }
 
     private async Task SendWorkflowHint()
@@ -209,11 +209,11 @@ public partial class WorkflowDetail
             if (WorkflowRunner.AddOperatorHint(_activeRun.Id, hint))
             {
                 _operatorHintDraft = string.Empty;
-                Snackbar.Add("Hint sent to the running workflow", Severity.Info);
+                Snackbar.AddDoxieToast("Hint sent to the running workflow", Severity.Info);
             }
             else
             {
-                Snackbar.Add("Could not send hint: this workflow run is no longer active.", Severity.Warning);
+                Snackbar.AddDoxieToast("Could not send hint: this workflow run is no longer active.", Severity.Warning);
             }
         }
         finally
@@ -247,18 +247,18 @@ public partial class WorkflowDetail
 
             if (result is { Ok: true })
             {
-                Snackbar.Add(approve ? "Approved" : "Rejected — run cancelling", approve ? Severity.Success : Severity.Warning);
+                Snackbar.AddDoxieToast(approve ? "Approved" : "Rejected � run cancelling", approve ? Severity.Success : Severity.Warning);
                 _approvalComment = string.Empty;
             }
             else
             {
                 var msg = result?.Message ?? "(no response)";
-                Snackbar.Add($"Could not {(approve ? "approve" : "reject")}: {msg}", Severity.Error);
+                Snackbar.AddDoxieToast($"Could not {(approve ? "approve" : "reject")}: {msg}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not resolve gate: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not resolve gate: {ex.Message}", Severity.Error);
         }
         finally
         {

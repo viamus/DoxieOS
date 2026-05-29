@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using MudBlazor;
@@ -17,7 +17,7 @@ public partial class AgentNew
 
     /// <summary>
     /// Optional. When present, the page starts in Edit mode for the
-    /// agent with this id Ã¢â‚¬â€ the new builder session is pre-seeded with
+    /// agent with this id â€” the new builder session is pre-seeded with
     /// the existing manifest and Save will overwrite the catalog entry
     /// instead of refusing on collision.
     /// </summary>
@@ -29,7 +29,7 @@ public partial class AgentNew
     /// from the dashboard's "Live now" panel). When set, the page skips
     /// the empty state and resumes that session directly. Silently
     /// ignored when the id doesn't resolve to a live agent-builder
-    /// session Ã¢â‚¬â€ the empty state then offers Resume tiles for whatever
+    /// session â€” the empty state then offers Resume tiles for whatever
     /// is actually open.
     /// </summary>
     [SupplyParameterFromQuery(Name = "session")]
@@ -69,15 +69,15 @@ public partial class AgentNew
 
     private string AttachWorkspaceLabel() => Lang.CurrentLanguage switch
     {
-        "pt-BR" => "Anexar Ã¡rea de trabalho (opcional)",
+        "pt-BR" => "Anexar área de trabalho (opcional)",
         "es" => "Adjuntar espacio de trabajo (opcional)",
         _ => "Attach a workspace (optional)",
     };
 
     private string AttachWorkspaceDescription() => Lang.CurrentLanguage switch
     {
-        "pt-BR" => "As bibliotecas montadas da Ã¡rea de trabalho escolhida entram no contexto do sandbox. Deixe vazio para uma sessÃ£o isolada.",
-        "es" => "Las bibliotecas montadas del espacio de trabajo elegido entran en el contexto del sandbox. DÃ©jalo vacÃ­o para una sesiÃ³n aislada.",
+        "pt-BR" => "As bibliotecas montadas da área de trabalho escolhida entram no contexto do sandbox. Deixe vazio para uma sessão isolada.",
+        "es" => "Las bibliotecas montadas del espacio de trabajo elegido entran en el contexto del sandbox. Déjalo vacío para una sesión aislada.",
         _ => "The chosen workspace's mounted libraries are inlined into the sandbox context. Leave empty for an isolated session.",
     };
 
@@ -92,7 +92,7 @@ public partial class AgentNew
         // standard create flow with a friendly snackbar.
         if (!string.IsNullOrEmpty(EditAgentId) && AgentCatalog.FindById(EditAgentId) is null)
         {
-            Snackbar.Add($"Agent '{EditAgentId}' not found Ã¢â‚¬â€ starting a fresh session instead.", Severity.Warning);
+            Snackbar.AddDoxieToast($"Agent '{EditAgentId}' not found â€” starting a fresh session instead.", Severity.Warning);
             EditAgentId = null;
         }
         else if (!string.IsNullOrEmpty(EditAgentId))
@@ -137,7 +137,7 @@ public partial class AgentNew
         }
         catch (Microsoft.JSInterop.JSException ex)
         {
-            Snackbar.Add($"Could not attach console: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not attach console: {ex.Message}", Severity.Error);
         }
     }
 
@@ -151,7 +151,7 @@ public partial class AgentNew
             var result = await Js.InvokeAsync<StartResult?>("doxieOs.startAgentBuilder", workspaceArg, editArg);
             if (result is null || !result.Ok || string.IsNullOrEmpty(result.SessionId))
             {
-                Snackbar.Add($"Could not start builder session: {result?.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Could not start builder session: {result?.Message ?? "unknown error"}", Severity.Error);
                 return;
             }
             // Re-pull the session info from the server so we have the
@@ -160,7 +160,7 @@ public partial class AgentNew
             var info = BuilderFactory.Find(result.SessionId);
             if (info is null)
             {
-                Snackbar.Add("Builder session vanished right after creation Ã¢â‚¬â€ try again.", Severity.Error);
+                Snackbar.AddDoxieToast("Builder session vanished right after creation â€” try again.", Severity.Error);
                 return;
             }
             _session = info;
@@ -238,7 +238,7 @@ public partial class AgentNew
         _saving = true;
         try
         {
-            // Edit sessions always overwrite Ã¢â‚¬â€ by definition the target
+            // Edit sessions always overwrite â€” by definition the target
             // agent already exists; the user clicked Edit specifically
             // to mutate it. Create sessions never overwrite so a stale
             // id collision raises a friendly error instead of a silent
@@ -247,12 +247,12 @@ public partial class AgentNew
             var result = await Js.InvokeAsync<SaveResult?>("doxieOs.saveBuilderAgent", _session.SessionId, overwrite, _selectedCatalogId);
             if (result is null)
             {
-                Snackbar.Add("Save failed: no response", Severity.Error);
+                Snackbar.AddDoxieToast("Save failed: no response", Severity.Error);
                 return;
             }
             if (result.Ok)
             {
-                Snackbar.Add($"Saved agent \"{result.AgentId}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Saved agent \"{result.AgentId}\"", Severity.Success);
                 if (!string.IsNullOrEmpty(result.Href))
                 {
                     Nav.NavigateTo(result.Href);
@@ -264,9 +264,9 @@ public partial class AgentNew
                 // problem at once instead of fixing one and re-Saving
                 // for the next.
                 var detail = (result.Errors is { Count: > 0 })
-                    ? string.Join(" Ã‚· ", result.Errors)
+                    ? string.Join(" Â� ", result.Errors)
                     : (result.Message ?? "unknown");
-                Snackbar.Add($"Save failed: {detail}", Severity.Error);
+                Snackbar.AddDoxieToast($"Save failed: {detail}", Severity.Error);
             }
         }
         finally
@@ -298,12 +298,12 @@ public partial class AgentNew
         {
             _manifest.Icon = selected;
             _lastManifestUtc = update.UpdatedAt ?? DateTime.MinValue;
-            Snackbar.Add(string.IsNullOrWhiteSpace(selected) ? "Agent icon reset to category default" : "Agent icon updated", Severity.Success);
+            Snackbar.AddDoxieToast(string.IsNullOrWhiteSpace(selected) ? "Agent icon reset to category default" : "Agent icon updated", Severity.Success);
             await InvokeAsync(StateHasChanged);
         }
         else
         {
-            Snackbar.Add($"Icon update failed: {update?.Message ?? "unknown error"}", Severity.Error);
+            Snackbar.AddDoxieToast($"Icon update failed: {update?.Message ?? "unknown error"}", Severity.Error);
         }
     }
 
@@ -324,7 +324,7 @@ public partial class AgentNew
         {
             try { await Js.InvokeVoidAsync("doxieOs.deleteConsole", _session.SessionId); }
             catch (Microsoft.JSInterop.JSException) { /* surface as snackbar */ }
-            Snackbar.Add($"Ended builder session \"{_session.SandboxTag}\"", Severity.Info);
+            Snackbar.AddDoxieToast($"Ended builder session \"{_session.SandboxTag}\"", Severity.Info);
             Nav.NavigateTo("/agents");
         }
         finally
@@ -396,7 +396,7 @@ public partial class AgentNew
     }
 
     /// <summary>
-    /// Visual "headÃ¢â‚¬Â¦tail" truncation for long ids Ã¢â‚¬â€ preserves the
+    /// Visual "headâ€¦tail" truncation for long ids â€” preserves the
     /// suffix so the user can still recognise it. Full value lives in
     /// the chip's tooltip.
     /// </summary>
@@ -404,7 +404,7 @@ public partial class AgentNew
     {
         if (s.Length <= max) return s;
         var keep = (max - 1) / 2;
-        return s[..keep] + "Ã¢â‚¬Â¦" + s[^keep..];
+        return s[..keep] + "â€¦" + s[^keep..];
     }
 
     private sealed record StartResult(bool Ok, int Status, string? SessionId, string? SandboxTag, string? Label, string? AttachedWorkspaceId, string? EditAgentId, string? Message);

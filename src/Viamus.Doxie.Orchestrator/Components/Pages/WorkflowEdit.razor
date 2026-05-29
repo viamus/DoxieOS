@@ -50,22 +50,22 @@ else
             var result = await Js.InvokeAsync<SaveResult?>("doxieOs.updateWorkflow", Id, payload);
             if (result is null)
             {
-                Snackbar.Add("Update failed: no response from server.", Severity.Error);
+                Snackbar.AddDoxieToast("Update failed: no response from server.", Severity.Error);
                 return;
             }
             if (result.Ok)
             {
-                Snackbar.Add($"Updated workflow \"{payload.Name}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Updated workflow \"{payload.Name}\"", Severity.Success);
                 Nav.NavigateTo($"/workflows/{Id}");
             }
             else
             {
-                Snackbar.Add(string.IsNullOrEmpty(result.Message) ? $"Update failed: HTTP {result.Status}" : $"Update failed: {result.Message}", Severity.Error);
+                Snackbar.AddDoxieToast(string.IsNullOrEmpty(result.Message) ? $"Update failed: HTTP {result.Status}" : $"Update failed: {result.Message}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Update failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Update failed: {ex.Message}", Severity.Error);
         }
     }
 

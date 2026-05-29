@@ -118,19 +118,19 @@ public partial class AgentDetail
                 "doxieOs.updateAgentCategory", _agent.Id, _agent.DisplayCategory, icon);
             if (result is { Ok: true })
             {
-                Snackbar.Add($"Updated icon for \"{_agent.Name}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Updated icon for \"{_agent.Name}\"", Severity.Success);
                 var refreshed = Catalog.FindById(_agent.Id);
                 if (refreshed is not null) _agent = refreshed;
                 await InvokeAsync(StateHasChanged);
             }
             else
             {
-                Snackbar.Add($"Icon update failed: {result?.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Icon update failed: {result?.Message ?? "unknown error"}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Icon update failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Icon update failed: {ex.Message}", Severity.Error);
         }
         finally
         {
@@ -172,7 +172,7 @@ public partial class AgentDetail
                 "doxieOs.updateAgentCategory", _agent.Id, newCategory, _agent.Icon);
             if (result is { Ok: true })
             {
-                Snackbar.Add($"Moved \"{_agent.Name}\" to {newCategory}", Severity.Success);
+                Snackbar.AddDoxieToast($"Moved \"{_agent.Name}\" to {newCategory}", Severity.Success);
                 // The catalog refresh on the server is already done; pull
                 // the updated descriptor to refresh the UI.
                 var refreshed = Catalog.FindById(_agent.Id);
@@ -180,12 +180,12 @@ public partial class AgentDetail
             }
             else
             {
-                Snackbar.Add($"Could not move agent: {result?.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Could not move agent: {result?.Message ?? "unknown error"}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Category update failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Category update failed: {ex.Message}", Severity.Error);
         }
         finally
         {
