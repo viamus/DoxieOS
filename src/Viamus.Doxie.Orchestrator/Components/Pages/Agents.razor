@@ -370,7 +370,7 @@ else
 
         if (_agentRecommendations.Count == 0)
         {
-            Snackbar.Add("No strong agent matches for this context yet.", Severity.Info);
+            Snackbar.AddDoxieToast("No strong agent matches for this context yet.", Severity.Info);
         }
     }
 
@@ -467,7 +467,7 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not start download: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not start download: {ex.Message}", Severity.Error);
         }
     }
 
@@ -499,7 +499,7 @@ else
                 catch (JSException) { confirmed = false; }
                 if (!confirmed)
                 {
-                    Snackbar.Add("Import cancelled — existing agent kept.", Severity.Info);
+                    Snackbar.AddDoxieToast("Import cancelled — existing agent kept.", Severity.Info);
                     return;
                 }
                 // Re-pick? No — we already have the file picked, but
@@ -513,7 +513,7 @@ else
 
             if (result.Ok)
             {
-                Snackbar.Add($"Imported agent \"{result.AgentId}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Imported agent \"{result.AgentId}\"", Severity.Success);
                 if (!string.IsNullOrEmpty(result.Href))
                 {
                     Nav.NavigateTo(result.Href);
@@ -531,12 +531,12 @@ else
             }
             else
             {
-                Snackbar.Add($"Import failed: {result.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Import failed: {result.Message ?? "unknown error"}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Import failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Import failed: {ex.Message}", Severity.Error);
         }
         finally
         {
@@ -583,7 +583,7 @@ else
             var result = await Js.InvokeAsync<DeleteResult?>("doxieOs.deleteAgent", agent.Id);
             if (result is { Ok: true })
             {
-                Snackbar.Add($"Deleted agent \"{agent.Name}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Deleted agent \"{agent.Name}\"", Severity.Success);
                 // Catalog already refreshed server-side; rebuild the
                 // in-memory grouped projection.
                 _allAgents = Catalog.GetAll();
@@ -594,12 +594,12 @@ else
             }
             else
             {
-                Snackbar.Add($"Could not delete: {result?.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Could not delete: {result?.Message ?? "unknown error"}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Delete failed: {ex.Message}", Severity.Error);
         }
     }
 

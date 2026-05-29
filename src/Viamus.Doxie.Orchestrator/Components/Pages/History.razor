@@ -187,11 +187,11 @@ else
             var agentCount = Store.ClearAll();
             var workflowCount = WorkflowRunStore.ClearAll();
             await LoadRunsAsync(showSpinner: false, refreshAfter: true);
-            Snackbar.Add($"Cleared {agentCount} agent run(s) and {workflowCount} workflow run(s).", Severity.Success);
+            Snackbar.AddDoxieToast($"Cleared {agentCount} agent run(s) and {workflowCount} workflow run(s).", Severity.Success);
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Could not clear history: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not clear history: {ex.Message}", Severity.Error);
         }
         finally
         {

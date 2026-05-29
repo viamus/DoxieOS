@@ -448,13 +448,13 @@ else
         try
         {
             var ok = await Js.InvokeAsync<bool>("doxieOs.copyText", content);
-            Snackbar.Add(
+            Snackbar.AddDoxieToast(
                 ok ? $"Copied {memory.FileName} to clipboard" : $"Could not copy {memory.FileName}",
                 ok ? Severity.Success : Severity.Warning);
         }
         catch (JSException)
         {
-            Snackbar.Add($"Could not copy {memory.FileName}", Severity.Warning);
+            Snackbar.AddDoxieToast($"Could not copy {memory.FileName}", Severity.Warning);
         }
     }
 
@@ -467,7 +467,7 @@ else
         }
         catch (JSException)
         {
-            Snackbar.Add($"Could not download {memory.FileName}", Severity.Warning);
+            Snackbar.AddDoxieToast($"Could not download {memory.FileName}", Severity.Warning);
         }
     }
 
@@ -484,7 +484,7 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Library import failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Library import failed: {ex.Message}", Severity.Error);
             return;
         }
 
@@ -492,7 +492,7 @@ else
 
         if (result.Ok)
         {
-            Snackbar.Add($"Imported library from {result.Filename}", Severity.Success);
+            Snackbar.AddDoxieToast($"Imported library from {result.Filename}", Severity.Success);
             _catalogs = CatalogStore.ListCatalogs();
             libraries = LibraryStore.ListAll();
             StateHasChanged();
@@ -500,7 +500,7 @@ else
         else
         {
             var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
-            Snackbar.Add($"Library import failed: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Library import failed: {detail}", Severity.Error);
         }
     }
 
@@ -547,19 +547,19 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Delete failed: {ex.Message}", Severity.Error);
             return;
         }
 
         if (result is null)
         {
-            Snackbar.Add("Delete failed: no response from server", Severity.Error);
+            Snackbar.AddDoxieToast("Delete failed: no response from server", Severity.Error);
             return;
         }
 
         if (result.Ok)
         {
-            Snackbar.Add($"Deleted library \"{library.Name}\"", Severity.Success);
+            Snackbar.AddDoxieToast($"Deleted library \"{library.Name}\"", Severity.Success);
             _catalogs = CatalogStore.ListCatalogs();
             libraries = LibraryStore.ListAll();
             StateHasChanged();
@@ -567,7 +567,7 @@ else
         else
         {
             var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
-            Snackbar.Add($"Could not delete library: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not delete library: {detail}", Severity.Error);
         }
     }
 

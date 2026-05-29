@@ -453,7 +453,7 @@ else
             take: 8);
         if (_workflowRecommendations.Count == 0)
         {
-            Snackbar.Add("No strong workflow matches for this context yet.", Severity.Info);
+            Snackbar.AddDoxieToast("No strong workflow matches for this context yet.", Severity.Info);
         }
     }
 
@@ -528,7 +528,7 @@ else
         }
 
         var run = WorkflowRunner.Start(wf, triggeredBy: "manual", triggerInputs);
-        Snackbar.Add($"Started \"{wf.Name}\" — open the workflow to follow live", Severity.Info);
+        Snackbar.AddDoxieToast($"Started \"{wf.Name}\" — open the workflow to follow live", Severity.Info);
         Nav.NavigateTo($"/workflows/{wf.Id}?run={run.Id}");
     }
 
@@ -540,7 +540,7 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not start download: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not start download: {ex.Message}", Severity.Error);
         }
     }
 
@@ -570,7 +570,7 @@ else
                 catch (JSException) { confirmed = false; }
                 if (!confirmed)
                 {
-                    Snackbar.Add("Import cancelled - existing items kept.", Severity.Info);
+                    Snackbar.AddDoxieToast("Import cancelled - existing items kept.", Severity.Info);
                     return;
                 }
 
@@ -586,17 +586,17 @@ else
                 var agentSummary = imported + replaced + skipped > 0
                     ? $" Agents: {imported} imported, {replaced} replaced, {skipped} already identical."
                     : string.Empty;
-                Snackbar.Add($"Imported workflow \"{result.WorkflowId}\".{agentSummary}", Severity.Success);
+                Snackbar.AddDoxieToast($"Imported workflow \"{result.WorkflowId}\".{agentSummary}", Severity.Success);
                 Reload();
             }
             else
             {
-                Snackbar.Add($"Workflow import failed: {result.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Workflow import failed: {result.Message ?? "unknown error"}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Workflow import failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Workflow import failed: {ex.Message}", Severity.Error);
         }
         finally
         {
@@ -640,12 +640,12 @@ else
         try
         {
             WorkflowStore.Delete(wf.Id);
-            Snackbar.Add($"Deleted workflow \"{wf.Name}\"", Severity.Success);
+            Snackbar.AddDoxieToast($"Deleted workflow \"{wf.Name}\"", Severity.Success);
             Reload();
         }
         catch (InvalidOperationException ex)
         {
-            Snackbar.Add($"Could not delete: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not delete: {ex.Message}", Severity.Error);
         }
     }
 

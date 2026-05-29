@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using MudBlazor;
@@ -16,7 +16,7 @@ public partial class WorkflowNewChat
 
     /// <summary>
     /// Optional. When present, the page starts in Edit mode for the
-    /// workflow with this id Ã¢â‚¬â€ sandbox is pre-seeded and Save will
+    /// workflow with this id â€” sandbox is pre-seeded and Save will
     /// overwrite the catalog entry.
     /// </summary>
     [SupplyParameterFromQuery(Name = "edit")]
@@ -66,15 +66,15 @@ public partial class WorkflowNewChat
 
     private string AttachWorkspaceLabel() => Lang.CurrentLanguage switch
     {
-        "pt-BR" => "Anexar Ã¡rea de trabalho (opcional)",
+        "pt-BR" => "Anexar área de trabalho (opcional)",
         "es" => "Adjuntar espacio de trabajo (opcional)",
         _ => "Attach a workspace (optional)",
     };
 
     private string AttachWorkspaceDescription() => Lang.CurrentLanguage switch
     {
-        "pt-BR" => "As bibliotecas montadas da Ã¡rea de trabalho entram no sandbox para dar contexto de projeto ao CLI ativo enquanto ele desenha o fluxo.",
-        "es" => "Las bibliotecas montadas del espacio de trabajo entran en el sandbox para dar contexto de proyecto al CLI activo mientras diseÃ±a el flujo.",
+        "pt-BR" => "As bibliotecas montadas da área de trabalho entram no sandbox para dar contexto de projeto ao CLI ativo enquanto ele desenha o fluxo.",
+        "es" => "Las bibliotecas montadas del espacio de trabajo entran en el sandbox para dar contexto de proyecto al CLI activo mientras diseña el flujo.",
         _ => "The workspace's mounted libraries are inlined into the sandbox so the active CLI has project context when designing the workflow.",
     };
 
@@ -86,7 +86,7 @@ public partial class WorkflowNewChat
 
         if (!string.IsNullOrEmpty(EditWorkflowId) && WorkflowStore.GetById(EditWorkflowId) is null)
         {
-            Snackbar.Add($"Workflow '{EditWorkflowId}' not found Ã¢â‚¬â€ starting a fresh session instead.", Severity.Warning);
+            Snackbar.AddDoxieToast($"Workflow '{EditWorkflowId}' not found â€” starting a fresh session instead.", Severity.Warning);
             EditWorkflowId = null;
         }
         else if (!string.IsNullOrEmpty(EditWorkflowId))
@@ -127,7 +127,7 @@ public partial class WorkflowNewChat
         }
         catch (Microsoft.JSInterop.JSException ex)
         {
-            Snackbar.Add($"Could not attach console: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not attach console: {ex.Message}", Severity.Error);
         }
     }
 
@@ -141,13 +141,13 @@ public partial class WorkflowNewChat
             var result = await Js.InvokeAsync<StartResult?>("doxieOs.startWorkflowBuilder", workspaceArg, editArg);
             if (result is null || !result.Ok || string.IsNullOrEmpty(result.SessionId))
             {
-                Snackbar.Add($"Could not start builder session: {result?.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Could not start builder session: {result?.Message ?? "unknown error"}", Severity.Error);
                 return;
             }
             var info = BuilderFactory.Find(result.SessionId);
             if (info is null)
             {
-                Snackbar.Add("Builder session vanished right after creation Ã¢â‚¬â€ try again.", Severity.Error);
+                Snackbar.AddDoxieToast("Builder session vanished right after creation â€” try again.", Severity.Error);
                 return;
             }
             _session = info;
@@ -184,7 +184,7 @@ public partial class WorkflowNewChat
             var result = await Js.InvokeAsync<ManifestEnvelope?>("doxieOs.readWorkflowManifest", _session.SessionId);
             if (result is null) return;
 
-            // Always refresh the new-agents list Ã¢â‚¬â€ those can change
+            // Always refresh the new-agents list â€” those can change
             // without the workflow manifest itself being touched.
             var newAgents = result.NewAgents?.ToList() ?? new List<NewAgentEntry>();
             var newErrors = result.Errors ?? new List<string>();
@@ -234,7 +234,7 @@ public partial class WorkflowNewChat
             var result = await Js.InvokeAsync<SaveResult?>("doxieOs.saveBuilderWorkflow", _session.SessionId, overwrite, _selectedCatalogId);
             if (result is null)
             {
-                Snackbar.Add("Save failed: no response", Severity.Error);
+                Snackbar.AddDoxieToast("Save failed: no response", Severity.Error);
                 return;
             }
             if (result.Ok)
@@ -244,10 +244,10 @@ public partial class WorkflowNewChat
                     var promotedAgents = result.AgentResults.Count(r => r.Ok);
                     if (promotedAgents > 0)
                     {
-                        Snackbar.Add($"Cross-created {promotedAgents} agent(s) alongside the workflow", Severity.Info);
+                        Snackbar.AddDoxieToast($"Cross-created {promotedAgents} agent(s) alongside the workflow", Severity.Info);
                     }
                 }
-                Snackbar.Add($"Saved workflow \"{result.WorkflowId}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Saved workflow \"{result.WorkflowId}\"", Severity.Success);
                 if (!string.IsNullOrEmpty(result.Href))
                 {
                     Nav.NavigateTo(result.Href);
@@ -256,17 +256,17 @@ public partial class WorkflowNewChat
             else
             {
                 // If some agents were promoted before the workflow
-                // failed, surface that Ã¢â‚¬â€ the user needs to know they
+                // failed, surface that â€” the user needs to know they
                 // exist now.
                 var promoted = result.AgentResults?.Where(r => r.Ok).Select(r => r.AgentId).ToList() ?? new List<string?>();
                 var detail = (result.Errors is { Count: > 0 })
-                    ? string.Join(" Ã‚· ", result.Errors)
+                    ? string.Join(" Â� ", result.Errors)
                     : (result.Message ?? "unknown");
                 if (promoted.Count > 0)
                 {
-                    detail += $" Ã¢â‚¬â€ but {promoted.Count} agent(s) already promoted: {string.Join(", ", promoted)}";
+                    detail += $" â€” but {promoted.Count} agent(s) already promoted: {string.Join(", ", promoted)}";
                 }
-                Snackbar.Add($"Save failed: {detail}", Severity.Error);
+                Snackbar.AddDoxieToast($"Save failed: {detail}", Severity.Error);
             }
         }
         finally
@@ -292,7 +292,7 @@ public partial class WorkflowNewChat
         {
             try { await Js.InvokeVoidAsync("doxieOs.deleteConsole", _session.SessionId); }
             catch (Microsoft.JSInterop.JSException) { }
-            Snackbar.Add($"Ended workflow builder session \"{_session.SandboxTag}\"", Severity.Info);
+            Snackbar.AddDoxieToast($"Ended workflow builder session \"{_session.SandboxTag}\"", Severity.Info);
             Nav.NavigateTo("/workflows");
         }
         finally
@@ -319,9 +319,9 @@ public partial class WorkflowNewChat
     private static string TriggerLabel(Viamus.Doxie.Orchestrator.Builder.WorkflowManifestTrigger t) =>
         (t.Kind ?? "manual").ToLowerInvariant() switch
         {
-            "cron" => $"cron Ã‚· {t.CronExpression ?? "?"}",
-            "event" => $"event Ã‚· {t.EventName ?? "?"}",
-            "webhook" => $"hook Ã‚· {t.WebhookPath ?? "?"}",
+            "cron" => $"cron Â� {t.CronExpression ?? "?"}",
+            "event" => $"event Â� {t.EventName ?? "?"}",
+            "webhook" => $"hook Â� {t.WebhookPath ?? "?"}",
             _ => "manual",
         };
 
@@ -378,7 +378,7 @@ public partial class WorkflowNewChat
     }
 
     /// <summary>
-    /// Visual "headÃ¢â‚¬Â¦tail" truncation for long ids Ã¢â‚¬â€ preserves the
+    /// Visual "headâ€¦tail" truncation for long ids â€” preserves the
     /// suffix so the user can still recognise it. Full value lives in
     /// the chip's tooltip.
     /// </summary>
@@ -386,7 +386,7 @@ public partial class WorkflowNewChat
     {
         if (s.Length <= max) return s;
         var keep = (max - 1) / 2;
-        return s[..keep] + "Ã¢â‚¬Â¦" + s[^keep..];
+        return s[..keep] + "â€¦" + s[^keep..];
     }
 
     private sealed record StartResult(bool Ok, int Status, string? SessionId, string? SandboxTag, string? Label, string? AttachedWorkspaceId, string? EditWorkflowId, string? Message);

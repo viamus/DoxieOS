@@ -541,7 +541,7 @@ else
 
             if (result.Ok)
             {
-                Snackbar.Add($"Created workspace \"{result.Name ?? normalisedId}\"", Severity.Success);
+                Snackbar.AddDoxieToast($"Created workspace \"{result.Name ?? normalisedId}\"", Severity.Success);
                 _showCreateDialog = false;
                 Reload();
             }
@@ -580,25 +580,25 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Delete failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Delete failed: {ex.Message}", Severity.Error);
             return;
         }
 
         if (result is null)
         {
-            Snackbar.Add("Delete failed: no response from server.", Severity.Error);
+            Snackbar.AddDoxieToast("Delete failed: no response from server.", Severity.Error);
             return;
         }
 
         if (result.Ok)
         {
-            Snackbar.Add($"Deleted workspace \"{ws.Name}\"", Severity.Success);
+            Snackbar.AddDoxieToast($"Deleted workspace \"{ws.Name}\"", Severity.Success);
             Reload();
         }
         else
         {
             var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
-            Snackbar.Add($"Could not delete workspace: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not delete workspace: {detail}", Severity.Error);
         }
     }
 
@@ -630,25 +630,25 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not update libraries: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not update libraries: {ex.Message}", Severity.Error);
             return;
         }
 
         if (result is null)
         {
-            Snackbar.Add("Could not update libraries: no response from server.", Severity.Error);
+            Snackbar.AddDoxieToast("Could not update libraries: no response from server.", Severity.Error);
             return;
         }
 
         if (result.Ok)
         {
-            Snackbar.Add(successMessage, Severity.Success);
+            Snackbar.AddDoxieToast(successMessage, Severity.Success);
             Reload();
         }
         else
         {
             var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
-            Snackbar.Add($"Could not update libraries: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not update libraries: {detail}", Severity.Error);
         }
     }
 
@@ -680,25 +680,25 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not update agents: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not update agents: {ex.Message}", Severity.Error);
             return;
         }
 
         if (result is null)
         {
-            Snackbar.Add("Could not update agents: no response from server.", Severity.Error);
+            Snackbar.AddDoxieToast("Could not update agents: no response from server.", Severity.Error);
             return;
         }
 
         if (result.Ok)
         {
-            Snackbar.Add(successMessage, Severity.Success);
+            Snackbar.AddDoxieToast(successMessage, Severity.Success);
             Reload();
         }
         else
         {
             var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
-            Snackbar.Add($"Could not update agents: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not update agents: {detail}", Severity.Error);
         }
     }
 
@@ -710,7 +710,7 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not start download: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not start download: {ex.Message}", Severity.Error);
         }
     }
 
@@ -740,7 +740,7 @@ else
                 catch (JSException) { confirmed = false; }
                 if (!confirmed)
                 {
-                    Snackbar.Add("Import cancelled - existing items kept.", Severity.Info);
+                    Snackbar.AddDoxieToast("Import cancelled - existing items kept.", Severity.Info);
                     return;
                 }
 
@@ -756,17 +756,17 @@ else
                 var agentSummary = imported + replaced + skipped > 0
                     ? $" Agents: {imported} imported, {replaced} replaced, {skipped} already identical."
                     : string.Empty;
-                Snackbar.Add($"Imported workspace \"{result.WorkspaceId}\".{agentSummary}", Severity.Success);
+                Snackbar.AddDoxieToast($"Imported workspace \"{result.WorkspaceId}\".{agentSummary}", Severity.Success);
                 Reload();
             }
             else
             {
-                Snackbar.Add($"Workspace import failed: {result.Message ?? "unknown error"}", Severity.Error);
+                Snackbar.AddDoxieToast($"Workspace import failed: {result.Message ?? "unknown error"}", Severity.Error);
             }
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Workspace import failed: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Workspace import failed: {ex.Message}", Severity.Error);
         }
         finally
         {
@@ -805,13 +805,13 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not start console: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not start console: {ex.Message}", Severity.Error);
             return;
         }
 
         if (result is null)
         {
-            Snackbar.Add("Could not start console: no response from server.", Severity.Error);
+            Snackbar.AddDoxieToast("Could not start console: no response from server.", Severity.Error);
             return;
         }
 
@@ -822,7 +822,7 @@ else
         else
         {
             var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
-            Snackbar.Add($"Could not start console: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not start console: {detail}", Severity.Error);
         }
     }
 
@@ -835,13 +835,13 @@ else
         }
         catch (JSException ex)
         {
-            Snackbar.Add($"Could not open: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not open: {ex.Message}", Severity.Error);
             return;
         }
 
         if (result is null)
         {
-            Snackbar.Add("Could not open: no response from server.", Severity.Error);
+            Snackbar.AddDoxieToast("Could not open: no response from server.", Severity.Error);
             return;
         }
 
@@ -852,7 +852,7 @@ else
         else
         {
             var detail = string.IsNullOrEmpty(result.Message) ? result.Status.ToString() : result.Message;
-            Snackbar.Add($"Could not open {target}: {detail}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not open {target}: {detail}", Severity.Error);
         }
     }
 

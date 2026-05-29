@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using MudBlazor;
@@ -83,36 +83,36 @@ public partial class AgentDetail
 
     private string RunInsideWorkspaceLabel(bool required) => Lang.CurrentLanguage switch
     {
-        "pt-BR" => $"Executar em Ã¡rea de trabalho ({(required ? "obrigatÃ³rio" : "opcional")})",
+        "pt-BR" => $"Executar em área de trabalho ({(required ? "obrigatório" : "opcional")})",
         "es" => $"Ejecutar en espacio de trabajo ({(required ? "obligatorio" : "opcional")})",
         _ => $"Run inside Workspace ({(required ? "required" : "optional")})",
     };
 
     private string WorkspaceRequiredError() => Lang.CurrentLanguage switch
     {
-        "pt-BR" => "Este agente precisa rodar em uma Ã¡rea de trabalho. Escolha uma acima.",
+        "pt-BR" => "Este agente precisa rodar em uma área de trabalho. Escolha uma acima.",
         "es" => "Este agente debe ejecutarse en un espacio de trabajo. Elige uno arriba.",
         _ => "This agent must run inside a Workspace - pick one above.",
     };
 
     private string WorkspaceRequiredHelper() => Lang.CurrentLanguage switch
     {
-        "pt-BR" => "Este agente lÃª as bibliotecas montadas da Ã¡rea de trabalho como contexto e/ou escreve a saÃ­da nela.",
-        "es" => "Este agente lee las bibliotecas montadas del espacio de trabajo como contexto y/o escribe la salida allÃ­.",
+        "pt-BR" => "Este agente lê as bibliotecas montadas da área de trabalho como contexto e/ou escreve a saída nela.",
+        "es" => "Este agente lee las bibliotecas montadas del espacio de trabajo como contexto y/o escribe la salida allí.",
         _ => "This agent reads the workspace's mounted libraries as context and/or writes output back into it.",
     };
 
     private string WorkspaceOptionalHelper() => Lang.CurrentLanguage switch
     {
-        "pt-BR" => "Define o diretÃ³rio de trabalho do agente para essa Ã¡rea de trabalho. Deixe em branco para usar a raiz do projeto.",
-        "es" => "Define el directorio de trabajo del agente en ese espacio de trabajo. DÃ©jalo vacÃ­o para usar la raÃ­z del proyecto.",
+        "pt-BR" => "Define o diretório de trabalho do agente para essa área de trabalho. Deixe em branco para usar a raiz do projeto.",
+        "es" => "Define el directorio de trabajo del agente en ese espacio de trabajo. Déjalo vacío para usar la raíz del proyecto.",
         _ => "Sets the agent's working directory to that Workspace. Leave blank for the project root.",
     };
 
     private string NoWorkspaceLabel() => Lang.CurrentLanguage switch
     {
         "pt-BR" => "(nenhuma - raiz do projeto)",
-        "es" => "(ninguno - raÃ­z del proyecto)",
+        "es" => "(ninguno - raíz del proyecto)",
         _ => "(none - project root)",
     };
 
@@ -137,7 +137,7 @@ public partial class AgentDetail
                 new BreadcrumbItem(Lang["Agents.Title"], href: "/agents"),
                 new BreadcrumbItem(_agent.Name, href: null, disabled: true),
             ];
-            // Memories list is read on every page load (cheap Ã¢â‚¬â€ N small
+            // Memories list is read on every page load (cheap â€” N small
             // markdown files). Refreshing without a restart requires
             // navigating away and back, which is fine for the alpha-grade
             // "drop a file" workflow.
@@ -170,7 +170,7 @@ public partial class AgentDetail
         {
             _historyLoading = false;
             _currentRunLoading = false;
-            Snackbar.Add($"Could not load run history: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not load run history: {ex.Message}", Severity.Error);
         }
         finally
         {
@@ -290,7 +290,7 @@ public partial class AgentDetail
             : WorkspaceStore.GetById(_selectedWorkspaceId)?.Path;
 
         // Per-run env: drop empty keys, dedupe (last wins), pass to runner.
-        // Nothing persisted Ã¢â‚¬â€ the next page load starts with an empty list.
+        // Nothing persisted â€” the next page load starts with an empty list.
         IReadOnlyDictionary<string, string>? envOverrides = null;
         if (_envVars.Count > 0)
         {
@@ -324,7 +324,7 @@ public partial class AgentDetail
     {
         // Called whenever the user types in a key or value, or removes a
         // row. Re-runs prerequisite checks so a token chip flips green
-        // the moment the user fills in the matching key Ã¢â‚¬â€ no Run-then-
+        // the moment the user fills in the matching key â€” no Run-then-
         // discover-it-was-missing surprise.
         RecomputeRequirementStatuses();
     }
@@ -359,7 +359,7 @@ public partial class AgentDetail
 
     /// <summary>
     /// Mutable draft for one row of the per-run env table. Lives only in
-    /// page state Ã¢â‚¬â€ never persisted. A future improvement could persist
+    /// page state â€” never persisted. A future improvement could persist
     /// a per-agent default set, but for now sensitive secrets stay
     /// in-memory and out of disk.
     /// </summary>
@@ -385,11 +385,11 @@ public partial class AgentDetail
             if (Runner.AddOperatorHint(_currentRun.Id, hint))
             {
                 _operatorHintDraft = string.Empty;
-                Snackbar.Add("Hint sent to the running agent", Severity.Info);
+                Snackbar.AddDoxieToast("Hint sent to the running agent", Severity.Info);
             }
             else
             {
-                Snackbar.Add("Could not send hint: this agent run is no longer active.", Severity.Warning);
+                Snackbar.AddDoxieToast("Could not send hint: this agent run is no longer active.", Severity.Warning);
             }
         }
         finally
@@ -436,7 +436,7 @@ public partial class AgentDetail
     /// Extracts the sandbox tag (last path segment) from an absolute
     /// OutputDir path that lives under <c>./.sandbox/&lt;tag&gt;/</c>.
     /// Returns null for paths that don't match (e.g. workflow node dirs
-    /// under <c>./.runs/</c> Ã¢â‚¬â€ those are browsed via WorkflowDetail).
+    /// under <c>./.runs/</c> â€” those are browsed via WorkflowDetail).
     /// </summary>
     private static string? TryExtractSandboxTag(string? outputDir)
     {
@@ -448,7 +448,7 @@ public partial class AgentDetail
         if (idx < 0) return null;
         var afterMarker = normalized[(idx + "/.sandbox/".Length)..];
         if (string.IsNullOrEmpty(afterMarker)) return null;
-        // Sandbox tags are flat Ã¢â‚¬â€ never nested. Take the first segment.
+        // Sandbox tags are flat â€” never nested. Take the first segment.
         var slashIdx = afterMarker.IndexOf('/');
         var tag = slashIdx < 0 ? afterMarker : afterMarker[..slashIdx];
         return string.IsNullOrEmpty(tag) ? null : tag;

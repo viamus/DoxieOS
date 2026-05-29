@@ -266,7 +266,7 @@
         };
 
         var markup = new MarkupString(BuildToastMarkup(notification));
-        await InvokeAsync(() => Snackbar.Add(markup, severity, options =>
+        await InvokeAsync(() => Snackbar.AddDoxieToast(markup, severity, options =>
         {
             options.Icon = IconFor(notification.Severity);
             options.SnackbarTypeClass = $"doxie-toast-snackbar {ToastSeverityClass(notification.Severity)}";

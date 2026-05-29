@@ -154,11 +154,11 @@ public partial class WorkflowDetail
         {
             var run = WorkflowRunner.StartFrom(_workflow, _activeRun.Id, node.Id, guidance);
             _activeRun = run;
-            Snackbar.Add("Rerun started from selected step", Severity.Info);
+            Snackbar.AddDoxieToast("Rerun started from selected step", Severity.Info);
         }
         catch (InvalidOperationException ex)
         {
-            Snackbar.Add($"Could not rerun from here: {ex.Message}", Severity.Error);
+            Snackbar.AddDoxieToast($"Could not rerun from here: {ex.Message}", Severity.Error);
         }
     }
 
