@@ -10,7 +10,7 @@ const now = () => new Date().toISOString();
 const usageColumns = {
   output_dir: 'TEXT', input_tokens: 'INTEGER', output_tokens: 'INTEGER',
   cache_read_tokens: 'INTEGER', cache_creation_tokens: 'INTEGER', total_cost_usd: 'REAL',
-  provider_id: 'TEXT', model: 'TEXT',
+  provider_id: 'TEXT', model: 'TEXT', effort: 'TEXT',
 };
 
 function matches(condition, context) {
@@ -146,7 +146,7 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
       id: row.id, agentId: row.agent_id, arguments: row.arguments, startedAt: row.started_at,
       ...(row.agent_id === 'prompt' ? { connectorId: 'prompt' } : {}),
       finishedAt: row.finished_at, status: row.status, exitCode: row.exit_code,
-      outputDir: row.output_dir, providerId: row.provider_id, model: row.model, usage,
+      outputDir: row.output_dir, providerId: row.provider_id, model: row.model, effort: row.effort, usage,
     };
   }
 
@@ -182,8 +182,8 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
     let child;
     try {
       child = launch(provider.executable, options, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: environment });
-      db.prepare(`INSERT INTO agent_runs(id,agent_id,arguments,started_at,status,output_dir,provider_id,model)
-        VALUES(?,?,?,?,'Running',?,?,?)`).run(id, agent.id, params.displayArguments || '', now(), outputDir, provider.id, provider.model);
+      db.prepare(`INSERT INTO agent_runs(id,agent_id,arguments,started_at,status,output_dir,provider_id,model,effort)
+        VALUES(?,?,?,?,'Running',?,?,?,?)`).run(id, agent.id, params.displayArguments || '', now(), outputDir, provider.id, provider.model, provider.effort);
     } catch (error) {
       discardHints();
       if (child) {
@@ -308,7 +308,7 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
 
   function runBuilder(kind, params) {
     const provider = providerFor(storage, params.providerId, {
-      model: params.model, preference: storage.get('agents', `${kind}-builder`)?.execution,
+      model: params.model, effort: params.effort, preference: storage.get('agents', `${kind}-builder`)?.execution,
       env: { DOXIE_ROOT: storage.root, DOXIE_PROJECT_ROOT: storage.root },
     });
     return execute({ id: `${kind}-builder` }, { ...params, builder: true }, params.cwd, provider, params.prompt, params.cwd);

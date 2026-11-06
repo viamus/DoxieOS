@@ -5,7 +5,7 @@ const { nextCron } = require('./workflows.cjs');
 const { safePath } = require('./storage.cjs');
 const { sweepScratch } = require('./housekeeping.cjs');
 const { definitions, settingsFor, providerEnvironment, jsonSetting } = require('./providers.cjs');
-const { normalizeModel } = require('./execution.cjs');
+const { normalizeModel, normalizeEffort } = require('./execution.cjs');
 const { discoverModels } = require('./model-catalog.cjs');
 const { executablePath, launch } = require('./processes.cjs');
 
@@ -107,7 +107,10 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
         const models = Array.isArray(value.models) ? value.models.map(normalizeModel).filter(Boolean) : defaults.models;
         const environment = validatedEnvironment(value.environment ?? old[id]?.environment);
         const executable = String(value.executable || defaults.executable).trim();
-        configured[id] = { ...(defaults.localBaseUrl && executable === defaults.executable ? {} : { executable }), model: normalizeModel(value.model), models, environment };
+        configured[id] = {
+          ...(defaults.localBaseUrl && executable === defaults.executable ? {} : { executable }),
+          model: normalizeModel(value.model), effort: normalizeEffort(value.effort, id), models, environment,
+        };
       }
       storage.setSetting('desktop.providers', configured);
       inventories.clear();
@@ -154,7 +157,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
   function startRun(id, params) {
     return agents.start(id, {
       arguments: params.arguments, inputs: params.inputs || params.fields, mode: params.mode, modeId: params.modeId,
-      workspaceId: params.workspaceId, catalogId: params.catalogId, providerId: params.providerId, model: params.model,
+      workspaceId: params.workspaceId, catalogId: params.catalogId, providerId: params.providerId, model: params.model, effort: params.effort,
       env: validatedEnvironment(params.env, true),
     });
   }

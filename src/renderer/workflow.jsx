@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, ArrowDownToLine, ArrowRight, BookOpen, Bot, Box, Check, Clock3, GitBranch, Grip, Layers3, Link2, Move, Pencil, Play, Plus, RotateCcw, Save, ShieldCheck, Square, Terminal, Trash2, Workflow, Wrench, X } from 'lucide-react';
-import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, Status, Tag, active, go, invoke, nameOf, part, selectModes, slug, split, useApp, useAsync } from './ui.jsx';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, Status, Tag, active, go, invoke, nameOf, part, selectModes, slug, split, useApp, useAsync, useEffortLabel } from './ui.jsx';
 import { Guidance, LogOutput, recordRoute } from './automation.jsx';
 import { FilesBrowser } from './workbench.jsx';
 
@@ -138,7 +138,7 @@ function NodeEditor({ node, nodes, catalogId, change, remove }) {
   const modeField = Object.keys(modes).length > 0 && <Field label="Mode"><select aria-label="Mode" value={mode || ''} onChange={(event) => set({ [toolId && kind === 'Tool' ? 'toolMode' : 'agentMode']: event.target.value })}><option value="">Default</option>{Object.keys(modes).map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>;
   const workspaceField = <Field label="Execution workspace"><select aria-label="Execution workspace" value={node.workspaceId || ''} onChange={(event) => set({ workspaceId: event.target.value || null })}><option value="">Workflow workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>;
   const inherited = activeTool?.execution || activeAgent?.execution;
-  const executionFields = <ExecutionFields value={node.execution} inherited={inherited} inheritedLabel={inherited?.providerId ? toolId ? 'Connector default' : 'Agent default' : 'Application default'} requireProvider onChange={({ providerId, model }) => set({ execution: providerId ? { providerId, ...(model ? { model } : {}) } : null })} />;
+  const executionFields = <ExecutionFields value={node.execution} inherited={inherited} inheritedLabel={inherited?.providerId ? toolId ? 'Connector default' : 'Agent default' : 'Application default'} requireProvider onChange={({ providerId, model, effort }) => set({ execution: providerId ? { providerId, ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : null })} />;
   return <Panel title="Selected node" icon={Move} actions={kind !== 'Trigger' && <IconButton icon={Trash2} label="Remove node" onClick={remove} />}><div className="panel-body stack">
     <div className="form-grid"><Field label="Node ID"><input readOnly value={node.id} /></Field><Field label="Label"><input required value={node.label || ''} onChange={(event) => set({ label: event.target.value })} /></Field></div>
     {kind === 'Agent' && !toolId && <div className="form-grid">
@@ -281,6 +281,7 @@ function DecisionDialog({ approval, node, close, submit }) {
 }
 
 export function WorkflowPage({ id, catalogId, runId }) {
+  const effortLabel = useEffortLabel();
   const { state, perform, lastEvent } = useApp();
   const workflow = state.workflows.find((item) => item.id === id && (!catalogId || item.catalogId === catalogId));
   const runs = state.workflowRuns.filter((run) => run.workflowId === id && (!catalogId || !run.catalogId || catalogId === run.catalogId)).sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
@@ -316,7 +317,7 @@ export function WorkflowPage({ id, catalogId, runId }) {
     {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.triggeredBy && <Tag>{run.triggeredBy}</Tag>}</div><div className="row-list">{nodes.map((item) => {
       const step = nodeRuns[item.id];
       const provider = state.providers.find(({ id }) => id === step?.providerId);
-      const detail = [nodeType(item), nameOf(provider) || step?.providerId, step?.model].filter(Boolean).join(' · ');
+      const detail = [nodeType(item), nameOf(provider) || step?.providerId, step?.model, step?.effort && effortLabel(step.effort)].filter(Boolean).join(' · ');
       return <ItemRow key={item.id} title={item.label || item.id} detail={detail} icon={nodeIcon(item)} onClick={() => setSelectedNode(item.id)}><Status status={step?.status || 'Pending'} /></ItemRow>;
     })}</div>
       {active(run.status) && <div className="panel-body"><Guidance title="Guide the running workflow…" submit={(text) => perform('workflow:guide', [run.id, text], 'Guidance sent')} /></div>}

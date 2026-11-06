@@ -29,6 +29,9 @@ installed local dependencies.
 
 Use `npm run package -- workflow-context` to build into
 `release/workflow-context/` when keeping a separate portable installation.
+On Windows, `npm run package -- next` publishes to `release/next/` and selects
+that bundle for the repository launcher. Close the current DoxieOS window
+before starting the update. A later standard package selects its own bundle.
 
 ## Storage and imports
 
@@ -82,6 +85,12 @@ Model selectors can refresh the installed providers' inventory and show its
 source. Codex and Claude Code use model metadata from the DoxieOS or installed
 CLI profiles when available. A cached or advertised model can still require
 account access. You can enter a model ID directly for a custom provider setup.
+
+The reasoning effort control shows the levels the model advertises when
+available. A run can override the effort for one execution, and an agent,
+Prompt connector, or workflow node can save a preference. Switching to a
+different model skips defaults tied to the previous model. Run history records
+the requested level. Local adapters use their own reasoning defaults.
 
 For local models, run your existing Ollama or LM Studio server on its default
 loopback port and choose an exposed model in DoxieOS. These adapters use the

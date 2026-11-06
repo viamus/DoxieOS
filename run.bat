@@ -1,10 +1,14 @@
 @echo off
-setlocal
+setlocal DisableDelayedExpansion
 set "ELECTRON_RUN_AS_NODE="
 set "DOXIE_LAUNCH_EXE=%~dp0DoxieOS.exe"
 if exist "%DOXIE_LAUNCH_EXE%" goto launch
+set "DOXIE_LAUNCH_EXE=%~dp0release\next\DoxieOS-win32-x64\DoxieOS.exe"
+if exist "%~dp0release\.launch-next-DoxieOS-win32-x64" if exist "%DOXIE_LAUNCH_EXE%" goto launch
 set "DOXIE_LAUNCH_EXE=%~dp0release\DoxieOS-win32-x64\DoxieOS.exe"
 if exist "%DOXIE_LAUNCH_EXE%" goto launch
+set "DOXIE_LAUNCH_EXE=%~dp0release\next\DoxieOS-win32-arm64\DoxieOS.exe"
+if exist "%~dp0release\.launch-next-DoxieOS-win32-arm64" if exist "%DOXIE_LAUNCH_EXE%" goto launch
 set "DOXIE_LAUNCH_EXE=%~dp0release\DoxieOS-win32-arm64\DoxieOS.exe"
 if exist "%DOXIE_LAUNCH_EXE%" goto launch
 

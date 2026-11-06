@@ -21,7 +21,7 @@ test('builder sends explicit prior turns to a fresh provider call and preserves 
       },
     };
     const builders = createBuilders({ storage, agents, emit: () => {} });
-    const session = builders.start('workflow', { model: 'builder-override' });
+    const session = builders.start('workflow', { model: 'builder-override', effort: 'high' });
     await writeFile(join(storage.roots.sandboxes, session.id, '.draft', 'workflow.json'), '{"id":"legacy","name":"Legacy draft"}');
     assert.equal(builders.get(session.id).draft.name, 'Legacy draft');
     await builders.message(session.id, 'A first message\nwith exact spacing.');
@@ -29,6 +29,7 @@ test('builder sends explicit prior turns to a fresh provider call and preserves 
     assert.equal(calls.length, 2);
     assert.equal(calls[1].providerId, 'codex');
     assert.equal(calls[1].model, 'builder-override');
+    assert.equal(calls[1].effort, 'high');
     assert.equal(calls[1].sessionId, undefined);
     const request = JSON.parse(calls[1].prompt.split('\n\n').at(-1));
     assert.deepEqual(request.previousTurns, [

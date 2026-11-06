@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Activity, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, MessageSquare, Pencil, Play, Plug, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
-import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useText } from './ui.jsx';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useEffortLabel, useText } from './ui.jsx';
 import { FilesBrowser, Markdown } from './workbench.jsx';
 
 export const recordKey = (item) => `${item.catalogId || 'default'}/${item.id}`;
@@ -101,7 +101,7 @@ function AgentRunForm({ agent, launch, connector }) {
     try {
       const inputs = Object.fromEntries(fields.map((field) => [field.id, values[field.id] ?? field.defaultValue ?? '']));
       const env = Object.fromEntries(environment.map(({ name, value }) => [name.trim(), value]));
-      const result = await launch({ mode: mode || undefined, workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, inputs, arguments: extra || undefined, catalogId: agent.catalogId, env });
+      const result = await launch({ mode: mode || undefined, workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, effort: execution.effort || undefined, inputs, arguments: extra || undefined, catalogId: agent.catalogId, env });
       if (result) setEnvironment([]);
     } finally { setPending(false); }
   }}>
@@ -130,22 +130,24 @@ function AgentRunForm({ agent, launch, connector }) {
 
 function AgentDefaults({ agent, connector }) {
   const { state, refresh, notify } = useApp();
+  const effortLabel = useEffortLabel();
   const [execution, setExecution] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const effectiveId = agent.execution?.providerId || state.settings.defaultProvider;
   const provider = state.providers.find(({ id }) => id === effectiveId);
   const model = agent.execution?.model || provider?.model;
+  const effort = agent.execution?.effort || ((!provider?.model || provider.model === model) && provider?.effort);
   const close = () => { if (!saving) setExecution(null); };
   return <>
-    <Tag>{[nameOf(provider) || effectiveId, model].filter(Boolean).join(' · ') || 'Application default'}</Tag>
+    <Tag>{[nameOf(provider) || effectiveId, model, effort && effortLabel(effort)].filter(Boolean).join(' · ') || 'Application default'}</Tag>
     <Button icon={Cpu} onClick={() => { setError(''); setExecution(agent.execution || {}); }}>Execution defaults</Button>
     {execution && <Modal title={connector ? 'Connector execution defaults' : 'Agent execution defaults'} icon={Cpu} close={close}><form onSubmit={async (event) => {
       event.preventDefault();
       setSaving(true);
       setError('');
-      const { providerId, model } = execution;
-      const next = providerId ? { providerId, ...(model ? { model } : {}) } : null;
+      const { providerId, model, effort } = execution;
+      const next = providerId ? { providerId, ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : null;
       try {
         if (connector) await invoke('connector:saveExecution', agent.id, next, agent.catalogId);
         else await invoke('catalog:save', 'agents', { id: agent.id, catalogId: agent.catalogId, execution: next });
@@ -201,6 +203,7 @@ function useAgentRun(id) {
 }
 
 export function AgentPage({ id, catalogId, runId, connector = false }) {
+  const effortLabel = useEffortLabel();
   const { state, perform } = useApp();
   const [files, setFiles] = useState(false);
   const section = connector ? 'connectors' : 'agents';
@@ -218,7 +221,7 @@ export function AgentPage({ id, catalogId, runId, connector = false }) {
     <div className="dashboard-grid detail-grid">
       <Panel title="Configure run" icon={Play}><AgentRunForm agent={agent} connector={connector} launch={async (params) => { const result = await perform(connector ? 'connector:start' : 'agent:start', [id, params]); if (result?.id) go(recordRoute(section, agent, '', result.id)); return result; }} /></Panel>
       <Panel title={run ? 'Execution' : 'Latest run'} icon={Terminal} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('agent:stop', [run.id])}>Stop</Button>}</>}>
-        {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.providerId && <Tag>{nameOf(state.providers.find(({ id }) => id === run.providerId)) || run.providerId}</Tag>}{run.model && <Tag>{run.model}</Tag>}{run.exitCode !== null && run.exitCode !== undefined && <Tag>Exit {run.exitCode}</Tag>}</div>
+        {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.providerId && <Tag>{nameOf(state.providers.find(({ id }) => id === run.providerId)) || run.providerId}</Tag>}{run.model && <Tag>{run.model}</Tag>}{run.effort && <Tag>{effortLabel(run.effort)}</Tag>}{run.exitCode !== null && run.exitCode !== undefined && <Tag>Exit {run.exitCode}</Tag>}</div>
           <LogOutput lines={run.output || run.logs} /><ErrorNotice error={detail.error} />
           {active(run.status) && <div className="panel-body"><Guidance title={connector ? 'Guide the running connector…' : 'Guide the running agent…'} submit={(text) => perform('agent:guide', [run.id, text], 'Guidance sent')} /></div>}
           {run.usage && <div className="usage-grid"><div><small>Input tokens</small><strong>{Number(run.usage.inputTokens || 0).toLocaleString()}</strong></div><div><small>Output tokens</small><strong>{Number(run.usage.outputTokens || 0).toLocaleString()}</strong></div><div><small>Cost (USD)</small><strong>{run.usage.totalCostUsd ?? '—'}</strong></div></div>}
@@ -252,7 +255,7 @@ export function BuilderPage({ kind, query }) {
   const begin = async () => {
     setPending(true);
     try {
-      const result = await perform('builder:start', [kind, { workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, catalogId, editingId: editorId }]);
+      const result = await perform('builder:start', [kind, { workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, effort: execution.effort || undefined, catalogId, editingId: editorId }]);
       if (result?.id) { setSession(result); setSessionId(result.id); }
     } finally { setPending(false); }
   };

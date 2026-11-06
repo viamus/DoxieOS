@@ -125,7 +125,7 @@ function createBuilders({ storage, agents, emit }) {
     current.add(id);
     try {
       persist(session);
-      const job = agents.runBuilder(session.kind, { cwd: directory, providerId, model: session.model, prompt });
+      const job = agents.runBuilder(session.kind, { cwd: directory, providerId, model: session.model, effort: session.effort, prompt });
       const result = await agents.wait(job.id);
       session.status = result.status === 'Completed' ? 'Ready' : 'Failed';
       const source = result.status === 'Completed' ? 'stdout' : 'stderr';

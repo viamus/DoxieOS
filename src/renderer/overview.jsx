@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleDollarSign, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2 } from 'lucide-react';
-import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, split, useApp, useText } from './ui.jsx';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, split, useApp, useEffortLabel, useText } from './ui.jsx';
 
 const categories = [
   { key: 'workflows', label: 'Workflows', icon: GitBranch, tone: 'copper' },
@@ -178,7 +178,9 @@ function ProviderEditor({ provider, config, close, save }) {
     } catch (problem) { setError(problem.message); }
   }}><div className="modal-body stack">
     <Field label="CLI executable"><input value={draft.executable} onChange={(event) => setDraft({ ...draft, executable: event.target.value })} /></Field>
-    <ModelField label="Default model" providerId={provider.id} value={draft.model} suggestions={split(draft.models)} hint="Used when a run inherits this provider’s model." placeholder="CLI default" onChange={(model) => setDraft({ ...draft, model })} />
+    <ModelField label="Default model" providerId={provider.id} value={draft.model} suggestions={split(draft.models)} hint="Used when a run inherits this provider’s model." placeholder="CLI default"
+      onChange={(model, effort) => setDraft({ ...draft, model, effort })}
+      effort={{ levels: provider.reasoningEfforts, value: draft.effort, onChange: (effort) => setDraft({ ...draft, effort }) }} />
     <Field label="Model names" hint="Separate models with commas."><input value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} /></Field>
     {replaceEnvironment ? <Field label="Environment variables" hint="Enter a JSON object with string values."><JsonInput value={environment} onChange={setEnvironment} /></Field> : <Button onClick={() => setReplaceEnvironment(true)}>Set environment variables</Button>}
     <ErrorNotice error={error} />
@@ -240,6 +242,7 @@ function StoragePanel() {
 }
 
 export function SettingsPage() {
+  const effortLabel = useEffortLabel();
   const { state, perform } = useApp();
   const t = useText();
   const [editMcp, setEditMcp] = useState(null);
@@ -260,7 +263,7 @@ export function SettingsPage() {
   return <div className="page"><PageHeading icon={Settings2} title={t('Settings.Title', 'Settings')} subtitle={t('Settings.ShortSubtitle', 'Manage local providers, MCP servers, catalogs and preferences.')} />
     <Panel title={t('Settings.LanguageTitle', 'Language')} icon={Settings2}><div className="panel-body"><Field label={t('Settings.LanguageLabel', 'Application language')}><select value={settings.language || 'en'} onChange={(event) => save({ language: event.target.value })}><option value="en">English</option><option value="pt-BR">Português (Brasil)</option><option value="es">Español</option></select></Field></div></Panel>
     <Panel title={t('Settings.AgentProviders', 'Agent CLI providers')} icon={Cpu} hint="Agents, workflow nodes and individual runs can override these defaults.">
-      <div className="row-list">{state.providers.map((provider) => <ItemRow key={provider.id} icon={Terminal} title={provider.displayName || provider.name || provider.id} detail={[provider.executable || provider.id, provider.model].filter(Boolean).join(' · ')}>
+      <div className="row-list">{state.providers.map((provider) => <ItemRow key={provider.id} icon={Terminal} title={provider.displayName || provider.name || provider.id} detail={[provider.executable || provider.id, provider.model, provider.effort && effortLabel(provider.effort)].filter(Boolean).join(' · ')}>
         {settings.defaultProvider === provider.id ? <Tag>Default</Tag> : <Button variant="ghost" onClick={() => save({ defaultProvider: provider.id })}>Set as default</Button>}
         <Status status={provider.status || (provider.available === false ? 'Not found' : 'Available')} />
         {provider.requiresAuth !== false && <Button onClick={async () => { const session = await perform('settings:auth', [provider.id]); if (session) go(`/consoles${session.id ? `?session=${part(session.id)}` : ''}`); }}>Authenticate</Button>}

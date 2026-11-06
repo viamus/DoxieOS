@@ -52,6 +52,7 @@ function initializeRunStore(db) {
   const nodeColumns = new Set(db.prepare('PRAGMA table_info(workflow_node_runs)').all().map(row => row.name));
   if (!nodeColumns.has('provider_id')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN provider_id TEXT NULL');
   if (!nodeColumns.has('model')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN model TEXT NULL');
+  if (!nodeColumns.has('effort')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN effort TEXT NULL');
   if (!nodeColumns.has('has_transient_context')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN has_transient_context INTEGER NOT NULL DEFAULT 0');
 
   const updateRun = db.prepare(`
@@ -61,11 +62,11 @@ function initializeRunStore(db) {
       trigger_inputs=excluded.trigger_inputs, catalog_id=excluded.catalog_id
   `);
   const updateNode = db.prepare(`
-    INSERT INTO workflow_node_runs (run_id, node_id, status, started_at, finished_at, output_summary, logs, provider_id, model, has_transient_context)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workflow_node_runs (run_id, node_id, status, started_at, finished_at, output_summary, logs, provider_id, model, effort, has_transient_context)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (run_id, node_id) DO UPDATE SET status=excluded.status, started_at=excluded.started_at,
       finished_at=excluded.finished_at, output_summary=excluded.output_summary, logs=excluded.logs,
-      provider_id=excluded.provider_id, model=excluded.model, has_transient_context=excluded.has_transient_context
+      provider_id=excluded.provider_id, model=excluded.model, effort=excluded.effort, has_transient_context=excluded.has_transient_context
   `);
 
   const runs = new Map(db.prepare('SELECT * FROM workflow_runs').all().map(row => [row.id, {
@@ -90,6 +91,7 @@ function initializeRunStore(db) {
       outputSummary: row.output_summary,
       providerId: row.provider_id,
       model: row.model,
+      effort: row.effort,
       hasTransientContext: Boolean(row.has_transient_context),
       logs: row.logs ? row.logs.split(logSeparator) : [],
     };
@@ -102,7 +104,7 @@ function initializeRunStore(db) {
         run.status, JSON.stringify(run.triggerInputs), run.catalogId);
       for (const node of nodes) {
         updateNode.run(run.id, node.nodeId, node.status, node.startedAt, node.finishedAt,
-          node.outputSummary, node.logs.join(logSeparator), node.providerId, node.model, Number(node.hasTransientContext));
+          node.outputSummary, node.logs.join(logSeparator), node.providerId, node.model, node.effort, Number(node.hasTransientContext));
       }
       db.exec('COMMIT');
     } catch (error) {
@@ -149,7 +151,7 @@ function readInputs(value) {
 }
 
 function createNodeRun(nodeId) {
-  return { nodeId, status: 'Pending', startedAt: null, finishedAt: null, outputSummary: null, providerId: null, model: null, hasTransientContext: false, logs: [] };
+  return { nodeId, status: 'Pending', startedAt: null, finishedAt: null, outputSummary: null, providerId: null, model: null, effort: null, hasTransientContext: false, logs: [] };
 }
 
 function safeId(value, label) {
@@ -982,6 +984,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     record.outputSummary = original.outputSummary ?? `reused from ${replay.previous.id}/${node.id}`;
     record.providerId = original.providerId;
     record.model = original.model;
+    record.effort = original.effort;
     record.hasTransientContext = original.hasTransientContext;
     record.logs.push(`[rerun-from] reused artifacts from run ${replay.previous.id}, node ${node.id}`);
     update(context.run, [record]);
@@ -1069,8 +1072,9 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const modeId = mode?.id ?? requestedMode ?? null;
     const workspace = workspaceFor(context, scope, node);
     if (mode?.requiresWorkspace && !workspace) throw new Error(`${role} mode '${modeId}' requires a workspace`);
-    const { providerId, model } = node.execution ?? {};
+    const { providerId, model, effort } = node.execution ?? {};
     if (model && !providerId) throw new Error(`Node '${node.id}' must specify the provider for its model override`);
+    if (effort && !providerId) throw new Error(`Node '${node.id}' must specify the provider for its reasoning effort override`);
     const upstream = handoff.sources.filter(source => source.artifactDirectory
       && (source.kind !== 'loop-item' || scope.loopEntry === node.id));
 
@@ -1117,7 +1121,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const started = await agents.start(agentId, {
       arguments: args, inputs, mode: modeId, modeId, keepSessionAlive: mode?.keepSessionAlive ?? false,
       workspaceId: workspace?.id, workspacePath: workspace?.path, cwd: workspace?.path, env, catalogId: agent.catalogId,
-      providerId, model, handoff, guidance: [...context.hints], contextOutputPath: safePath(transport, 'context.json'), workflowRunId: run.id, onOutput,
+      providerId, model, effort, handoff, guidance: [...context.hints], contextOutputPath: safePath(transport, 'context.json'), workflowRunId: run.id, onOutput,
     });
     const agentRunId = typeof started === 'string' ? started : started?.id;
     if (!agentRunId) throw new Error(`${role} '${agentId}' did not return a run id`);
@@ -1130,10 +1134,12 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       if (scope.signal.aborted) cancelAgent();
       record.providerId = started?.providerId ?? null;
       record.model = started?.model ?? null;
+      record.effort = started?.effort ?? null;
       update(run, [record]);
       const result = await agents.wait(agentRunId);
       record.providerId = result?.providerId ?? record.providerId;
       record.model = result?.model ?? record.model;
+      record.effort = result?.effort ?? record.effort;
       for (const line of (result?.output ?? []).slice(mirrored)) onOutput(line);
       scope.signal.throwIfAborted();
       if (!['completed', 'succeeded'].includes(lower(result?.status))) {

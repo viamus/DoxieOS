@@ -10,10 +10,16 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
   const root = join(profile, 'workbench');
   const outside = join(directory, 'outside');
   const codexProfile = join(root, '.providers', 'codex');
+  const producerModel = {
+    slug: 'doxie/producer-v1', display_name: 'Fixture producer', visibility: 'list',
+    supported_reasoning_levels: [{ effort: 'medium', description: 'Balanced effort' }, { effort: 'high', description: 'Thorough effort' }],
+  };
+  const consumerModel = {
+    slug: 'doxie/consumer-v2', display_name: 'Fixture consumer', visibility: 'list',
+    supported_reasoning_levels: [{ effort: 'low', description: 'Quick effort' }],
+  };
   await mkdir(codexProfile, { recursive: true });
-  await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [
-    { slug: 'doxie/producer-v1', display_name: 'Fixture producer', visibility: 'list' },
-  ] }));
+  await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [producerModel] }));
   const executablePath = process.env.DOXIE_TEST_EXECUTABLE;
   const launchOptions = {
     ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }),
@@ -118,13 +124,13 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     await expect.poll(() => page.evaluate(async () => (await window.doxie.invoke('models:list', 'codex')).models.map(({ id }) => id)))
       .toContain('doxie/producer-v1');
     await expect(page.getByRole('dialog').locator('datalist option[value="doxie/producer-v1"]')).toHaveCount(1);
-    await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [
-      { slug: 'doxie/producer-v1', display_name: 'Fixture producer', visibility: 'list' },
-      { slug: 'doxie/consumer-v2', display_name: 'Fixture consumer', visibility: 'list' },
-    ] }));
+    await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [producerModel, consumerModel] }));
     await page.getByRole('dialog').getByRole('button', { name: 'Refresh models' }).click();
     await expect(page.getByRole('dialog').locator('datalist option[value="doxie/consumer-v2"]')).toHaveCount(1);
     await page.getByRole('dialog').getByLabel('Model', { exact: true }).fill('doxie/producer-v1');
+    const defaultsEffort = page.getByRole('dialog').getByRole('group', { name: 'Reasoning effort' });
+    await defaultsEffort.getByRole('radio', { name: 'High', exact: true }).check();
+    await expect(defaultsEffort.getByRole('radio', { name: 'Low', exact: true })).toHaveCount(0);
     await page.getByRole('dialog').getByRole('button', { name: 'Save defaults' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
@@ -136,31 +142,40 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     await page.evaluate(async executable => {
       await window.doxie.invoke('settings:save', { providers: { codex: { executable } } });
     }, mock);
+    const standaloneEffort = page.getByRole('group', { name: 'Reasoning effort' });
+    await standaloneEffort.getByRole('radio', { name: 'Medium', exact: true }).check();
     await page.getByLabel(/Prompt \(what to do with the input\)/).fill('Run the Prompt connector');
     await page.getByRole('button', { name: 'Run connector', exact: true }).click();
     await expect(page).toHaveURL(/#\/connectors\/prompt.*run=/);
     const standaloneId = new URLSearchParams(new URL(page.url()).hash.split('?')[1]).get('run');
     await expect.poll(async () => (await page.evaluate(id => window.doxie.invoke('agent:run', id), standaloneId)).status).toBe('Completed');
-    expect((await page.evaluate(id => window.doxie.invoke('agent:run', id), standaloneId)).connectorId).toBe('prompt');
+    expect(await page.evaluate(id => window.doxie.invoke('agent:run', id), standaloneId)).toMatchObject({ connectorId: 'prompt', effort: 'medium' });
 
-    const contextualRun = await page.evaluate(async () => {
+    await page.evaluate(async () => {
       await window.doxie.invoke('catalog:save', 'workflows', {
         id: 'context-flow', name: 'Context flow', enabled: true, trigger: { kind: 'Manual' },
         nodes: [
-          { id: 'producer', kind: 'Tool', toolId: 'prompt', toolMode: 'run', inputs: { prompt: 'Produce transient context' } },
-          { id: 'consumer', kind: 'Agent', agentId: 'prompt', inputs: { prompt: 'Consume transient context' }, execution: { providerId: 'codex', model: 'doxie/consumer-v2' } },
+          { id: 'producer', label: 'Produce context', kind: 'Tool', toolId: 'prompt', toolMode: 'run', inputs: { prompt: 'Produce transient context' } },
+          { id: 'consumer', label: 'Consume context', kind: 'Agent', agentId: 'prompt', inputs: { prompt: 'Consume transient context' }, execution: { providerId: 'codex', model: 'doxie/consumer-v2' } },
         ],
         edges: [{ fromNodeId: 'producer', toNodeId: 'consumer' }],
       });
-      return window.doxie.invoke('workflow:start', 'context-flow');
     });
+    await page.evaluate(() => { window.location.hash = '/workflows/context-flow/edit'; });
+    await page.getByRole('button', { name: /Consume context/ }).click();
+    const consumerEffort = page.getByRole('group', { name: 'Reasoning effort' });
+    await consumerEffort.getByRole('radio', { name: 'Low', exact: true }).check();
+    await expect(consumerEffort.getByRole('radio', { name: 'High', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Save workflow', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Context flow', exact: true })).toBeVisible();
+    const contextualRun = await page.evaluate(() => window.doxie.invoke('workflow:start', 'context-flow'));
     let finishedContext;
     await expect.poll(async () => {
       finishedContext = await page.evaluate(id => window.doxie.invoke('workflow:run', id), contextualRun.id);
       return finishedContext.status;
     }, { timeout: 15_000 }).toBe('Succeeded');
-    expect(finishedContext.nodeRuns.producer).toMatchObject({ model: 'doxie/producer-v1', hasTransientContext: true });
-    expect(finishedContext.nodeRuns.consumer).toMatchObject({ model: 'doxie/consumer-v2' });
+    expect(finishedContext.nodeRuns.producer).toMatchObject({ model: 'doxie/producer-v1', effort: 'high', hasTransientContext: true });
+    expect(finishedContext.nodeRuns.consumer).toMatchObject({ model: 'doxie/consumer-v2', effort: 'low' });
     expect(await readFile(join(root, '.runs', contextualRun.id, 'consumer', 'result.json'), 'utf8'))
       .toBe('{ "buildId": 9007199254740993, "note": "Preserve this context" }\n');
     await expect(stat(join(root, '.runs', contextualRun.id, '.doxie-transient'))).rejects.toThrow(/ENOENT/);
@@ -172,6 +187,10 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     await expect(restarted.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
     const restored = await restarted.evaluate(id => window.doxie.invoke('workflow:run', id), runId);
     expect(restored.status).toBe('Succeeded');
+    const restoredContext = await restarted.evaluate(id => window.doxie.invoke('workflow:run', id), contextualRun.id);
+    expect(restoredContext.nodeRuns.consumer.effort).toBe('low');
+    const restoredStandalone = await restarted.evaluate(id => window.doxie.invoke('agent:run', id), standaloneId);
+    expect(restoredStandalone.effort).toBe('medium');
   } finally {
     await application?.close().catch(() => {});
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });

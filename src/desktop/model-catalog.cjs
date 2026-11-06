@@ -3,7 +3,7 @@ const { get } = require('node:http');
 const { homedir, tmpdir } = require('node:os');
 const { basename, isAbsolute, join, parse, relative, resolve, sep } = require('node:path');
 const toml = require('@iarna/toml');
-const { normalizeModel } = require('./execution.cjs');
+const { normalizeModel, normalizeEffort } = require('./execution.cjs');
 const { executablePath, launch, killTree } = require('./processes.cjs');
 const { safePath } = require('./storage.cjs');
 
@@ -27,7 +27,7 @@ function makeResult(providerId, source, models, message, observedAt) {
   };
 }
 
-function modelRow(value, displayName, source) {
+function modelRow(value, displayName, source, reasoningEfforts) {
   let id;
   try { id = normalizeModel(value); }
   catch { return null; }
@@ -35,14 +35,30 @@ function modelRow(value, displayName, source) {
   if (!id || credential.test(id)) return null;
   const label = typeof displayName === 'string' && !credential.test(displayName)
     ? displayName.replace(/[\p{Cc}\p{Cf}]/gu, ' ').trim().slice(0, 160) : '';
-  return { id, label: label || id, source };
+  return { id, label: label || id, source, ...(reasoningEfforts ? { reasoningEfforts } : {}) };
+}
+
+function modelEfforts(levels, providerId) {
+  if (!Array.isArray(levels)) return undefined;
+  const allowed = new Set();
+  for (const level of levels) {
+    try {
+      const effort = normalizeEffort(level, providerId);
+      if (effort) allowed.add(effort);
+    } catch { /* Ignore capability names the installed integration does not handle. */ }
+  }
+  return [...allowed];
 }
 
 function uniqueModels(rows) {
   const values = new Map();
   for (const row of rows) {
-    if (row && !values.has(row.id)) values.set(row.id, row);
-    if (values.size === maxModels) break;
+    if (!row) continue;
+    const prior = values.get(row.id);
+    if (!prior && values.size < maxModels) values.set(row.id, row);
+    else if (prior && !prior.reasoningEfforts && row.reasoningEfforts) {
+      values.set(row.id, { ...prior, reasoningEfforts: row.reasoningEfforts });
+    }
   }
   return [...values.values()];
 }
@@ -61,7 +77,8 @@ function codexRows(catalog, source) {
   const rows = Array.isArray(catalog) ? catalog : catalog?.models;
   if (!Array.isArray(rows)) return null;
   return uniqueModels(rows.filter(row => row && (!row.visibility || row.visibility === 'list'))
-    .map(row => modelRow(row.slug, row.display_name, source)));
+    .map(row => modelRow(row.slug, row.display_name, source,
+      modelEfforts(Array.isArray(row.supported_reasoning_levels) ? row.supported_reasoning_levels.map(level => level?.effort) : undefined, 'codex'))));
 }
 
 function declaredCatalogPath(directory, declared) {
@@ -142,7 +159,8 @@ function parseClaudeInitialization(output) {
       const { type, response } = JSON.parse(line);
       if (type !== 'control_response' || response?.request_id !== 'model-catalog' || response.subtype !== 'success') continue;
       const models = response.response?.models;
-      if (Array.isArray(models)) return uniqueModels(models.map(row => modelRow(row?.value, row?.displayName, 'claude-cli-advertised')));
+      if (Array.isArray(models)) return uniqueModels(models.map(row => modelRow(row?.value, row?.displayName, 'claude-cli-advertised',
+        row?.supportsEffort === false ? [] : modelEfforts(row?.supportedEffortLevels, 'claude-code'))));
     } catch { /* A startup diagnostic is not part of the control protocol. */ }
   }
   return null;

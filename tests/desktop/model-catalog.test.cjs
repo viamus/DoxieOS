@@ -22,7 +22,9 @@ test('uses the selected Codex cache, omits hidden and invalid entries, and strip
   const secret = ['sk', 'proj', 'this-must-not-be-exported-in-metadata'].join('-');
   await put('.providers/codex/models_cache.json', {
     fetched_at: observedAt, identity: { authToken: secret }, models: [
-      { slug: 'doxie/producer-v1', display_name: 'Fixture producer', visibility: 'list' },
+      { slug: 'doxie/producer-v1', display_name: 'Fixture producer', visibility: 'list', supported_reasoning_levels: [
+        { effort: 'low' }, { effort: 'ultra' }, { effort: 'ultra' }, { effort: 'future-level' },
+      ] },
       { slug: 'private-auxiliary', display_name: 'Hidden', visibility: 'hide' },
       { slug: 'doxie/producer-v1', display_name: 'Duplicate', visibility: 'list' },
       { slug: 'beta\ninvalid', display_name: 'Invalid', visibility: 'list' },
@@ -37,7 +39,7 @@ test('uses the selected Codex cache, omits hidden and invalid entries, and strip
   assert.equal(catalog.source, 'codex-workbench-cache');
   assert.equal(catalog.observedAt, observedAt);
   assert.deepEqual(catalog.models, [
-    { id: 'doxie/producer-v1', label: 'Fixture producer', source: 'codex-workbench-cache' },
+    { id: 'doxie/producer-v1', label: 'Fixture producer', source: 'codex-workbench-cache', reasoningEfforts: ['low', 'ultra'] },
     { id: 'real-model', label: 'real-model', source: 'codex-workbench-cache' },
   ]);
   assert(!JSON.stringify(catalog).includes(secret));

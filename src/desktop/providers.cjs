@@ -2,7 +2,7 @@ const { existsSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { executablePath } = require('./processes.cjs');
 const { safePath } = require('./storage.cjs');
-const { resolveExecution } = require('./execution.cjs');
+const { reasoningEfforts, normalizeEffort, resolveExecution } = require('./execution.cjs');
 const { localProviderBaseUrl } = require('./model-catalog.cjs');
 
 const definitions = {
@@ -44,7 +44,7 @@ function settingsFor(storage) {
     const provider = { ...defaults, ...saved[id], id, executable, localBaseUrl: defaults.localBaseUrl, requiresAuth: defaults.requiresAuth !== false };
     const env = providerEnvironment(storage, { ...process.env, ...provider.environment });
     return [id, {
-      ...provider,
+      ...provider, reasoningEfforts: reasoningEfforts[id] || [],
       installed: Boolean(executablePath(provider.executable, env)),
       authenticated: !provider.requiresAuth ? null : id === 'codex'
         ? Boolean(env.OPENAI_API_KEY || existsSync(join(env.CODEX_HOME, 'auth.json')))
@@ -63,15 +63,16 @@ function settingsFor(storage) {
 
 function providerFor(storage, id, options = {}) {
   const settings = settingsFor(storage);
-  const { providerId, model } = resolveExecution(settings, options.preference, { providerId: id, model: options.model });
+  const { providerId, model, effort = null } = resolveExecution(settings, options.preference, { ...options, providerId: id });
   const provider = settings.providers[providerId];
   if (provider.localBaseUrl && !model) throw new Error(`Select a model for ${provider.name}.`);
   const environment = providerEnvironment(storage, { ...process.env, ...provider.environment, ...options.env });
   delete environment.ELECTRON_RUN_AS_NODE;
   delete environment.CLAUDECODE;
+  if (providerId === 'claude-code' && effort) environment.CLAUDE_CODE_EFFORT_LEVEL = effort;
   const executable = executablePath(provider.executable, environment);
   if (!executable) throw new Error(`${provider.name} CLI was not found. Configure its executable in Settings.`);
-  return { ...provider, executable, model, environment };
+  return { ...provider, executable, model, effort, environment };
 }
 
 function usesCodex(provider) {
@@ -92,16 +93,23 @@ function localProviderArgs(provider) {
   ];
 }
 
+function effortArgs(provider) {
+  const effort = normalizeEffort(provider.effort, provider.id);
+  if (!effort) return [];
+  return provider.id === 'codex' ? ['-c', `model_reasoning_effort='${effort}'`] : ['--effort', effort];
+}
+
 function headlessArgs(provider) {
   const model = provider.model ? ['--model', provider.model] : [];
+  const effort = effortArgs(provider);
   if (usesCodex(provider)) {
     return ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json',
-      '--ephemeral', ...localProviderArgs(provider), ...model, '--color', 'never', '-'];
+      '--ephemeral', ...localProviderArgs(provider), ...model, ...effort, '--color', 'never', '-'];
   }
   return [
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
     '--verbose', '--include-partial-messages', '--dangerously-skip-permissions',
-    '--no-session-persistence', ...model,
+    '--no-session-persistence', ...model, ...effort,
   ];
 }
 

@@ -32,8 +32,10 @@ test('reads legacy history and streams a new provider run with arguments on stdi
         const section = prompt.split('## Doxie request\\n\\n')[1];
         const request = JSON.parse(section.split('\\n').slice(1).join('\\n').split('\\n\x60\x60\x60')[0]);
         const model = process.argv[process.argv.indexOf('--model') + 1];
+        const effort = process.argv[process.argv.indexOf('--effort') + 1];
         require('node:fs').writeFileSync(process.env.DOXIE_TEST_CAPTURE, JSON.stringify({ request, model,
-          ephemeral: process.argv.includes('--no-session-persistence'), contextOutputPath: process.env.DOXIE_WORKFLOW_CONTEXT_OUT }));
+          effort, effortEnvironment: process.env.CLAUDE_CODE_EFFORT_LEVEL, ephemeral: process.argv.includes('--no-session-persistence'),
+          contextOutputPath: process.env.DOXIE_WORKFLOW_CONTEXT_OUT }));
         console.log(JSON.stringify({ type: 'system', session_id: 'test-session' }));
         console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Finished' }] } }));
         console.log(JSON.stringify({ type: 'result', usage: { input_tokens: 12, output_tokens: 5 }, total_cost_usd: 0.02 }));
@@ -41,10 +43,11 @@ test('reads legacy history and streams a new provider run with arguments on stdi
     `);
     await writeFile(executable, windows ? `@"${process.execPath}" "%~dp0mock.cjs" %*\r\n` : `#!/bin/sh\nexec "${process.execPath}" "${mock}" "$@"\n`, { mode: 0o755 });
     storage.setSetting('desktop.providers', { 'claude-code': { executable } });
-    storage.save('agents', { id: 'example', name: 'Example', execution: { providerId: 'claude-code', model: 'agent-model' } });
+    storage.save('agents', { id: 'example', name: 'Example', execution: { providerId: 'claude-code', model: 'agent-model', effort: 'medium' } });
     const events = [];
     agents = createAgents({ storage, emit: event => events.push(event) });
     assert.equal(agents.getRun('previous').status, 'Interrupted');
+    assert.equal(agents.getRun('previous').effort, null);
     storage.save('agents', { id: 'legacy-persistent', modes: { run: { keepSessionAlive: true } } });
     assert.throws(() => agents.start('legacy-persistent'), /native Loop or Cron workflow/);
     const raw = '  first line\n    exact spacing & payload  ';
@@ -53,14 +56,17 @@ test('reads legacy history and streams a new provider run with arguments on stdi
       sources: [{ kind: 'node', nodeId: 'source', contextJson, artifacts: [] }] };
     const contextOutputPath = join(root, 'context.json');
     const result = agents.start('example', { arguments: raw, inputs: { text: raw }, handoff, contextOutputPath,
-      workflowRunId: 'run', env: { DOXIE_TEST_CAPTURE: captured } });
+      effort: 'xhigh', workflowRunId: 'run', env: { DOXIE_TEST_CAPTURE: captured, CLAUDE_CODE_EFFORT_LEVEL: 'low' } });
     const complete = await agents.wait(result.id);
     assert.equal(complete.status, 'Completed');
     assert.equal(complete.sessionId, 'test-session');
     assert.equal(complete.model, 'agent-model');
+    assert.equal(complete.effort, 'xhigh');
     assert.equal(complete.arguments, 'Workflow run / target');
     const dispatch = JSON.parse(await readFile(captured, 'utf8'));
     assert.equal(dispatch.model, 'agent-model');
+    assert.equal(dispatch.effort, 'xhigh');
+    assert.equal(dispatch.effortEnvironment, 'xhigh');
     assert.equal(dispatch.ephemeral, true);
     assert.equal(dispatch.request.arguments, raw);
     assert.deepEqual(dispatch.request.inputs, { text: raw });
@@ -99,6 +105,24 @@ test('resolves explicit execution overrides ahead of provider-specific agent pre
   assert.throws(() => normalizeExecution({ model: 'no-provider' }), /Select a provider/);
   assert.throws(() => normalizeExecution({ providerId: 'codex', model: 'unsafe & value' }), /Invalid provider model/);
   assert.ok(headlessArgs({ id: 'codex', model: 'codex-default' }).includes('--ephemeral'));
+});
+
+test('scopes inherited reasoning effort to its provider and model', () => {
+  const settings = { defaultProvider: 'codex', providers: {
+    codex: { model: 'default-model', effort: 'medium' }, 'claude-code': { model: null, effort: 'low' },
+  } };
+  const preference = { providerId: 'codex', model: 'custom-model', effort: 'ultra' };
+  assert.deepEqual(resolveExecution(settings, preference), preference);
+  assert.deepEqual(resolveExecution(settings, preference, { model: 'default-model' }), { providerId: 'codex', model: 'default-model', effort: 'medium' });
+  assert.deepEqual(resolveExecution(settings, preference, { model: 'another-model' }), { providerId: 'codex', model: 'another-model' });
+  assert.deepEqual(resolveExecution(settings, preference, { providerId: 'claude-code' }), { providerId: 'claude-code', model: null, effort: 'low' });
+  assert.equal(resolveExecution(settings, preference, { effort: 'high' }).effort, 'high');
+  assert.throws(() => normalizeExecution({ effort: 'high' }), /Select a provider/);
+  assert.throws(() => normalizeExecution({ providerId: 'ollama', effort: 'high' }), /Unsupported reasoning effort/);
+  assert.throws(() => normalizeExecution({ providerId: 'codex', effort: 'high&unsafe' }), /Unsupported reasoning effort/);
+  const args = headlessArgs({ id: 'codex', effort: 'ultra' });
+  assert.deepEqual(args.slice(args.indexOf('-c'), args.indexOf('-c') + 2), ['-c', "model_reasoning_effort='ultra'"]);
+  assert.doesNotThrow(() => invocation('codex.cmd', args));
 });
 
 test('routes explicitly selected local models through the Codex Responses client', () => {

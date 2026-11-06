@@ -57,6 +57,9 @@ try {
     const folder = basename(target);
     const archive = join(output, `${folder}.zip`);
     run('tar.exe', ['-a', '-cf', archive, folder], output);
+    const launchMarker = join(root, 'release', `.launch-next-${folder}`);
+    if (variant === 'next') await writeFile(launchMarker, '');
+    else if (!variant) await rm(launchMarker, { force: true });
     console.log(archive);
   }
 } finally {
