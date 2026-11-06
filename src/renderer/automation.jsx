@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, BookOpen, Bot, Clock3, Code2, Download, FileText, GitBranch, Import, MessageSquare, Pencil, Play, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
-import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useText } from './ui.jsx';
+import { Activity, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, MessageSquare, Pencil, Play, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useText } from './ui.jsx';
 import { FilesBrowser, Markdown } from './workbench.jsx';
 
 export const recordKey = (item) => `${item.catalogId || 'default'}/${item.id}`;
@@ -11,9 +11,12 @@ export function recordRoute(kind, item, child = '', runId) {
   return `/${kind}/${part(item.id)}${child ? `/${child}` : ''}${query.size ? `?${query}` : ''}`;
 }
 
-const categoryOf = (item) => item.displayCategory || item.customCategory || item.category || 'Other';
+const categoryOf = (item) => {
+  const category = item.displayCategory || item.customCategory || item.category || 'Other';
+  return category === 'Connector' ? 'Other' : category;
+};
 const iconOptions = { SmartToy: Bot, AutoAwesome: Sparkles, Code: Code2, Terminal, AccountTree: GitBranch, MenuBook: BookOpen, Shield: ShieldCheck, Search };
-const indexedText = (item) => [item.id, nameOf(item), item.description, categoryOf(item), item.skillName, ...(item.nodes || []).flatMap((node) => [node.label, node.agentId])].filter(Boolean).join(' ').toLowerCase();
+const indexedText = (item) => [item.id, nameOf(item), item.description, categoryOf(item), ...(item.nodes || []).flatMap((node) => [node.label, node.agentId, node.toolId])].filter(Boolean).join(' ').toLowerCase();
 
 function Recommendations({ items, kind }) {
   const [context, setContext] = useState('');
@@ -81,16 +84,13 @@ function AgentRunForm({ agent, launch }) {
   const modes = selectModes(agent);
   const [mode, setMode] = useState(Object.keys(modes)[0] || '');
   const [workspaceId, setWorkspaceId] = useState('');
-  const [providerId, setProviderId] = useState(state.settings.defaultProvider || state.providers[0]?.id || '');
-  const [model, setModel] = useState('');
+  const [execution, setExecution] = useState({});
   const [values, setValues] = useState({});
   const [extra, setExtra] = useState('');
   const [environment, setEnvironment] = useState([]);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const fields = modes[mode]?.fields || [];
-  const provider = state.providers.find((item) => item.id === providerId);
-  const models = state.settings.providers?.[providerId]?.models || provider?.models || [];
   const selectedWorkspaceRequired = !!modes[mode]?.requiresWorkspace;
   return <form className="panel-body stack" onSubmit={async (event) => {
     event.preventDefault();
@@ -101,16 +101,16 @@ function AgentRunForm({ agent, launch }) {
     try {
       const inputs = Object.fromEntries(fields.map((field) => [field.id, values[field.id] ?? field.defaultValue ?? '']));
       const env = Object.fromEntries(environment.map(({ name, value }) => [name.trim(), value]));
-      const result = await launch({ mode: mode || undefined, workspaceId: workspaceId || undefined, providerId: providerId || undefined, model: model || undefined, inputs, arguments: extra || undefined, catalogId: agent.catalogId, env });
+      const result = await launch({ mode: mode || undefined, workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, inputs, arguments: extra || undefined, catalogId: agent.catalogId, env });
       if (result) setEnvironment([]);
     } finally { setPending(false); }
   }}>
     <div className="form-grid">
       {!!Object.keys(modes).length && <Field label="Mode"><select value={mode} onChange={(event) => { setMode(event.target.value); setValues({}); }}>{Object.entries(modes).map(([id, item]) => <option key={id} value={id}>{item.label || item.name || id}</option>)}</select></Field>}
       <Field label={`Workspace${selectedWorkspaceRequired ? ' *' : ''}`}><select required={selectedWorkspaceRequired} value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="">{selectedWorkspaceRequired ? 'Select a workspace' : 'DoxieOS data directory'}</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>
-      <Field label="Provider"><select value={providerId} onChange={(event) => { setProviderId(event.target.value); setModel(''); }}><option value="">Default provider</option>{state.providers.map((item) => <option key={item.id} value={item.id}>{item.displayName || item.name || item.id}</option>)}</select></Field>
-      <Field label="Model"><input list="agent-models" value={model} onChange={(event) => setModel(event.target.value)} placeholder="Provider default" /><datalist id="agent-models">{Array.isArray(models) && models.map((item) => <option key={item.id || item} value={item.id || item} />)}</datalist></Field>
+      <ExecutionFields value={execution} onChange={setExecution} inherited={agent.execution} inheritedLabel={agent.execution?.providerId ? 'Agent default' : 'Application default'} />
     </div>
+    <p className="muted">Provider and model selections in this form apply to this run.</p>
     {modes[mode]?.description && <p className="muted">{modes[mode].description}</p>}
     {fields.map((field) => <FieldInput key={field.id} field={field} value={values[field.id]} onChange={(value) => setValues((old) => ({ ...old, [field.id]: value }))} />)}
     {!fields.length && <Field label="Arguments / prompt"><textarea rows={3} value={extra} onChange={(event) => setExtra(event.target.value)} placeholder="Describe what this agent should do…" /></Field>}
@@ -128,12 +128,45 @@ function AgentRunForm({ agent, launch }) {
   </form>;
 }
 
+function AgentDefaults({ agent }) {
+  const { state, refresh, notify } = useApp();
+  const [execution, setExecution] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const effectiveId = agent.execution?.providerId || state.settings.defaultProvider;
+  const provider = state.providers.find(({ id }) => id === effectiveId);
+  const model = agent.execution?.model || provider?.model;
+  const close = () => { if (!saving) setExecution(null); };
+  return <>
+    <Tag>{[nameOf(provider) || effectiveId, model].filter(Boolean).join(' · ') || 'Application default'}</Tag>
+    <Button icon={Cpu} onClick={() => { setError(''); setExecution(agent.execution || {}); }}>Execution defaults</Button>
+    {execution && <Modal title="Agent execution defaults" icon={Cpu} close={close}><form onSubmit={async (event) => {
+      event.preventDefault();
+      setSaving(true);
+      setError('');
+      const { providerId, model } = execution;
+      const next = providerId ? { providerId, ...(model ? { model } : {}) } : null;
+      try {
+        await invoke('catalog:save', 'agents', { id: agent.id, catalogId: agent.catalogId, execution: next });
+        await refresh();
+        setExecution(null);
+        notify('Agent execution defaults saved');
+      } catch (problem) { setError(problem.message); }
+      finally { setSaving(false); }
+    }}><div className="modal-body stack">
+      <p>These defaults apply when a run or workflow node inherits this agent’s execution settings.</p>
+      <ExecutionFields value={execution} onChange={setExecution} requireProvider />
+      <ErrorNotice error={error} />
+    </div><footer className="modal-footer"><Button disabled={saving} onClick={close}>Cancel</Button><Button variant="primary" type="submit" disabled={saving}>Save defaults</Button></footer></form></Modal>}
+  </>;
+}
+
 function AgentMetadata({ agent }) {
   const { perform } = useApp();
   const [show, setShow] = useState(false);
   const [category, setCategory] = useState(categoryOf(agent));
-  const sealed = agent.categorySealed || ['Doxie', 'Connector'].includes(categoryOf(agent));
-  return <><div className="actions start"><Tag>{categoryOf(agent)}</Tag>{agent.isPrivate && <Tag>Private</Tag>}{agent.catalogName && <Tag>{agent.catalogName}</Tag>}{!sealed && <Button variant="ghost" icon={Pencil} onClick={() => setShow(true)}>Change category</Button>}</div>
+  const sealed = agent.categorySealed || categoryOf(agent) === 'Doxie';
+  return <><div className="actions start"><Tag>{categoryOf(agent)}</Tag>{agent.isPrivate && <Tag>Private</Tag>}{agent.catalogName && <Tag>{agent.catalogName}</Tag>}<AgentDefaults agent={agent} />{!sealed && <Button variant="ghost" icon={Pencil} onClick={() => setShow(true)}>Change category</Button>}</div>
     {!!agent.requirements?.length && <details className="panel inline-panel"><summary>Requirements</summary><ul>{agent.requirements.map((requirement, index) => <li key={index}>{typeof requirement === 'string' ? requirement : requirement.label || requirement.description || requirement.name || requirement.id || JSON.stringify(requirement)}</li>)}</ul></details>}
     {show && <Modal title="Change category" close={() => setShow(false)}><form onSubmit={async (event) => { event.preventDefault(); const result = await perform('catalog:save', ['agents', { ...agent, category }], 'Category updated'); if (result) setShow(false); }}><div className="modal-body"><Field label="Category"><input required value={category} onChange={(event) => setCategory(event.target.value)} /></Field></div><footer className="modal-footer"><Button onClick={() => setShow(false)}>Cancel</Button><Button type="submit" variant="primary">Save</Button></footer></form></Modal>}
   </>;
@@ -182,7 +215,7 @@ export function AgentPage({ id, catalogId, runId }) {
     <div className="dashboard-grid detail-grid">
       <Panel title="Configure run" icon={Play}><AgentRunForm agent={agent} launch={async (params) => { const result = await perform('agent:start', [id, params]); if (result?.id) go(recordRoute('agents', agent, '', result.id)); return result; }} /></Panel>
       <Panel title={run ? 'Execution' : 'Latest run'} icon={Terminal} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('agent:stop', [run.id])}>Stop</Button>}</>}>
-        {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.providerId && <Tag>{run.providerId}</Tag>}{run.exitCode !== null && run.exitCode !== undefined && <Tag>Exit {run.exitCode}</Tag>}</div>
+        {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.providerId && <Tag>{nameOf(state.providers.find(({ id }) => id === run.providerId)) || run.providerId}</Tag>}{run.model && <Tag>{run.model}</Tag>}{run.exitCode !== null && run.exitCode !== undefined && <Tag>Exit {run.exitCode}</Tag>}</div>
           <LogOutput lines={run.output || run.logs} /><ErrorNotice error={detail.error} />
           {active(run.status) && <div className="panel-body"><Guidance title="Guide the running agent…" submit={(text) => perform('agent:guide', [run.id, text], 'Guidance sent')} /></div>}
           {run.usage && <div className="usage-grid"><div><small>Input tokens</small><strong>{Number(run.usage.inputTokens || 0).toLocaleString()}</strong></div><div><small>Output tokens</small><strong>{Number(run.usage.outputTokens || 0).toLocaleString()}</strong></div><div><small>Cost (USD)</small><strong>{run.usage.totalCostUsd ?? '—'}</strong></div></div>}
@@ -202,7 +235,7 @@ export function BuilderPage({ kind, query }) {
   const initialCatalogId = query.get('catalog') || 'default';
   const [catalogId, setCatalogId] = useState(initialCatalogId);
   const [workspaceId, setWorkspaceId] = useState('');
-  const [providerId, setProviderId] = useState(state.settings.defaultProvider || '');
+  const [execution, setExecution] = useState({});
   const [sessionId, setSessionId] = useState(query.get('session') || '');
   const [session, setSession] = useState(null);
   const [draftText, setDraftText] = useState('');
@@ -216,7 +249,7 @@ export function BuilderPage({ kind, query }) {
   const begin = async () => {
     setPending(true);
     try {
-      const result = await perform('builder:start', [kind, { workspaceId: workspaceId || undefined, providerId: providerId || undefined, catalogId, editingId: editorId }]);
+      const result = await perform('builder:start', [kind, { workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, catalogId, editingId: editorId }]);
       if (result?.id) { setSession(result); setSessionId(result.id); }
     } finally { setPending(false); }
   };
@@ -248,12 +281,12 @@ export function BuilderPage({ kind, query }) {
   const draft = session?.draft;
   const resume = Array.isArray(list.value) ? list.value : list.value?.sessions || [];
   return <div className="page"><PageHeading title={editing ? `Edit ${nameOf(editing)} with AI` : `Build a${kind === 'agent' ? 'n agent' : ' workflow'}`} icon={Sparkles} subtitle="Describe what you need, inspect the draft and save it to a catalog when ready." back={{ to: `/${section}`, label: kind === 'agent' ? 'Agents' : 'Workflows' }} actions={kind === 'workflow' && !editing && <Button to="/workflows/new" icon={Pencil}>Create manually</Button>} />
-    {!sessionId ? <div className="dashboard-grid"><Panel title="Start a builder session" icon={Sparkles}><div className="panel-body stack">
-      <Field label="Provider"><select value={providerId} onChange={(event) => setProviderId(event.target.value)}><option value="">Default provider</option>{state.providers.map((item) => <option key={item.id} value={item.id}>{item.displayName || item.name || item.id}</option>)}</select></Field>
+    {!sessionId ? <div className="dashboard-grid"><Panel title="Start a builder session" icon={Sparkles}><form className="panel-body stack" onSubmit={(event) => { event.preventDefault(); begin(); }}>
+      <div className="form-grid"><ExecutionFields value={execution} onChange={setExecution} /></div>
       <Field label="Attach workspace"><select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="">No workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>
       <Field label="Destination catalog"><select value={catalogId} onChange={(event) => setCatalogId(event.target.value)}>{!catalogOptions.some((item) => item.id === 'default') && <option value="default">Default catalog</option>}{catalogOptions.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}</select></Field>
-      <Button variant="primary" icon={Sparkles} disabled={pending} onClick={begin}>Start session</Button>
-    </div></Panel><Panel title="Resume a session" icon={MessageSquare}>{resume.length ? <div className="row-list">{resume.map((item) => <ItemRow key={item.id} icon={MessageSquare} title={item.label || item.id} detail={<DateTime value={item.updatedAt || item.createdAt} />} onClick={() => { setSession(item); setSessionId(item.id); }}><Status status={item.status} /></ItemRow>)}</div> : <Empty title="No previous sessions" icon={MessageSquare} />}</Panel></div> :
+      <Button variant="primary" icon={Sparkles} disabled={pending} type="submit">Start session</Button>
+    </form></Panel><Panel title="Resume a session" icon={MessageSquare}>{resume.length ? <div className="row-list">{resume.map((item) => <ItemRow key={item.id} icon={MessageSquare} title={item.label || item.id} detail={<DateTime value={item.updatedAt || item.createdAt} />} onClick={() => { setSession(item); setSessionId(item.id); }}><Status status={item.status} /></ItemRow>)}</div> : <Empty title="No previous sessions" icon={MessageSquare} />}</Panel></div> :
       <div className="dashboard-grid detail-grid"><Panel title={session?.label || 'Builder chat'} icon={MessageSquare} actions={<Button onClick={() => { setSessionId(''); setSession(null); }}>Sessions</Button>}>
         <div className="chat" ref={chat}>{session?.messages?.length ? session.messages.map((message, index) => <article className={`chat-message ${message.role || 'assistant'}`} key={message.id || index}><small>{message.role === 'user' ? 'You' : 'Builder'}</small><Markdown>{message.text || message.content}</Markdown></article>) : <Empty title="Start the conversation" detail="Tell the builder what the finished result should do." icon={MessageSquare} />}</div>
         <form className="panel-body input-action chat-composer" onSubmit={submitMessage}><textarea aria-label="Message to builder" rows={2} placeholder="Describe a goal or ask for a change…" value={draftText} onChange={(event) => setDraftText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.currentTarget.form.requestSubmit(); }} /><VoiceInput append={(text) => setDraftText((old) => `${old}${old ? ' ' : ''}${text}`)} /><Button type="submit" icon={Send} variant="primary" disabled={pending || !draftText.trim()}>Send</Button></form>

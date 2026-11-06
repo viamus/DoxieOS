@@ -7,10 +7,11 @@ const { parse: parseJsonc } = require('jsonc-parser');
 const YAML = require('yaml');
 const Zip = require('adm-zip');
 const { createShims } = require('./shims.cjs');
-const { createManagedFiles } = require('./managed-files.cjs');
+const { createManagedFiles, nativeToolIds } = require('./managed-files.cjs');
+const { normalizeExecution } = require('./execution.cjs');
 
 const catalogKinds = ['agents', 'skills', 'workflows', 'libraries'];
-const manifests = { skills: 'manifest.json', workflows: 'workflow.json', libraries: 'library.json', workspaces: 'workspace.json' };
+const manifests = { skills: 'manifest.json', tools: 'manifest.json', workflows: 'workflow.json', libraries: 'library.json', workspaces: 'workspace.json' };
 const catalogSetting = 'doxie.catalog.customRoots';
 const generatedContext = '<!-- DoxieOS: auto-generated from workspace.json mountedLibraries -->';
 const maxPreview = 256 * 1024;
@@ -24,6 +25,7 @@ const title = id => id.replace(/[-_]+/g, ' ').replace(/\b\p{L}/gu, char => char.
 const unix = file => file.split(path.sep).join('/');
 const json = data => `${JSON.stringify(data, null, 2)}\n`;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
+const isAgentKind = kind => kind === 'agents' || kind === 'skills';
 
 function stat(file) {
   return fs.lstatSync(file, { throwIfNoEntry: false });
@@ -236,6 +238,12 @@ function parseAgentZip(entries, withSubagent = true) {
   if (!files.has('manifest.json') && files.has('SKILL.md') && files.has('orchestrator.json')) legacySkill(files, id);
   const manifest = readObject(files.get('manifest.json')?.toString());
   if (!manifest || field(manifest, 'id') !== id || !files.has('body.md')) throw new Error('Agent ZIP requires a matching manifest.json and body.md');
+  if (files.has('agent.md')) {
+    const embedded = files.get('agent.md');
+    if (agent && !agent.equals(embedded)) throw new Error('Agent ZIP contains conflicting provider definitions');
+    if (withSubagent) agent = embedded;
+    files.delete('agent.md');
+  }
   return { id, files, agent };
 }
 
@@ -284,8 +292,10 @@ function stageChanges(changes) {
 function createTransfers({ root, roots, get, directory, selectCatalog, listCatalogs, refreshWorkspaceContexts, updateWorkspaceContext, regenerate }) {
   function exportAgent(id, catalogId, includeSubagent = true) {
     const skill = get('skills', id, catalogId);
-    if (!skill) throw new Error(`Skill ${id} was not found`);
-    const entries = new Map([...folderEntries(skill.path)].map(([name, content]) => [`${id}/${name}`, content]));
+    if (!skill) throw new Error(`Agent ${id} was not found`);
+    const files = folderEntries(skill.path);
+    files.delete('agent.md');
+    const entries = new Map([...files].map(([name, content]) => [`${id}/${name}`, content]));
     const agent = includeSubagent && get('agents', id, skill.catalogId);
     if (agent?.agentPath) entries.set(`${id}.md`, fs.readFileSync(agent.agentPath));
     return writeZip(entries);
@@ -321,17 +331,24 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
   }
 
   function decideAgent({ id, files, agent }, catalog, overwrite, withSubagent = true) {
-    const matches = listCatalogs().map(candidate => get(withSubagent ? 'agents' : 'skills', id, candidate.id)).filter(Boolean);
+    if (nativeToolIds.has(id)) throw new Error(`${id} is a built-in tool identifier`);
+    const matches = listCatalogs().map(candidate => get('agents', id, candidate.id)).filter(Boolean);
     for (const match of matches) {
       const oldSkill = get('skills', id, match.catalogId);
       const oldAgent = withSubagent && match.agentPath ? fs.readFileSync(match.agentPath) : null;
-      if (oldSkill && entriesEqual(folderEntries(oldSkill.path), files) && (oldAgent ? agent?.equals(oldAgent) : !agent)) return [];
+      const existing = oldSkill && folderEntries(oldSkill.path);
+      existing?.delete('agent.md');
+      if (existing && entriesEqual(existing, files) && (oldAgent ? agent?.equals(oldAgent) : !agent)) return [];
     }
     if (matches.length && !overwrite) throw new Error(`Agent ${id} already exists with different contents`);
     const destination = matches.find(match => match.catalogId === catalog.id) ?? matches[0];
     const selected = destination ? selectCatalog(destination.catalogId) : catalog;
-    const changes = [{ target: safePath(directory(selected, 'skills'), id), files }];
-    if (withSubagent) changes.push({ target: safePath(directory(selected, 'agents'), `${id}.md`), bytes: agent });
+    const nextFiles = new Map(files);
+    if (agent) nextFiles.set('agent.md', agent);
+    else if (!withSubagent && destination?.agentPath) nextFiles.set('agent.md', fs.readFileSync(destination.agentPath));
+    const changes = [{ target: safePath(directory(selected, 'agents'), id), files: nextFiles }];
+    const legacyCompanion = safePath(directory(selected, 'agents'), `${id}.md`);
+    if (withSubagent && stat(legacyCompanion)?.isFile()) changes.push({ target: legacyCompanion });
     return changes;
   }
 
@@ -374,8 +391,10 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
         const imported = parseAgentZip(readZip(entries.get(file), budget));
         if (agentId !== imported.id) throw new Error('Bundled agent identifier does not match its manifest');
         recognized.add(file);
-        included.push(agentId);
-        changes.push(...decideAgent(imported, catalog, overwrite));
+        if (!nativeToolIds.has(agentId)) {
+          included.push(agentId);
+          changes.push(...decideAgent(imported, catalog, overwrite));
+        }
       }
       if (recognized.size !== entries.size) throw new Error('Unexpected ZIP entry');
       if (kind === 'workspaces') {
@@ -409,14 +428,14 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
       const source = safePath(root, relative);
       for (const entry of children(source)) {
         const id = kind === 'agents' && entry.isFile() && entry.name.endsWith('.md') ? entry.name.slice(0, -3) : entry.name;
-        if (!idPattern.test(id)) continue;
+        if (!idPattern.test(id) || (isAgentKind(kind) && nativeToolIds.has(id))) continue;
         const from = safePath(source, entry.name);
-        const target = safePath(roots[kind], entry.name);
-        if (stat(target)) continue;
+        const target = safePath(roots[kind], isAgentKind(kind) ? id : entry.name);
         if (kind === 'agents') {
-          if (entry.isFile() && entry.name.endsWith('.md')) result.push({ kind, id, path: from, target });
+          if (entry.isFile() && entry.name.endsWith('.md') && !get('agents', id)?.agentPath) result.push({ kind, id, path: from, target });
         } else if (entry.isDirectory()) {
-          if (kind === 'skills' && (!stat(safePath(from, 'SKILL.md'))?.isFile() || stat(safePath(from, 'doxie/generated')))) continue;
+          if (kind === 'skills' && (get('skills', id) || !stat(safePath(from, 'SKILL.md'))?.isFile() || stat(safePath(from, 'doxie/generated')))) continue;
+          if (kind !== 'skills' && stat(target)) continue;
           if (kind === 'workflows' && !stat(safePath(from, 'workflow.json'))?.isFile()) continue;
           result.push({ kind, id, path: from, target });
         }
@@ -431,13 +450,18 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
 
   function migrateLegacy() {
     const legacy = legacyEntries();
-    const changes = legacy.map(({ kind, id, path, target }) => {
-      if (kind === 'agents') return { target, bytes: fs.readFileSync(path) };
-      const files = folderEntries(path);
-      if (kind === 'skills') legacySkill(files, id);
-      return { target, files };
-    });
-    stageChanges(changes);
+    const changes = new Map();
+    for (const { kind, id, path, target } of legacy) {
+      const existing = changes.get(target) ?? folderEntries(target);
+      if (kind === 'agents') existing.set('agent.md', fs.readFileSync(path));
+      else {
+        const files = folderEntries(path);
+        if (kind === 'skills') legacySkill(files, id);
+        for (const [file, content] of files) if (!existing.has(file)) existing.set(file, content);
+      }
+      changes.set(target, existing);
+    }
+    stageChanges([...changes].map(([target, files]) => ({ target, files })));
     regenerate();
     return legacy.map(({ kind, id }) => ({ kind, id, migrated: true }));
   }
@@ -449,6 +473,8 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   root = path.resolve(root);
   const defaultCatalog = { id: 'default', name: 'Default catalog', path: safePath(root, '.doxie'), isDefault: true };
   const roots = Object.fromEntries(catalogKinds.map(kind => [kind, path.join(defaultCatalog.path, kind)]));
+  roots.skills = roots.agents;
+  roots.tools = safePath(root, '.doxie/tools');
   roots.workspaces = managed ? safePath(root, '.workspace') : optionsPath(root, workspacesRoot ?? '.workspace');
   roots.runs = safePath(root, '.runs');
   roots.sandboxes = safePath(root, '.sandbox');
@@ -459,24 +485,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   const managedFiles = createManagedFiles({ root, safePath, stat });
   if (bundledRoot) {
     const source = path.basename(bundledRoot) === '.doxie' ? path.resolve(bundledRoot) : path.resolve(bundledRoot, '.doxie');
-    const marker = safePath(defaultCatalog.path, '.desktop-catalog-seeded');
-    if (managed) managedFiles.seed(source, bundledFiles);
-    else if (source !== defaultCatalog.path && !stat(marker)) {
-      for (const kind of catalogKinds) {
-        const bundled = path.join(source, kind);
-        for (const entry of children(bundled)) {
-          const destination = safePath(roots[kind], entry.name);
-          if (stat(destination)) continue;
-          const from = safePath(bundled, entry.name);
-          if (entry.isDirectory()) {
-            for (const [file, content] of folderEntries(from)) atomicWrite(safePath(destination, file), content);
-          } else {
-            atomicWrite(destination, fs.readFileSync(from));
-          }
-        }
-      }
-      atomicWrite(marker, 'DoxieOS desktop\n');
-    }
+    managedFiles.seed(source, bundledFiles);
   }
 
   databasePath = databasePath ?? path.join(root, 'state.db');
@@ -545,7 +554,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
       return destination;
     });
     for (const catalog of catalogs) {
-      for (const kind of catalogKinds) fs.mkdirSync(safePath(catalog.path, kind), { recursive: true });
+      for (const kind of ['agents', 'workflows', 'libraries']) fs.mkdirSync(safePath(catalog.path, kind), { recursive: true });
     }
     saveCatalogSetting(catalogs);
     regenerate();
@@ -554,10 +563,11 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   }
 
   function directory(catalog, kind) {
-    if (kind === 'workspaces' || kind === 'runs' || kind === 'sandboxes') return managed ? safePath(root, unix(path.relative(root, roots[kind]))) : roots[kind];
-    if (!catalogKinds.includes(kind)) throw new Error(`Unknown storage type: ${kind}`);
-    if (managed) return safePath(root, catalog.isDefault ? `.doxie/${kind}` : `.doxie/catalogs/${catalog.id}/${kind}`);
-    return catalog.isDefault ? roots[kind] : safePath(catalog.path, kind);
+    if (['workspaces', 'runs', 'sandboxes', 'tools'].includes(kind)) return managed ? safePath(root, unix(path.relative(root, roots[kind]))) : roots[kind];
+    if (!catalogKinds.includes(kind) && kind !== 'legacySkills') throw new Error(`Unknown storage type: ${kind}`);
+    const folder = kind === 'legacySkills' ? 'skills' : isAgentKind(kind) ? 'agents' : kind;
+    if (managed) return safePath(root, catalog.isDefault ? `.doxie/${folder}` : `.doxie/catalogs/${catalog.id}/${folder}`);
+    return safePath(catalog.path, folder);
   }
 
   function selectCatalog(id) {
@@ -568,19 +578,38 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
 
   function load(kind, id, catalog) {
     oneSegment(id);
+    if (isAgentKind(kind)) {
+      if (nativeToolIds.has(id.toLowerCase())) return null;
+      const canonical = safePath(directory(catalog, 'agents'), id);
+      const legacy = safePath(directory(catalog, 'legacySkills'), id);
+      const agentCandidates = [canonical, legacy].filter(folder => stat(folder)?.isDirectory());
+      const companion = [safePath(canonical, 'agent.md'), safePath(directory(catalog, 'agents'), `${id}.md`)]
+        .find(file => stat(file)?.isFile());
+      for (const folder of agentCandidates) {
+        const metadata = readObject(readText(safePath(folder, 'manifest.json')));
+        const body = readText(safePath(folder, 'body.md'));
+        if (!metadata || body === null) continue;
+        const memories = children(safePath(folder, 'memories')).filter(entry => entry.isFile() && /\.md$/i.test(entry.name))
+          .map(entry => memoryEntry(folder, `memories/${entry.name}`));
+        const { fields, body: systemPrompt } = parseMarkdown(companion ? readText(companion) : '');
+        return { ...metadata, id, path: folder, catalogId: catalog.id, catalogName: catalog.name, catalogRoot: catalog.path,
+          name: field(metadata, 'name') || field(metadata, 'displayName') || title(id), body, memories,
+          description: field(metadata, 'description') || field(fields, 'description') || '',
+          modes: field(metadata, 'modes') ?? {}, requirements: field(metadata, 'requirements') ?? [],
+          category: field(metadata, 'category') ?? 'Other', icon: field(metadata, 'icon') ?? null,
+          ...(kind === 'agents' ? { skillName: id, agentPath: companion ?? null, systemPrompt,
+            tools: field(fields, 'tools') ?? null, model: field(fields, 'model') ?? field(metadata, 'model') ?? null,
+            isolation: field(fields, 'isolation') ?? null } : {}) };
+      }
+      if (kind !== 'agents' || !companion) return null;
+      const { fields, body } = parseMarkdown(readText(companion));
+      return { id, name: field(fields, 'name') || title(id), description: field(fields, 'description') ?? '',
+        path: companion, catalogId: catalog.id, catalogName: catalog.name, catalogRoot: catalog.path,
+        skillName: null, agentPath: companion, systemPrompt: body, body, tools: field(fields, 'tools') ?? null,
+        model: field(fields, 'model') ?? null, isolation: field(fields, 'isolation') ?? null };
+    }
     const itemDir = safePath(directory(catalog, kind), id);
     const info = { id, path: itemDir, catalogId: catalog.id, catalogName: catalog.name, catalogRoot: catalog.path };
-    if (kind === 'agents') {
-      const skill = load('skills', id, catalog);
-      const agentPath = safePath(directory(catalog, 'agents'), `${id}.md`);
-      const markdown = readText(agentPath);
-      if (!skill && markdown === null) return null;
-      const { fields, body } = parseMarkdown(markdown ?? '');
-      return { ...info, ...skill, name: skill?.name || field(fields, 'name') || title(id),
-        description: skill?.description || field(fields, 'description') || '', path: skill?.path || agentPath,
-        skillName: skill ? id : null, agentPath: markdown === null ? null : agentPath, systemPrompt: body,
-        tools: field(fields, 'tools') ?? null, model: field(fields, 'model') ?? null, isolation: field(fields, 'isolation') ?? null };
-    }
     const dirStat = stat(itemDir);
     if (!dirStat?.isDirectory()) return null;
     if (!manifests[kind]) return { ...info, name: id, createdAt: dirStat.birthtime.toISOString() };
@@ -588,13 +617,9 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     const name = field(metadata, 'name') || field(metadata, 'displayName') || title(id);
     const description = field(metadata, 'description') ?? '';
     const base = { ...metadata, ...info, name, description };
-    if (kind === 'skills') {
+    if (kind === 'tools') {
       const body = readText(safePath(itemDir, 'body.md'));
-      if (!Object.keys(metadata).length || body === null) return null;
-      const memories = children(safePath(itemDir, 'memories')).filter(entry => entry.isFile() && /\.md$/i.test(entry.name))
-        .map(entry => memoryEntry(itemDir, `memories/${entry.name}`));
-      return { ...base, body, memories, modes: field(metadata, 'modes') ?? {}, requirements: field(metadata, 'requirements') ?? [],
-        category: field(metadata, 'category') ?? 'Other', icon: field(metadata, 'icon') ?? null };
+      return nativeToolIds.has(id) && Object.keys(metadata).length ? { ...base, body: body ?? '', modes: field(metadata, 'modes') ?? {} } : null;
     }
     if (kind === 'workflows') {
       if (!Object.keys(metadata).length) return null;
@@ -617,9 +642,12 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     for (const catalog of catalogs) {
       const dir = directory(catalog, kind);
       const ids = new Set();
-      if (kind === 'agents') {
-        for (const entry of children(dir)) if (entry.isFile() && /\.md$/i.test(entry.name)) ids.add(entry.name.slice(0, -3));
-        for (const entry of children(directory(catalog, 'skills'))) if (entry.isDirectory()) ids.add(entry.name);
+      if (isAgentKind(kind)) {
+        for (const entry of children(dir)) {
+          if (entry.isDirectory() && !entry.name.startsWith('.')) ids.add(entry.name);
+          if (kind === 'agents' && entry.isFile() && /\.md$/i.test(entry.name)) ids.add(entry.name.slice(0, -3));
+        }
+        for (const entry of children(directory(catalog, 'legacySkills'))) if (entry.isDirectory() && !entry.name.startsWith('.')) ids.add(entry.name);
       } else {
         for (const entry of children(dir)) if (entry.isDirectory() && !entry.name.startsWith('.')) ids.add(entry.name);
       }
@@ -673,14 +701,17 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   function save(kind, data) {
     if (!object(data) || (!catalogKinds.includes(kind) && kind !== 'workspaces')) throw new Error('Invalid catalog item');
     const id = validateId(data.id);
+    if (isAgentKind(kind) && nativeToolIds.has(id)) throw new Error(`${id} is a built-in tool identifier`);
     const previous = get(kind, id);
     const catalog = kind === 'workspaces' ? defaultCatalog : selectCatalog(data.catalogId ?? previous?.catalogId);
     const current = get(kind, id, catalog.id) ?? previous;
     const moving = Boolean(current && current.catalogId !== catalog.id);
     const sourceCatalog = moving ? selectCatalog(current.catalogId) : catalog;
-    const sourceKind = kind === 'agents' ? 'skills' : kind;
+    const sourceKind = isAgentKind(kind) ? 'skills' : kind;
     const itemDir = safePath(directory(catalog, sourceKind), id);
-    const sourceDir = safePath(directory(sourceCatalog, sourceKind), id);
+    const sourceDir = current && stat(current.path)?.isDirectory() ? current.path : itemDir;
+    const oldCompanion = isAgentKind(kind) && get('agents', id, sourceCatalog.id)?.agentPath;
+    const externalCompanion = oldCompanion && oldCompanion !== safePath(itemDir, 'agent.md') && !oldCompanion.startsWith(`${sourceDir}${path.sep}`);
     const manifest = safePath(sourceDir, manifests[sourceKind]);
     const existingText = readText(manifest);
     const existing = readObject(existingText);
@@ -688,8 +719,9 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     const { path: sourcePath, catalogId: ignoredCatalog, catalogName, catalogRoot, skillName, agentPath, body,
       systemPrompt, tools, model, isolation, memories, files, mountedLibraryIds, mountedAgentIds, ...fields } = data;
     const merged = { ...existing, ...fields, id };
-    const moves = [];
-    const staged = moving ? folderEntries(sourceDir) : null;
+    if (isAgentKind(kind) && Object.hasOwn(fields, 'execution')) merged.execution = normalizeExecution(fields.execution);
+    if (moving && stat(itemDir)) throw new Error(`The catalog ${catalog.name} already contains the ${id} directory`);
+    const staged = moving || sourceDir !== itemDir || externalCompanion ? new Map([...folderEntries(sourceDir), ...folderEntries(itemDir)]) : null;
     function writeItemFile(relative, contents) {
       if (staged) staged.set(relative, Buffer.from(contents));
       else writeIfChanged(safePath(itemDir, relative), contents);
@@ -699,12 +731,11 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
       merged.description = data.description ?? current?.description ?? '';
       delete merged.name;
       writeItemFile('body.md', body ?? current?.body ?? '');
-      if (kind === 'agents' && (moving || [systemPrompt, tools, model, isolation].some(value => value !== undefined))) {
-        const agentFile = safePath(directory(catalog, 'agents'), `${id}.md`);
-        const oldFile = safePath(directory(sourceCatalog, 'agents'), `${id}.md`);
-        const existingAgentText = readText(oldFile);
+      const companionChanged = kind === 'agents' && [systemPrompt, tools, model, isolation].some(value => value !== undefined);
+      if (companionChanged || (staged && oldCompanion)) {
+        const existingAgentText = oldCompanion ? readText(oldCompanion) : null;
         let contents = existingAgentText;
-        if ([systemPrompt, tools, model, isolation].some(value => value !== undefined)) {
+        if (companionChanged) {
           const existingAgent = parseMarkdown(existingAgentText ?? '');
           const agent = { ...existingAgent.fields, name: id, description: merged.description };
           for (const [key, value] of Object.entries({ tools, model, isolation })) {
@@ -713,10 +744,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
           }
           contents = formatMarkdown(agent, systemPrompt ?? existingAgent.body);
         }
-        if (contents !== null) {
-          if (moving) moves.push({ target: agentFile, bytes: Buffer.from(contents) }, { target: oldFile });
-          else writeIfChanged(agentFile, contents);
-        }
+        if (contents !== null) writeItemFile('agent.md', contents);
       }
     }
     if (kind === 'workflows') {
@@ -727,6 +755,10 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
       merged.updatedAt = now;
       merged.trigger ??= { kind: 'manual' };
       merged.nodes ??= [];
+      if (Object.hasOwn(fields, 'nodes')) {
+        merged.nodes = merged.nodes.map(node => Object.hasOwn(node, 'execution')
+          ? { ...node, execution: normalizeExecution(node.execution) } : node);
+      }
       merged.edges ??= [];
       merged.category ||= 'Other';
       merged.enabled = merged.enabled !== false && (Boolean(current) || String(merged.trigger.kind).toLowerCase() !== 'cron');
@@ -754,9 +786,11 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
       }
     }
     writeItemFile(manifests[sourceKind], json(merged));
-    if (moving) {
-      if (stat(itemDir)) throw new Error(`The catalog ${catalog.name} already contains the ${id} directory`);
-      stageChanges([...moves, { target: itemDir, files: staged }, { target: sourceDir }]);
+    if (staged) {
+      const changes = [{ target: itemDir, files: staged }];
+      if (sourceDir !== itemDir) changes.push({ target: sourceDir });
+      if (externalCompanion) changes.push({ target: oldCompanion });
+      stageChanges(changes);
     }
     const item = get(kind, id, catalog.id);
     if (kind === 'workspaces') updateWorkspaceContext(item);
@@ -771,12 +805,48 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     }
   }
 
+  function createLibrary({ id, name, description = '', catalogId, memories = [] }) {
+    validateId(id);
+    const catalog = selectCatalog(catalogId);
+    const target = safePath(directory(catalog, 'libraries'), id);
+    if (get('libraries', id) || stat(target)) throw new Error(`Library ${id} already exists`);
+    if (!Array.isArray(memories) || memories.length >= maxEntries) throw new Error('Invalid library memories');
+    const files = new Map([['library.json', Buffer.from(json({ name: name || title(id), description }))]]);
+    const paths = new Set();
+    let size = files.get('library.json').length;
+    for (const memory of memories) {
+      if (!object(memory)) throw new Error('Invalid library memory');
+      const parts = memory.relativePath === undefined ? ['memory', `${validateId(memory.id)}.md`] : segments(memory.relativePath);
+      if (parts.length < 2 || !['memory', 'memories'].includes(parts[0].toLowerCase()) || !/\.md$/i.test(parts.at(-1))) {
+        throw new Error('Library memory must be a Markdown file under memory/ or memories/');
+      }
+      const file = parts.join('/');
+      const key = file.toLowerCase();
+      if (paths.has(key) || (typeof memory.content !== 'string' && !Buffer.isBuffer(memory.content))) {
+        throw new Error(`Invalid or duplicate library memory ${file}`);
+      }
+      paths.add(key);
+      const content = Buffer.isBuffer(memory.content) ? memory.content : Buffer.from(memory.content);
+      size += content.length;
+      if (size > maxArchive) throw new Error('Library exceeds the 64 MB size limit');
+      files.set(file, content);
+    }
+    stageChanges([{ target, files }]);
+    refreshWorkspaceContexts(id);
+    regenerate();
+    return get('libraries', id, catalog.id);
+  }
+
   function remove(kind, id, catalogId) {
     if (!catalogKinds.includes(kind) && kind !== 'workspaces') throw new Error('Unsupported removal type');
     const item = get(kind, id, catalogId);
     if (!item) return false;
-    fs.rmSync(item.path, { recursive: true, force: true });
-    if (kind === 'agents' && item.agentPath && item.agentPath !== item.path) fs.unlinkSync(item.agentPath);
+    if (isAgentKind(kind)) {
+      const catalog = selectCatalog(item.catalogId);
+      const targets = [safePath(directory(catalog, 'agents'), id), safePath(directory(catalog, 'legacySkills'), id),
+        safePath(directory(catalog, 'agents'), `${id}.md`)];
+      stageChanges(targets.filter(target => stat(target)).map(target => ({ target })));
+    } else fs.rmSync(item.path, { recursive: true, force: true });
     if (kind === 'libraries') refreshWorkspaceContexts(id);
     if (catalogKinds.includes(kind)) regenerate();
     return true;
@@ -820,6 +890,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   }
 
   function writeFile(kind, id, relative, content, catalogId) {
+    if (kind === 'tools') throw new Error('Built-in tool definitions are read-only');
     if (typeof content !== 'string' || Buffer.byteLength(content) > maxArchive) throw new Error('Invalid file contents');
     const { file } = fileTarget(kind, id, relative, catalogId);
     if (!relative || stat(file)?.isDirectory()) throw new Error('A file path is required');
@@ -830,6 +901,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   }
 
   function deleteFile(kind, id, relative, catalogId) {
+    if (kind === 'tools') throw new Error('Built-in tool definitions are read-only');
     const { file } = fileTarget(kind, id, relative, catalogId);
     if (!relative || !stat(file)?.isFile()) return false;
     fs.unlinkSync(file);
@@ -859,7 +931,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
       timer.unref();
     }
     function sync() {
-      const directories = new Set(listCatalogs().flatMap(catalog => catalogKinds.map(kind => directory(catalog, kind))));
+      const directories = new Set(listCatalogs().flatMap(catalog => [...catalogKinds, 'legacySkills'].map(kind => directory(catalog, kind))));
       for (const [dir, watcher] of watchers) {
         if (directories.has(dir)) continue;
         watcher.close();
@@ -909,7 +981,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     return counts;
   }
 
-  return { root, roots, db, databasePath, managed, runsRoot: roots.runs, workspacesRoot: roots.workspaces, list, get, save, remove, regenerate, watchCatalog, importWorkbench,
+  return { root, roots, db, databasePath, managed, runsRoot: roots.runs, workspacesRoot: roots.workspaces, list, get, save, remove, regenerate, watchCatalog, importWorkbench, createLibrary,
     listCatalogs, saveCatalogs, getSetting, setSetting, listFiles, readFile, writeFile, deleteFile, resolveFile,
     ...createTransfers({ root, roots, get, directory, selectCatalog, listCatalogs, refreshWorkspaceContexts, updateWorkspaceContext, regenerate }),
     close() {

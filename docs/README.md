@@ -28,6 +28,7 @@ flowchart LR
     Shell --> Consoles["Live Consoles"]
     Agents --> Providers["Provider CLIs"]
     Workflows --> Agents
+    Workflows --> Tools["Doxie native tools"]
     Workspaces --> Libraries
     Providers --> Claude["Claude Code"]
     Providers --> Codex["OpenAI Codex"]
@@ -41,7 +42,8 @@ flowchart LR
 ```text
 .
 ├── .doxie/                         # Canonical Doxie catalog
-│   ├── skills/<id>/
+│   ├── agents/<id>/
+│   ├── tools/<id>/
 │   ├── workflows/<id>/
 │   └── libraries/<id>/
 ├── docs/                           # Product documentation

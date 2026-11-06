@@ -1,0 +1,77 @@
+{
+  "id": "library",
+  "displayName": "Library",
+  "description": "Create a reusable Doxie library from explicitly selected Markdown or text.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "create": {
+      "description": "Create a library with the supplied metadata.",
+      "fields": [
+        {
+          "id": "id",
+          "label": "Library ID",
+          "placeholder": "team-standards",
+          "required": true
+        },
+        {
+          "id": "name",
+          "label": "Display name",
+          "placeholder": "Team standards"
+        },
+        {
+          "id": "description",
+          "label": "Description",
+          "placeholder": "Guidance for recurring work"
+        }
+      ]
+    },
+    "from-files": {
+      "description": "Copy explicit workspace-relative files or direct upstream text artifacts into a new library.",
+      "fields": [
+        {
+          "id": "id",
+          "label": "Library ID",
+          "placeholder": "team-standards",
+          "required": true
+        },
+        {
+          "id": "name",
+          "label": "Display name",
+          "placeholder": "Team standards"
+        },
+        {
+          "id": "description",
+          "label": "Description",
+          "placeholder": "Guidance for recurring work"
+        },
+        {
+          "id": "paths",
+          "label": "Workspace-relative paths, one per line",
+          "placeholder": "docs/checklist.md"
+        }
+      ]
+    },
+    "from-current": {
+      "description": "Create a library from the selected workspace's memory files.",
+      "fields": [
+        {
+          "id": "id",
+          "label": "Library ID",
+          "placeholder": "workspace-memory",
+          "required": true
+        },
+        {
+          "id": "name",
+          "label": "Display name",
+          "placeholder": "Workspace memory"
+        },
+        {
+          "id": "description",
+          "label": "Description",
+          "placeholder": "Reusable project context"
+        }
+      ]
+    }
+  }
+}

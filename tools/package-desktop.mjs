@@ -10,7 +10,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const { version: electronVersion } = require('electron/package.json');
 const checksums = require('electron/checksums.json');
-const output = join(root, 'release');
+const variant = process.argv[2];
+if (variant && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(variant)) throw new Error('Use a kebab-case package folder name.');
+const output = join(root, 'release', variant || '');
 const temporary = await mkdtemp(join(tmpdir(), 'doxie-package-'));
 
 function run(command, args, cwd = root) {

@@ -5,15 +5,15 @@ const { nextCron } = require('./workflows.cjs');
 const { safePath } = require('./storage.cjs');
 const { sweepScratch } = require('./housekeeping.cjs');
 const { definitions, settingsFor, jsonSetting } = require('./providers.cjs');
+const { normalizeModel } = require('./execution.cjs');
 const { executablePath, launch } = require('./processes.cjs');
 
+const privateRunFolder = name => name.toLowerCase() === '.doxie-transient';
 const fileTypes = {
   '.md': 'text/markdown', '.csv': 'text/csv', '.txt': 'text/plain', '.json': 'application/json',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.gif': 'image/gif', '.avif': 'image/avif', '.bmp': 'image/bmp', '.pdf': 'application/pdf',
 };
-const modelPattern = /^[\w.:-]+$/;
-
 function validatedEnvironment(environment = {}, perRun = false) {
   if (!environment || typeof environment !== 'object' || Array.isArray(environment)
     || Object.entries(environment).some(([key, value]) => !/^[A-Za-z_][\w]*$/.test(key) || typeof value !== 'string'
@@ -80,10 +80,9 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       const configured = {};
       for (const [id, defaults] of Object.entries(definitions)) {
         const value = patch.providers[id] || old[id] || defaults;
-        const models = Array.isArray(value.models) ? value.models.map(String) : defaults.models;
-        if (models.some(model => !modelPattern.test(model)) || (value.model && !modelPattern.test(value.model))) throw new Error('Invalid model name.');
+        const models = Array.isArray(value.models) ? value.models.map(normalizeModel).filter(Boolean) : defaults.models;
         const environment = validatedEnvironment(value.environment ?? old[id]?.environment);
-        configured[id] = { executable: String(value.executable || defaults.executable).trim(), model: value.model, models, environment };
+        configured[id] = { executable: String(value.executable || defaults.executable).trim(), model: normalizeModel(value.model), models, environment };
       }
       storage.setSetting('desktop.providers', configured);
     }
@@ -95,6 +94,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
   }
 
   function runPath(id, child = '') {
+    if (typeof child !== 'string' || child.split(/[\\/]/).some(privateRunFolder)) throw new Error('Temporary workflow context is private to the runner.');
     const agentRun = agents.getRun(id);
     const workflow = agentRun ? null : workflows.getRun(id);
     if (!agentRun && !workflow) throw new Error('Run not found.');
@@ -127,7 +127,8 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
 
   return {
     bootstrap() {
-      const catalog = Object.fromEntries(['agents', 'workflows', 'workspaces', 'libraries', 'skills'].map(kind => [kind, storage.list(kind)]));
+      const catalog = Object.fromEntries(['agents', 'workflows', 'workspaces', 'libraries', 'tools'].map(kind => [kind, storage.list(kind)]));
+      const { skills, legacySkills, ...publicRoots } = storage.roots;
       catalog.workflows = catalog.workflows.map(workflow => {
         const scheduled = workflow.enabled && ['cron', '1'].includes(String(workflow.trigger?.kind).toLowerCase());
         const nextRunAt = scheduled ? nextCron(workflow.trigger.cronExpression || workflow.trigger.expression)?.toISOString() : null;
@@ -137,7 +138,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       return {
         ...catalog, root: storage.root, storage: {
           'App data': app.getPath('userData'), 'Data directory': storage.root, 'State database': storage.databasePath,
-          'Provider profiles': safePath(storage.root, '.providers'), ...storage.roots,
+          'Provider profiles': safePath(storage.root, '.providers'), ...publicRoots,
         },
         settings: configuration, providers: Object.values(configuration.providers), agentRuns: agents.listRuns(),
         workflowRuns: workflows.listRuns(), notifications: notifications.list(), consoles: consoles.list(),
@@ -200,12 +201,38 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     },
     ...files('files', 'workspaces'),
     ...files('library-files', 'libraries'),
+    'libraries:create': ({ id, name, description, catalogId }) => {
+      const item = storage.createLibrary({ id, name, description, catalogId });
+      emit({ type: 'catalog:changed', kind: 'libraries' });
+      return item;
+    },
+    'library-files:write': (id, path, content, catalogId, options) => {
+      if (typeof path !== 'string' || !/\.md$/i.test(path)) throw new Error('Library memories must be Markdown files.');
+      if (options?.create) {
+        let exists = true;
+        try { storage.resolveFile('libraries', id, path, catalogId); }
+        catch (error) {
+          if (error.message !== 'The requested path does not exist') throw error;
+          exists = false;
+        }
+        if (exists) throw new Error('This memory already exists.');
+      }
+      const result = storage.writeFile('libraries', id, path, content, catalogId);
+      emit({ type: 'catalog:changed', kind: 'libraries' });
+      return result;
+    },
+    'library-files:delete': (id, path, catalogId) => {
+      if (typeof path !== 'string' || !/\.md$/i.test(path)) throw new Error('Library memories must be Markdown files.');
+      const removed = storage.deleteFile('libraries', id, path, catalogId);
+      if (removed) emit({ type: 'catalog:changed', kind: 'libraries' });
+      return removed;
+    },
     'run-files:list': async (id, path = '') => {
       const directory = runPath(id, path);
       let entries;
       try { entries = await readdir(directory, { withFileTypes: true }); }
       catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-      return Promise.all(entries.filter(entry => entry.isDirectory() || entry.isFile()).map(async entry => {
+      return Promise.all(entries.filter(entry => !privateRunFolder(entry.name) && (entry.isDirectory() || entry.isFile())).map(async entry => {
         const relativePath = path ? `${path}/${entry.name}` : entry.name;
         return { name: entry.name, path: relativePath, relativePath, isDirectory: entry.isDirectory(), sizeBytes: entry.isFile() ? (await stat(join(directory, entry.name))).size : null };
       }));

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import { AlertCircle, ArrowLeft, ChevronRight, CircleHelp, Inbox, LoaderCircle, Mic, MicOff, Search, X } from 'lucide-react';
 import { messages } from './messages.js';
 
@@ -81,6 +81,31 @@ export function SearchBox({ value, setValue, placeholder }) {
 
 export function Field({ label, hint, children }) {
   return <label className="field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
+}
+
+export function ExecutionFields({ value, onChange, inherited, inheritedLabel = 'Application default', requireProvider = false }) {
+  const { state } = useApp();
+  const modelsId = useId();
+  const normalize = (id) => id === 'claude' ? 'claude-code' : id;
+  const providerId = normalize(value?.providerId) || '';
+  const defaultId = normalize(inherited?.providerId || state.settings.defaultProvider);
+  const effectiveId = providerId || defaultId;
+  const provider = state.settings.providers?.[effectiveId] || state.providers.find(({ id }) => id === effectiveId);
+  const defaultProvider = state.providers.find(({ id }) => id === defaultId);
+  const defaultModel = (effectiveId === defaultId && inherited?.model) || provider?.model;
+  const suggested = Array.isArray(provider?.models) ? provider.models : [];
+  const modelDisabled = requireProvider && !providerId;
+  return <>
+    <Field label="Provider"><select aria-label="Provider" value={providerId} onChange={(event) => onChange({ providerId: event.target.value, model: '' })}>
+      <option value="">{inheritedLabel}{defaultProvider ? ` · ${nameOf(defaultProvider)}` : ''}</option>
+      {providerId && !state.providers.some(({ id }) => id === providerId) && <option value={providerId}>{providerId}</option>}
+      {state.providers.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}
+    </select></Field>
+    <Field label="Model" hint={modelDisabled ? 'Select a provider to set a model override.' : undefined}>
+      <input aria-label="Model" list={modelsId} value={value?.model || ''} disabled={modelDisabled} maxLength={200} onChange={(event) => onChange({ providerId, model: event.target.value })} placeholder={defaultModel || 'Provider default'} />
+      <datalist id={modelsId}>{suggested.map((item) => <option key={item.id || item} value={item.id || item} />)}</datalist>
+    </Field>
+  </>;
 }
 
 export function Status({ status = 'Unknown' }) {

@@ -27,6 +27,9 @@ executable and bundled resources together. The repository's `run.bat` opens
 an available package first and can start the development build with already
 installed local dependencies.
 
+Use `npm run package -- workflow-context` to build into
+`release/workflow-context/` when keeping a separate portable installation.
+
 ## Storage and imports
 
 Both development and packaged launches use Electron's user data directory.
@@ -36,9 +39,9 @@ separate directories within the same user data directory.
 
 | Workbench path | Purpose |
 | --- | --- |
-| `.doxie/` | Canonical skills, subagents, workflows, and libraries. |
+| `.doxie/` | Canonical agents, native tool definitions, workflows, and libraries. |
 | `.workspace/` | Workspace folders, mounts, notes, and durable output. |
-| `.runs/` | Workflow node output and agent run artifacts. |
+| `.runs/` | Durable run artifacts and active-workflow transport removed at completion. |
 | `.sandbox/` | Builder sessions and scratch folders. |
 | `.private/` | User-owned private content. |
 | `.claude/`, `.agents/`, `.codex/` | Generated provider compatibility files. |

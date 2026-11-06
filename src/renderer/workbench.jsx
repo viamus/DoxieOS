@@ -3,7 +3,7 @@ import { Terminal as Xterm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { BookOpen, ChevronDown, ChevronRight, Code2, Copy, Download, ExternalLink, File, FileText, Folder, FolderKanban, Import, Maximize2, Minimize2, Plus, Search, Square, Terminal, Trash2, X } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronRight, Code2, Copy, Download, ExternalLink, File, FileText, Folder, FolderKanban, Import, Maximize2, Minimize2, Pencil, Plus, Save, Search, Square, Terminal, Trash2, X } from 'lucide-react';
 import { Button, Confirm, Empty, ErrorNotice, Field, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, go, invoke, nameOf, part, slug, useApp, useAsync, useText } from './ui.jsx';
 import '@xterm/xterm/css/xterm.css';
 
@@ -199,6 +199,72 @@ export function WorkspaceFilesPage({ id, path }) {
   </div>;
 }
 
+function LibraryCreator({ catalogId, close, created }) {
+  const { state, refresh } = useApp();
+  const [draft, setDraft] = useState({ id: '', name: '', description: '', catalogId: catalogId || 'default' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const set = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
+  const catalogs = state.catalogs || state.settings.catalogs || [];
+  const submit = async (event) => {
+    event.preventDefault();
+    setError('');
+    const id = draft.id || slug(draft.name);
+    if (!id) { setError('Enter a name or a valid library ID.'); return; }
+    if (state.libraries.some((item) => item.id === id && (item.catalogId || 'default') === draft.catalogId)) { setError('A library with this ID already exists in the selected catalog.'); return; }
+    setSaving(true);
+    try {
+      const library = await invoke('libraries:create', { ...draft, id });
+      await refresh();
+      created(library);
+    } catch (problem) { setError(problem.message); }
+    finally { setSaving(false); }
+  };
+  return <Modal title="New library" icon={BookOpen} close={() => { if (!saving) close(); }}><form onSubmit={submit}>
+    <div className="modal-body stack">
+      <div className="form-grid"><Field label="Name"><input required value={draft.name} onChange={(event) => set('name', event.target.value)} /></Field><Field label="Library ID"><input value={draft.id} pattern="[a-z0-9]+(\x2d[a-z0-9]+)*" placeholder={slug(draft.name) || 'my-library'} onChange={(event) => set('id', event.target.value)} /></Field></div>
+      <Field label="Description"><textarea rows={3} value={draft.description} onChange={(event) => set('description', event.target.value)} /></Field>
+      <Field label="Catalog"><select value={draft.catalogId} onChange={(event) => set('catalogId', event.target.value)}>{!catalogs.some(({ id }) => id === 'default') && <option value="default">Default catalog</option>}{catalogs.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}</select></Field>
+      <ErrorNotice error={error} />
+    </div><footer className="modal-footer"><Button onClick={close} disabled={saving}>Cancel</Button><Button type="submit" icon={Save} variant="primary" disabled={saving}>Create library</Button></footer>
+  </form></Modal>;
+}
+
+function MemoryEditor({ library, memory, close, saved }) {
+  const { refresh } = useApp();
+  const source = useAsync(() => memory && invoke('library-files:read', library.id, memory.relativePath, library.catalogId), [library.id, library.catalogId, memory?.relativePath]);
+  const [name, setName] = useState('');
+  const [content, setContent] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const blocked = memory && (source.loading || source.error || source.value?.truncated || source.value?.isBinary);
+  const markdown = content ?? source.value?.content ?? '';
+  const submit = async (event) => {
+    event.preventDefault();
+    if (blocked) return;
+    setError('');
+    const id = slug(name);
+    if (!memory && (!id || ['memory', 'readme'].includes(id))) { setError('Choose a name that gives the memory a unique ID.'); return; }
+    const file = memory?.relativePath || `memories/${id}.md`;
+    if (!memory && library.files?.some(({ relativePath }) => relativePath.toLowerCase() === file)) { setError('A memory with this ID already exists.'); return; }
+    const text = memory ? markdown : `---\nname: ${JSON.stringify(name.trim())}\n---\n\n${markdown}`;
+    setSaving(true);
+    try {
+      await invoke('library-files:write', library.id, file, text, library.catalogId, { create: !memory });
+      await refresh();
+      saved();
+    } catch (problem) { setError(problem.message); }
+    finally { setSaving(false); }
+  };
+  return <Modal title={memory ? `Edit ${nameOf(memory)}` : 'New memory'} icon={FileText} close={() => { if (!saving) close(); }} wide><form onSubmit={submit}>
+    <div className="modal-body stack">
+      {!memory && <Field label="Name"><input required value={name} onChange={(event) => setName(event.target.value)} /></Field>}
+      {memory && source.loading ? <Loading /> : <Field label="Markdown" hint={memory ? 'The source includes the memory’s metadata.' : undefined}><textarea className="monospace" spellCheck={false} disabled={!!blocked} rows={14} value={markdown} onChange={(event) => setContent(event.target.value)} /></Field>}
+      <ErrorNotice error={error || source.error || (memory && (source.value?.truncated || source.value?.isBinary) ? 'Open this file in its native application to edit it in full.' : null)} />
+    </div><footer className="modal-footer"><Button onClick={close} disabled={saving}>Cancel</Button><Button type="submit" icon={Save} variant="primary" disabled={saving || !!blocked}>Save memory</Button></footer>
+  </form></Modal>;
+}
+
 export function LibrariesPage() {
   const { state, perform, notify } = useApp();
   const t = useText();
@@ -206,20 +272,31 @@ export function LibrariesPage() {
   const [catalog, setCatalog] = useState('');
   const [selected, setSelected] = useState('');
   const [remove, setRemove] = useState(null);
+  const [create, setCreate] = useState(false);
+  const [editMemory, setEditMemory] = useState(null);
+  const [removeMemory, setRemoveMemory] = useState(null);
+  const [fileRevision, setFileRevision] = useState(0);
   const catalogOptions = state.catalogs || state.settings.catalogs || [];
   const libraries = state.libraries.filter((library) => (!catalog || library.catalogId === catalog) && `${nameOf(library)} ${library.description || ''} ${library.memories?.map((memory) => nameOf(memory)).join(' ') || ''} ${library.files?.map((file) => file.name).join(' ') || ''}`.toLowerCase().includes(search.toLowerCase()));
-  return <div className="page"><PageHeading icon={BookOpen} title={t('Libraries.Title', 'Libraries')} subtitle={t('Libraries.Subtitle', 'Reusable memory and reference files for agent context.')} actions={<Button variant="primary" icon={Import} onClick={() => perform('catalog:import', ['libraries', catalog || undefined], 'Library imported')}>{t('Libraries.Import', 'Import library')}</Button>} />
+  return <div className="page"><PageHeading icon={BookOpen} title={t('Libraries.Title', 'Libraries')} subtitle={t('Libraries.Subtitle', 'Reusable memory and reference files for agent context.')} actions={<><Button icon={Import} onClick={() => perform('catalog:import', ['libraries', catalog || undefined], 'Library imported')}>{t('Libraries.Import', 'Import library')}</Button><Button variant="primary" icon={Plus} onClick={() => setCreate(true)}>New library</Button></>} />
     <div className="toolbar"><SearchBox value={search} setValue={setSearch} placeholder={t('Libraries.SearchPlaceholder', 'Search libraries, memories or files…')} /><select aria-label="Catalog" value={catalog} onChange={(event) => setCatalog(event.target.value)}><option value="">All catalogs</option>{catalogOptions.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}</select></div>
     {libraries.length ? <div className="stack">{libraries.map((library) => {
       const key = entityKey(library);
       const show = selected === key;
       const memories = library.memories || [];
       return <Panel key={key} title={nameOf(library)} icon={BookOpen} hint={library.description || library.id} actions={<><Tag>{memories.length} memories</Tag><IconButton icon={Download} label="Export library" onClick={() => perform('catalog:export', ['libraries', library.id, library.catalogId])} /><IconButton icon={Trash2} label="Delete library" onClick={() => setRemove(library)} /><IconButton icon={show ? ChevronDown : ChevronRight} label={show ? 'Collapse library' : 'Explore library'} aria-expanded={show} onClick={() => setSelected(show ? '' : key)} /></>}>
-        {show && <div className="panel-body stack">{memories.length > 0 && <div className="memory-list">{memories.map((memory) => <details key={memory.id || memory.relativePath} className="memory"><summary><FileText size={15} />{nameOf(memory)} {memory.type && <Tag>{memory.type}</Tag>}</summary><Markdown>{memory.content}</Markdown><div className="actions start"><Button icon={Copy} onClick={async () => { try { await navigator.clipboard.writeText(memory.content || ''); notify('Memory copied'); } catch (error) { notify(error.message, 'error'); } }}>Copy</Button>{memory.relativePath && <Button icon={Download} onClick={() => perform('library-files:download', [library.id, memory.relativePath, library.catalogId])}>Download</Button>}</div></details>)}</div>}
-          <FilesBrowser compact api="library-files" id={library.id} catalogId={library.catalogId} />
+        {show && <div className="panel-body stack"><div className="actions start"><Button icon={Plus} onClick={() => setEditMemory({ library })}>New memory</Button></div>{memories.length > 0 && <div className="memory-list">{memories.map((memory) => <details key={memory.id || memory.relativePath} className="memory"><summary><FileText size={15} />{nameOf(memory)} {memory.type && <Tag>{memory.type}</Tag>}</summary><Markdown>{memory.content}</Markdown><div className="actions start"><Button icon={Copy} onClick={async () => { try { await navigator.clipboard.writeText(memory.content || ''); notify('Memory copied'); } catch (error) { notify(error.message, 'error'); } }}>Copy</Button>{memory.relativePath && <><Button icon={Pencil} onClick={() => setEditMemory({ library, memory })}>Edit</Button><Button icon={Download} onClick={() => perform('library-files:download', [library.id, memory.relativePath, library.catalogId])}>Download</Button><IconButton icon={Trash2} label="Delete memory" onClick={() => setRemoveMemory({ library, memory })} /></>}</div></details>)}</div>}
+          <FilesBrowser key={fileRevision} compact api="library-files" id={library.id} catalogId={library.catalogId} />
         </div>}
       </Panel>;
-    })}</div> : <Panel><Empty icon={BookOpen} title={search ? 'No matching libraries' : 'No libraries yet'} detail={t('Libraries.Empty', 'Import a memory pack to share reusable context with agents.')} /></Panel>}
+    })}</div> : <Panel><Empty icon={BookOpen} title={search ? 'No matching libraries' : 'No libraries yet'} detail={t('Libraries.Empty', 'Create or import a memory pack to share reusable context with agents.')} /></Panel>}
+    {create && <LibraryCreator catalogId={catalog} close={() => setCreate(false)} created={(library) => { setCreate(false); setSearch(''); setCatalog(''); setSelected(entityKey(library)); notify('Library created'); }} />}
+    {editMemory && <MemoryEditor {...editMemory} close={() => setEditMemory(null)} saved={() => { setEditMemory(null); setFileRevision((current) => current + 1); notify('Memory saved'); }} />}
+    {removeMemory && <Confirm title="Delete memory" detail={`Delete ${nameOf(removeMemory.memory)} from ${nameOf(removeMemory.library)}?`} close={() => setRemoveMemory(null)} confirm={async () => {
+      const { library, memory } = removeMemory;
+      const result = await perform('library-files:delete', [library.id, memory.relativePath, library.catalogId], 'Memory removed');
+      if (result !== false) { setRemoveMemory(null); setFileRevision((current) => current + 1); }
+    }} />}
     {remove && <Confirm title="Delete library" detail={`Delete ${nameOf(remove)} from its catalog?`} close={() => setRemove(null)} confirm={async () => { const result = await perform('catalog:remove', ['libraries', remove.id, remove.catalogId], 'Library removed'); if (result !== false) setRemove(null); }} />}
   </div>;
 }

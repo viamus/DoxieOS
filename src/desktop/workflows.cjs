@@ -1,19 +1,24 @@
 const { randomBytes } = require('node:crypto');
-const { readdir, mkdir, readFile, writeFile, copyFile, open, stat, lstat } = require('node:fs/promises');
+const { constants } = require('node:fs');
+const { readdir, mkdir, mkdtemp, readFile, writeFile, copyFile, open, stat, lstat, rm } = require('node:fs/promises');
 const path = require('node:path');
+const { parseTree } = require('jsonc-parser');
 const { safePath } = require('./storage.cjs');
+const { runNativeUtility } = require('./native-tools.cjs');
 
 const logSeparator = '\x1e';
 const runKinds = ['Queued', 'Running', 'Succeeded', 'Failed', 'Cancelled', 'AwaitingApproval'];
 const nodeStatuses = ['Pending', 'Running', 'Succeeded', 'Failed', 'Skipped', 'AwaitingApproval'];
-const nodeKinds = ['trigger', 'agent', 'aggregate', 'output', 'loop', 'decision'];
+const nodeKinds = ['trigger', 'agent', 'aggregate', 'output', 'loop', 'decision', 'tool'];
 const triggerKinds = ['manual', 'cron', 'event', 'webhook'];
 const terminal = new Set(['Succeeded', 'Failed', 'Cancelled']);
-const indexable = new Set(['.md', '.json', '.txt', '.yaml', '.yml', '.csv', '.html', '.xml', '.log']);
 const connectorKinds = new Map([
   ['aggregate', 'aggregate'], ['write-to-workspace', 'output'], ['loop', 'loop'],
-  ['if-else', 'decision'], ['approval-gate', 'approval'],
+  ['if-else', 'decision'], ['approval-gate', 'approval'], ['library', 'library'], ['sandbox', 'sandbox'],
 ]);
+const transientFolder = '.doxie-transient';
+const maxContextBytes = 64 * 1024;
+const maxRunContextBytes = 512 * 1024;
 const trueBranches = new Set(['true', 'then', 'yes', 'y', 'pass', 'passed', 'match', 'matched']);
 const falseBranches = new Set(['false', 'else', 'no', 'n', 'fail', 'failed', 'unmatched']);
 const now = () => new Date().toISOString();
@@ -44,6 +49,10 @@ function initializeRunStore(db) {
   const columns = new Set(db.prepare('PRAGMA table_info(workflow_runs)').all().map(row => row.name));
   if (!columns.has('trigger_inputs')) db.exec('ALTER TABLE workflow_runs ADD COLUMN trigger_inputs TEXT NULL');
   if (!columns.has('catalog_id')) db.exec('ALTER TABLE workflow_runs ADD COLUMN catalog_id TEXT NULL');
+  const nodeColumns = new Set(db.prepare('PRAGMA table_info(workflow_node_runs)').all().map(row => row.name));
+  if (!nodeColumns.has('provider_id')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN provider_id TEXT NULL');
+  if (!nodeColumns.has('model')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN model TEXT NULL');
+  if (!nodeColumns.has('has_transient_context')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN has_transient_context INTEGER NOT NULL DEFAULT 0');
 
   const updateRun = db.prepare(`
     INSERT INTO workflow_runs (id, workflow_id, triggered_by, started_at, finished_at, status, trigger_inputs, catalog_id)
@@ -52,10 +61,11 @@ function initializeRunStore(db) {
       trigger_inputs=excluded.trigger_inputs, catalog_id=excluded.catalog_id
   `);
   const updateNode = db.prepare(`
-    INSERT INTO workflow_node_runs (run_id, node_id, status, started_at, finished_at, output_summary, logs)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workflow_node_runs (run_id, node_id, status, started_at, finished_at, output_summary, logs, provider_id, model, has_transient_context)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (run_id, node_id) DO UPDATE SET status=excluded.status, started_at=excluded.started_at,
-      finished_at=excluded.finished_at, output_summary=excluded.output_summary, logs=excluded.logs
+      finished_at=excluded.finished_at, output_summary=excluded.output_summary, logs=excluded.logs,
+      provider_id=excluded.provider_id, model=excluded.model, has_transient_context=excluded.has_transient_context
   `);
 
   const runs = new Map(db.prepare('SELECT * FROM workflow_runs').all().map(row => [row.id, {
@@ -78,6 +88,9 @@ function initializeRunStore(db) {
       startedAt: row.started_at,
       finishedAt: row.finished_at,
       outputSummary: row.output_summary,
+      providerId: row.provider_id,
+      model: row.model,
+      hasTransientContext: Boolean(row.has_transient_context),
       logs: row.logs ? row.logs.split(logSeparator) : [],
     };
   }
@@ -89,7 +102,7 @@ function initializeRunStore(db) {
         run.status, JSON.stringify(run.triggerInputs), run.catalogId);
       for (const node of nodes) {
         updateNode.run(run.id, node.nodeId, node.status, node.startedAt, node.finishedAt,
-          node.outputSummary, node.logs.join(logSeparator));
+          node.outputSummary, node.logs.join(logSeparator), node.providerId, node.model, Number(node.hasTransientContext));
       }
       db.exec('COMMIT');
     } catch (error) {
@@ -136,7 +149,7 @@ function readInputs(value) {
 }
 
 function createNodeRun(nodeId) {
-  return { nodeId, status: 'Pending', startedAt: null, finishedAt: null, outputSummary: null, logs: [] };
+  return { nodeId, status: 'Pending', startedAt: null, finishedAt: null, outputSummary: null, providerId: null, model: null, hasTransientContext: false, logs: [] };
 }
 
 function safeId(value, label) {
@@ -148,6 +161,11 @@ function safeId(value, label) {
 
 function nodeKind(node) {
   const kind = readEnum(nodeKinds, node.kind, 'agent');
+  if (kind === 'tool') {
+    const tool = connectorKinds.get(lower(node.toolId));
+    if (!tool) throw new Error(`Unknown native workflow tool '${node.toolId}' in node '${node.id}'`);
+    return tool;
+  }
   return kind === 'agent' ? connectorKinds.get(lower(node.agentId)) ?? kind : kind;
 }
 
@@ -157,6 +175,7 @@ function normalizeDefinition(definition) {
   const byId = new Map();
   for (const node of nodes) {
     safeId(node.id, 'workflow node id');
+    nodeKind(node);
     const key = lower(node.id);
     if (byId.has(key)) throw new Error(`Duplicate workflow node '${node.id}'`);
     byId.set(key, { ...node, loopId: null });
@@ -237,12 +256,29 @@ function validateInputs(definition, supplied) {
   return values;
 }
 
+function jsonPathParts(selector) {
+  return String(selector ?? '').split('.').map(part => part.trim()).filter(Boolean);
+}
+
 function getJsonPath(value, selector) {
-  for (const key of String(selector ?? '').split('.').map(part => part.trim()).filter(Boolean)) {
+  for (const key of jsonPathParts(selector)) {
     value = Array.isArray(value) ? (/^\d+$/.test(key) ? value[Number(key)] : undefined) : caseInsensitive(value, key);
     if (value === undefined) return undefined;
   }
   return value;
+}
+
+function getJsonNode(node, selector) {
+  for (const key of jsonPathParts(selector)) {
+    if (node?.type === 'array' && /^\d+$/.test(key)) {
+      node = node.children?.[Number(key)];
+    } else if (node?.type === 'object') {
+      const property = node.children?.findLast(item => item.children[0].value === key)
+        ?? node.children?.find(item => lower(item.children[0].value) === lower(key));
+      node = property?.children[1];
+    } else return undefined;
+  }
+  return node;
 }
 
 function scalar(value) {
@@ -253,6 +289,13 @@ function scalar(value) {
 function substitute(value, triggerInputs, loop) {
   return String(value ?? '').replace(/\{\{\s*(trigger|loop)\.([a-z][\w.-]*)\s*\}\}/gi, (_, scope, selector) => {
     if (lower(scope) === 'trigger') return scalar(caseInsensitive(triggerInputs, selector));
+    const item = /^item(?:\.(.+))?$/i.exec(selector);
+    if (item && loop?.itemNode) {
+      const raw = getJsonNode(loop.itemNode, item[1]);
+      if (!raw || raw.type === 'null') return '';
+      if (raw.type === 'string') return raw.value;
+      return loop.sourceJson.slice(raw.offset, raw.offset + raw.length);
+    }
     return scalar(getJsonPath(loop, selector));
   });
 }
@@ -289,16 +332,172 @@ async function copyArtifacts(from, to, exclude = () => false, recursive = true) 
   return copied;
 }
 
-async function readUpstreamFile(upstream, filename) {
-  for (const folder of upstream) {
-    const candidate = safePath(folder, filename);
-    if ((await optionalStat(candidate))?.isFile()) return candidate;
-  }
-  return null;
+const mediaTypes = new Map([
+  ['.json', 'application/json'], ['.md', 'text/markdown'], ['.markdown', 'text/markdown'],
+  ['.txt', 'text/plain'], ['.log', 'text/plain'], ['.csv', 'text/csv'], ['.html', 'text/html'], ['.htm', 'text/html'],
+  ['.xml', 'application/xml'], ['.yaml', 'application/yaml'], ['.yml', 'application/yaml'],
+  ['.pdf', 'application/pdf'], ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.webp', 'image/webp'],
+]);
+
+function publicArtifact(relative) {
+  return relative.split(/[\\/]/).every(part => part && !part.startsWith('.'));
 }
 
-function isIndexable(file) {
-  return !path.basename(file).startsWith('.') && indexable.has(lower(path.extname(file)));
+function sortByPath(left, right) {
+  return left.relativePath < right.relativePath ? -1 : left.relativePath > right.relativePath ? 1 : 0;
+}
+
+async function artifactEntries(directory) {
+  if (!directory || !(await optionalStat(directory, false))?.isDirectory()) return [];
+  const manifestPath = safePath(directory, '.doxie-artifact.json');
+  const manifestInfo = await optionalStat(manifestPath, false);
+  let files;
+  if (manifestInfo) {
+    if (!manifestInfo.isFile() || manifestInfo.size > 128_000) throw new Error('Invalid workflow artifact manifest');
+    const metadata = JSON.parse(await readFile(manifestPath, 'utf8'));
+    if (!Array.isArray(metadata?.files) || metadata.files.some(file => typeof file !== 'string' || !publicArtifact(file))) {
+      throw new Error('Workflow artifact manifest must declare visible files as relative paths');
+    }
+    files = metadata.files.map(file => safePath(directory, file));
+  } else {
+    files = (await filesUnder(directory, true)).filter(file => publicArtifact(path.relative(directory, file)));
+  }
+  const artifacts = [];
+  for (const file of new Set(files)) {
+    const info = await optionalStat(file, false);
+    if (!info?.isFile()) throw new Error(`Declared workflow artifact '${path.basename(file)}' is unavailable`);
+    const relativePath = path.relative(directory, file).split(path.sep).join('/');
+    artifacts.push({ file, relativePath, mediaType: mediaTypes.get(lower(path.extname(file))) ?? 'application/octet-stream', sizeBytes: info.size });
+  }
+  return artifacts.sort(sortByPath);
+}
+
+function findUpstreamArtifact(upstream, filename) {
+  const relative = String(filename).replaceAll('\\', '/');
+  return upstream.flatMap(source => source.artifacts).find(artifact => artifact.relativePath === relative) ?? null;
+}
+
+function readArtifact(artifact) {
+  return artifact.file ? readFile(artifact.file, 'utf8') : Promise.resolve(artifact.content);
+}
+
+function describeArtifact(artifact) {
+  if (artifact.mediaType.startsWith('text/') || ['application/json', 'application/xml', 'application/yaml'].includes(artifact.mediaType)) {
+    return readArtifact(artifact);
+  }
+  return Promise.resolve(`Binary artifact (${artifact.mediaType}, ${artifact.sizeBytes} bytes).`);
+}
+
+async function upstreamJson(upstream, filename, allowContext) {
+  const artifact = findUpstreamArtifact(upstream, filename);
+  if (artifact && filename !== 'context') {
+    return { text: await readArtifact(artifact), sourcePath: artifact.file ?? null, transient: artifact.transient === true };
+  }
+  if (!allowContext && filename !== 'context') return null;
+  const contexts = upstreamContexts(upstream);
+  if (contexts.length > 1) throw new Error('Multiple direct upstream contexts are available. Select an artifact filename to disambiguate.');
+  return contexts.length ? { text: contexts[0].contextJson, sourcePath: null, transient: true } : null;
+}
+
+async function snapshotSources(transientRoot, upstream, signal) {
+  const sources = [];
+  const emitted = new Set(upstream.flatMap(source => (source.contexts ?? [])
+    .filter(item => item.nodeId === source.nodeId).map(contextKey)));
+  for (const [index, source] of upstream.entries()) {
+    signal.throwIfAborted();
+    const artifactDirectory = source.artifacts.length ? safePath(transientRoot, `${index}-${source.nodeId}`) : null;
+    if (artifactDirectory) await mkdir(artifactDirectory);
+    for (const artifact of source.artifacts) {
+      signal.throwIfAborted();
+      const destination = safePath(artifactDirectory, artifact.relativePath);
+      await mkdir(path.dirname(destination), { recursive: true });
+      if (artifact.file) await copyFile(artifact.file, destination, constants.COPYFILE_FICLONE);
+      else await writeFile(destination, artifact.content, { encoding: 'utf8', signal });
+    }
+    const contextJson = source.contexts?.find(context => context.nodeId === source.nodeId)?.contextJson;
+    const forwardedContexts = (source.contexts ?? []).filter(item => {
+      const key = contextKey(item);
+      if (emitted.has(key)) return false;
+      emitted.add(key);
+      return true;
+    });
+    sources.push({
+      kind: source.kind, nodeId: source.nodeId, artifactDirectory,
+      artifacts: source.artifacts.map(({ relativePath, mediaType, sizeBytes }) => ({ relativePath, mediaType, sizeBytes })),
+      ...(contextJson === undefined ? {} : { contextJson }),
+      ...(forwardedContexts.length ? { forwardedContexts } : {}),
+    });
+  }
+  return sources;
+}
+
+function contextKey(item) {
+  return `${item.nodeId}:${item.iteration?.index ?? ''}`;
+}
+
+function upstreamContexts(upstream) {
+  const distinct = new Map();
+  for (const source of upstream) {
+    for (const item of source.contexts ?? []) distinct.set(contextKey(item), item);
+  }
+  return [...distinct.values()];
+}
+
+function writeNodeContexts(scope, record, node, contexts, needsFresh = false) {
+  if (!contexts.length && !needsFresh) return;
+  record.hasTransientContext = true;
+  scope.contexts.set(node.id, contexts);
+}
+
+async function readContextOutput(transport) {
+  const output = safePath(transport, 'context.json');
+  const info = await optionalStat(output, false);
+  if (!info) return null;
+  if (!info.isFile() || info.size > maxContextBytes) throw new Error('Workflow context must be a JSON file of at most 64 KiB');
+  const file = await open(output, 'r');
+  try {
+    const buffer = Buffer.alloc(maxContextBytes + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const { bytesRead } = await file.read(buffer, size, buffer.length - size, size);
+      if (!bytesRead) break;
+      size += bytesRead;
+    }
+    if (size > maxContextBytes) throw new Error('Workflow context must be a JSON file of at most 64 KiB');
+    try {
+      const contextJson = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, size));
+      const value = JSON.parse(contextJson);
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a JSON object');
+      return { contextJson, size };
+    } catch {
+      throw new Error('Workflow context must contain a valid UTF-8 JSON object');
+    }
+  } finally {
+    await file.close();
+    await rm(output, { force: true });
+  }
+}
+
+async function forwardArtifacts(upstream, directory, excluded, signal) {
+  const files = upstream.flatMap(source => source.artifacts.filter(artifact => !artifact.transient && !excluded.has(lower(artifact.relativePath)))
+    .map(artifact => ({ ...artifact, nodeId: source.nodeId })));
+  const paths = new Map();
+  for (const artifact of files) {
+    const key = lower(artifact.relativePath);
+    paths.set(key, (paths.get(key) ?? 0) + 1);
+  }
+  const forwarded = [];
+  for (const artifact of files) {
+    signal.throwIfAborted();
+    const relative = paths.get(lower(artifact.relativePath)) > 1
+      ? `_sources/${artifact.nodeId}/${artifact.relativePath}` : artifact.relativePath;
+    const destination = safePath(directory, relative);
+    await mkdir(path.dirname(destination), { recursive: true });
+    if (artifact.file) await copyFile(artifact.file, destination, constants.COPYFILE_FICLONE | constants.COPYFILE_EXCL);
+    else await writeFile(destination, artifact.content, { encoding: 'utf8', signal, flag: 'wx' });
+    forwarded.push(relative);
+  }
+  return forwarded;
 }
 
 const previewExtensions = new Map([
@@ -362,8 +561,7 @@ async function writeJson(file, value) {
 async function manifest(directory, { producerId, producerName, kind, title, tags, files }, replace = false) {
   const target = safePath(directory, '.doxie-artifact.json');
   if (!replace && (await optionalStat(target))?.isFile()) return;
-  const artifacts = files ?? (await filesUnder(directory, true)).filter(isIndexable)
-    .slice(0, 80).map(file => path.relative(directory, file));
+  const artifacts = files ?? (await artifactEntries(directory)).map(file => file.relativePath);
   if (artifacts.length) {
     await writeJson(target, { schema: 'doxie.output-artifact.v1', producerId, producerName, kind, title, tags, files: artifacts });
   }
@@ -487,11 +685,21 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
   const active = new Map();
   const cronCursors = new Map();
   const runsRoot = path.resolve(storage.roots?.runs ?? path.join(storage.root, '.runs'));
+  const transientRoot = id => safePath(runsRoot, path.join(safeId(id, 'run id'), transientFolder));
+  async function clearTransient(id) {
+    try {
+      await rm(transientRoot(id), { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+    } catch (error) {
+      console.error(`Could not clear transient data for workflow ${id}: ${error.message}`);
+    }
+  }
   let timer;
   let closed = false;
 
+  const interrupted = [];
   for (const run of store.runs.values()) {
     if (terminal.has(run.status)) continue;
+    interrupted.push(clearTransient(run.id));
     run.status = 'Cancelled';
     run.finishedAt = now();
     for (const node of Object.values(run.nodeRuns)) {
@@ -531,14 +739,17 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
 
   function addHint(id, hint) {
     const context = active.get(id);
-    const clean = String(hint ?? '').trim().slice(0, 4000);
-    if (!context || !clean) return false;
-    context.hints.push(clean);
+    if (!context || typeof hint !== 'string' || !hint.trim()) return false;
+    const size = Buffer.byteLength(hint);
+    if (size > 4096 || context.hints.reduce((total, item) => total + Buffer.byteLength(item), size) > maxContextBytes) {
+      throw new Error('Workflow guidance is limited to 4 KiB per message and 64 KiB per run.');
+    }
+    context.hints.push(hint);
     const targets = Object.values(context.run.nodeRuns).filter(node => ['Running', 'AwaitingApproval'].includes(node.status));
-    for (const node of targets) node.logs.push(`[operator hint] ${clean}`);
+    for (const node of targets) node.logs.push('[operator hint] transient guidance received');
     const sendAgentHint = agents.addHint ?? agents.addOperatorHint;
     for (const [nodeId, agentId] of context.agentRuns) {
-      try { sendAgentHint?.call(agents, agentId, clean); }
+      try { sendAgentHint?.call(agents, agentId, hint); }
       catch (error) { context.run.nodeRuns[nodeId].logs.push(`[warning] could not forward hint: ${error.message}`); }
     }
     update(context.run, targets);
@@ -581,7 +792,8 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     for (const current of reachable) {
       for (const edge of definition.edges.filter(edge => edge.fromNodeId === current)) reachable.add(edge.toNodeId);
     }
-    const hint = String(guidance ?? '').trim().slice(0, 4000);
+    const hint = typeof guidance === 'string' && guidance.trim() ? guidance : '';
+    if (Buffer.byteLength(hint) > 4096) throw new Error('Workflow guidance is limited to 4 KiB per message.');
     return launch(definition, `rerun:${id}:${requested.id}`, previous.triggerInputs, { previous, reachable, hint, start });
   }
 
@@ -597,7 +809,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     };
     const context = {
       definition, run, controller: new AbortController(), approvals: new Map(), agentRuns: new Map(),
-      hints: replay?.hint ? [replay.hint] : [], task: null,
+      hints: replay?.hint ? [replay.hint] : [], task: null, contextBytes: 0,
     };
     store.save(run);
     store.runs.set(id, run);
@@ -621,13 +833,13 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       await mkdir(runsRoot, { recursive: true });
       await mkdir(safePath(runsRoot, run.id), { recursive: true });
       const scope = {
-        signal: controller.signal, base: runDir(run.id), outputDir: id => nodeDir(run.id, id),
+        signal: controller.signal, base: runDir(run.id), outputDir: id => nodeDir(run.id, id), contexts: new Map(),
         nodeRun: node => run.nodeRuns[node.id],
-        inputFolders: async (node, edges) => await getInputFolders(scope, edges),
+        inputSources: (node, edges) => getInputSources(scope, edges),
       };
       if (replay) {
         run.nodeRuns[replay.start].logs.push(`[rerun-from] replaying from '${replay.start}' using run ${replay.previous.id}`);
-        if (replay.hint) run.nodeRuns[replay.start].logs.push(`[rerun-from guidance] ${replay.hint}`);
+        if (replay.hint) run.nodeRuns[replay.start].logs.push('[rerun-from guidance] transient guidance received');
         for (const node of definition.nodes.filter(node => node.loopId && !replay.reachable.has(node.id))) {
           await reuseNode(context, scope, node, replay);
         }
@@ -642,6 +854,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       }
       if (!controller.signal.aborted) run.status = 'Failed';
     } finally {
+      await clearTransient(run.id);
       const unfinished = Object.values(run.nodeRuns).filter(node => ['Pending', 'Running'].includes(node.status));
       for (const node of unfinished) {
         node.status = 'Skipped';
@@ -661,15 +874,33 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     }
   }
 
-  async function getInputFolders(scope, edges) {
+  async function getInputSources(scope, edges) {
     const upstream = [];
     for (const sourceId of new Set(edges.map(edge => edge.fromNodeId))) {
-      const directory = scope.outputDir(sourceId);
-      if ((await optionalStat(safePath(scope.base, path.relative(scope.base, directory)), false))?.isDirectory()) {
-        upstream.push(directory);
+      const directory = safePath(scope.base, path.relative(scope.base, scope.outputDir(sourceId)));
+      const contexts = scope.contexts.get(sourceId);
+      if (!contexts && scope.nodeRun({ id: sourceId }).hasTransientContext) {
+        throw new Error(`The prior context for node '${sourceId}' expired. Rerun from its original producer or restart the workflow.`);
       }
+      upstream.push({ kind: 'node', nodeId: sourceId, artifacts: await artifactEntries(directory), contexts });
     }
     return upstream;
+  }
+
+  async function withHandoff(context, scope, node, upstream, action) {
+    const { run, definition } = context;
+    const root = transientRoot(run.id);
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const transport = await mkdtemp(safePath(root, 'input-'));
+    try {
+      const sources = await snapshotSources(transport, upstream, scope.signal);
+      return await action({
+        schema: 'doxie.workflow-handoff.v1', workflowId: definition.id, runId: run.id, nodeId: node.id,
+        ...(scope.loop ? { iteration: { index: scope.loop.index, total: scope.loop.total } } : {}), sources,
+      }, transport);
+    } finally {
+      await rm(safePath(root, path.basename(transport)), { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+    }
   }
 
   async function executeGraph(context, scope, nodes, edges, replay) {
@@ -706,7 +937,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
         record.startedAt = now();
         if (scope.loop) record.logs.push(`[loop] iter-${scope.loop.index} of ${scope.loop.total}`);
         update(context.run, [record]);
-        const selected = await executeNode(context, scope, node, record, await scope.inputFolders(node, dependencies));
+        const selected = await executeNode(context, scope, node, record, await scope.inputSources(node, dependencies));
         if (selected) branch.set(node.id, selected);
         scope.signal.throwIfAborted();
         record.status = 'Succeeded';
@@ -749,6 +980,9 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     record.startedAt = original.startedAt;
     record.finishedAt = original.finishedAt ?? now();
     record.outputSummary = original.outputSummary ?? `reused from ${replay.previous.id}/${node.id}`;
+    record.providerId = original.providerId;
+    record.model = original.model;
+    record.hasTransientContext = original.hasTransientContext;
     record.logs.push(`[rerun-from] reused artifacts from run ${replay.previous.id}, node ${node.id}`);
     update(context.run, [record]);
     if (nodeKind(node) !== 'decision') return null;
@@ -761,8 +995,8 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const { run } = context;
     const inputs = Object.fromEntries(Object.entries(node.inputs ?? {}).map(([key, value]) => [lower(key), substitute(value, run.triggerInputs, scope.loop)]));
     const kind = nodeKind(node);
-    if (scope.loop && !['agent', 'decision'].includes(kind)) {
-      throw new Error(`Loop body node '${node.id}' must be an agent or decision`);
+    if (scope.loop && !['agent', 'decision', 'library', 'sandbox'].includes(kind)) {
+      throw new Error(`Loop body node '${node.id}' must be an agent or supported native tool`);
     }
     if (kind === 'trigger') {
       record.logs.push(`trigger fired (${run.triggeredBy})`);
@@ -772,17 +1006,49 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const directory = safePath(scope.base, node.id);
     await mkdir(directory, { recursive: true });
     switch (kind) {
-      case 'agent': await dispatchAgent(context, scope, node, record, inputs, upstream, directory); break;
+      case 'agent': await withHandoff(context, scope, node, upstream, (handoff, transport) => dispatchAgent(context, scope, node, record, inputs, handoff, directory, transport)); break;
       case 'aggregate': await aggregate(context, node, record, upstream, directory); break;
       case 'output': await outputToWorkspace(context, scope, node, record, inputs, upstream); break;
-      case 'decision': return await decide(context, node, record, inputs, upstream, directory);
+      case 'decision': {
+        const selected = await decide(context, scope, node, record, inputs, upstream, directory);
+        writeNodeContexts(scope, record, node, upstreamContexts(upstream), upstream.some(source => source.contexts));
+        return selected;
+      }
       case 'loop': await executeLoop(context, scope, node, record, inputs, upstream, directory); break;
       case 'approval': await approval(context, scope, node, record, inputs, upstream, directory); break;
+      case 'library':
+      case 'sandbox': await withHandoff(context, scope, node, upstream, handoff => utility(context, scope, node, kind, record, inputs, handoff, directory)); break;
+    }
+    if (kind === 'approval' || kind === 'aggregate') {
+      writeNodeContexts(scope, record, node, upstreamContexts(upstream), upstream.some(source => source.contexts));
     }
     return null;
   }
 
-  async function dispatchAgent(context, scope, node, record, inputs, upstream, directory) {
+  function workspaceFor(context, scope, node) {
+    const { definition, run } = context;
+    const workspaceId = substitute(node.workspaceId, run.triggerInputs, scope.loop).trim()
+      || substitute(definition.workspaceId, run.triggerInputs, scope.loop).trim();
+    if (!workspaceId) return null;
+    const workspace = storage.get('workspaces', workspaceId);
+    if (!workspace) throw new Error(`Workspace '${workspaceId}' for node '${node.id}' was not found`);
+    return workspace;
+  }
+
+  async function utility(context, scope, node, toolId, record, inputs, handoff, directory) {
+    const { run, definition } = context;
+    const result = await runNativeUtility(toolId, {
+      storage, toolMode: node.toolMode ?? node.agentMode, inputs, workspace: workspaceFor(context, scope, node),
+      sourceDirectories: handoff.sources.map(source => source.artifactDirectory).filter(Boolean),
+      outputDir: directory, scratchRoot: safePath(transientRoot(run.id), 'sandboxes'), signal: scope.signal,
+      catalogId: definition.catalogId,
+    });
+    record.outputSummary = result.summary;
+    record.logs.push(`[${toolId}] ${result.summary}`);
+    if (toolId === 'sandbox') writeNodeContexts(scope, record, node, [], true);
+  }
+
+  async function dispatchAgent(context, scope, node, record, inputs, handoff, directory, transport) {
     const { definition, run } = context;
     if (!node.agentId) throw new Error(`Agent node '${node.id}' has no agent bound`);
     const agent = (definition.catalogId && storage.get('agents', node.agentId, definition.catalogId)) || storage.get('agents', node.agentId);
@@ -790,46 +1056,43 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const modes = Array.isArray(agent.modes) ? agent.modes : Object.entries(agent.modes ?? {}).map(([id, mode]) => ({ ...mode, id }));
     const mode = node.agentMode ? modes.find(candidate => lower(candidate.id) === lower(node.agentMode)) : modes[0];
     const modeId = mode?.id ?? node.agentMode ?? null;
-    const workspaceId = substitute(node.workspaceId, run.triggerInputs, scope.loop).trim()
-      || substitute(definition.workspaceId, run.triggerInputs, scope.loop).trim() || null;
-    const workspace = workspaceId ? storage.get('workspaces', workspaceId) : null;
-    if (workspaceId && !workspace) throw new Error(`Workspace '${workspaceId}' for node '${node.id}' was not found`);
+    const workspace = workspaceFor(context, scope, node);
     if (mode?.requiresWorkspace && !workspace) throw new Error(`Agent mode '${modeId}' requires a workspace`);
+    const { providerId, model } = node.execution ?? {};
+    if (model && !providerId) throw new Error(`Agent node '${node.id}' must specify the provider for its model override`);
+    const upstream = handoff.sources.filter(source => source.artifactDirectory
+      && (source.kind !== 'loop-item' || scope.loopEntry === node.id));
 
     const env = {
       ...definition.env,
       ...(scope.loop ? {
-        LOOP_ITEM: JSON.stringify(scope.loop.item), LOOP_INDEX: String(scope.loop.index), LOOP_TOTAL: String(scope.loop.total),
+        LOOP_ITEM: scope.loop.itemJson, LOOP_INDEX: String(scope.loop.index), LOOP_TOTAL: String(scope.loop.total),
       } : {}),
       DOXIE_WORKFLOW_ID: definition.id,
       DOXIE_WORKFLOW_ROOT: definition.path ?? path.join(storage.roots?.workflows ?? path.join(storage.root, '.doxie', 'workflows'), definition.id),
       DOXIE_WORKFLOW_OUTPUT_DIR: directory,
       ...(workspace ? { DOXIE_WORKFLOW_WORKSPACE_ID: workspace.id, DOXIE_WORKFLOW_WORKSPACE_PATH: workspace.path } : {}),
-      ...(upstream.length ? { DOXIE_WORKFLOW_INPUT_DIRS: upstream.join(';') } : {}),
+      DOXIE_WORKFLOW_INPUT_DIRS: upstream.map(source => source.artifactDirectory).join(';'),
     };
     for (const [key, value] of Object.entries(env)) {
-      if (key === 'LOOP_ITEM') continue;
+      if (['LOOP_ITEM', 'DOXIE_WORKFLOW_INPUT_DIRS'].includes(key)) continue;
       record.logs.push(`env: ${key}=${/token|secret|password|key|_pat$/i.test(key) ? '***' : value}`);
     }
+    if (upstream.length) record.logs.push(`inputs: ${upstream.map(source => `${source.nodeId} (${source.artifacts.length})`).join(', ')}`);
     if (workspace) record.logs.push(`cwd: workspace '${workspace.id}' (${workspace.path})`);
     const templated = mode?.argumentsTemplate;
     const args = typeof templated === 'string'
       ? templated.replace(/\{([\w-]+)\}/g, (placeholder, key) => String(inputs[lower(key)] ?? '').trim()).replace(/\s+/g, ' ').trim()
       : Object.entries(inputs).map(([key, value]) => `--${key} ${value}`).join(' ');
-    const guidance = context.hints.length
-      ? `\n\n## Live operator guidance\n${context.hints.map((hint, index) => `${index + 1}. ${hint}`).join('\n')}` : '';
-    const argumentsWithContract = `${args}\n\n## DoxieOS workflow artifact contract\nWrite at least one indexable artifact under DOXIE_WORKFLOW_OUTPUT_DIR. Downstream nodes consume files from that folder. If there is no substantive data, write output.md explaining the limitation.${guidance}`;
     record.logs.push(`dispatching agent '${agent.name ?? agent.id}' (mode: ${modeId ?? 'default'})`);
     publish(run);
 
-    const stdout = [];
     let mirrored = 0;
     function onOutput(line) {
       if (!line) return;
       const text = typeof line === 'string' ? line : String(line.text ?? '');
       const stderr = lower(line.source) === 'stderr' || line.source === 1;
       record.logs.push(stderr ? `[stderr] ${text}` : text);
-      if (!stderr && text.trim()) stdout.push(text);
       mirrored++;
       if (!context.outputUpdate) {
         context.outputUpdate = setTimeout(() => {
@@ -841,8 +1104,9 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
 
     scope.signal.throwIfAborted();
     const started = await agents.start(node.agentId, {
-      arguments: argumentsWithContract, inputs, mode: modeId, modeId, keepSessionAlive: mode?.keepSessionAlive ?? false,
-      workspaceId, workspacePath: workspace?.path, cwd: workspace?.path, env, catalogId: agent.catalogId, workflowRunId: run.id, onOutput,
+      arguments: args, inputs, mode: modeId, modeId, keepSessionAlive: mode?.keepSessionAlive ?? false,
+      workspaceId: workspace?.id, workspacePath: workspace?.path, cwd: workspace?.path, env, catalogId: agent.catalogId,
+      providerId, model, handoff, guidance: [...context.hints], contextOutputPath: safePath(transport, 'context.json'), workflowRunId: run.id, onOutput,
     });
     const agentRunId = typeof started === 'string' ? started : started?.id;
     if (!agentRunId) throw new Error(`Agent '${node.agentId}' did not return a run id`);
@@ -853,53 +1117,40 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     scope.signal.addEventListener('abort', cancelAgent, { once: true });
     try {
       if (scope.signal.aborted) cancelAgent();
+      record.providerId = started?.providerId ?? null;
+      record.model = started?.model ?? null;
+      update(run, [record]);
       const result = await agents.wait(agentRunId);
+      record.providerId = result?.providerId ?? record.providerId;
+      record.model = result?.model ?? record.model;
       for (const line of (result?.output ?? []).slice(mirrored)) onOutput(line);
       scope.signal.throwIfAborted();
       if (!['completed', 'succeeded'].includes(lower(result?.status))) {
         throw new Error(`Agent run ended with status ${result?.status ?? 'unknown'}`);
       }
-      await recoverArtifacts(node, record, directory, result.outputDir);
       await enforceGate(node, directory, inputs);
-      if (!(await filesUnder(directory, true)).some(isIndexable)) {
-        const text = stdout.join('\n').trim() || 'The agent completed successfully without an indexable artifact or stdout content.';
-        await writeFile(safePath(directory, 'output.md'), `${text}\n`, 'utf8');
-      }
+      const published = await readContextOutput(transport);
+      const artifacts = await artifactEntries(directory);
       await manifest(directory, {
         producerId: agent.id, producerName: agent.name ?? agent.id, kind: 'workflow-agent-node', title: `${agent.name ?? agent.id} output`,
         tags: ['workflow', 'agent', definition.id, node.id, agent.id, modeId].filter(Boolean),
+        files: artifacts.map(artifact => artifact.relativePath),
       });
+      if (published) {
+        if (context.contextBytes + published.size > maxRunContextBytes) throw new Error('Workflow context exceeded its 512 KiB run budget');
+        context.contextBytes += published.size;
+        writeNodeContexts(scope, record, node, [{
+          nodeId: node.id, ...(scope.loop ? { iteration: { index: scope.loop.index, total: scope.loop.total } } : {}),
+          contextJson: published.contextJson,
+        }]);
+      }
       record.logs.push('agent run completed (exit ok)');
-      record.outputSummary = `${agent.name ?? agent.id} → ${directory}`;
+      if (published) record.logs.push(`Published ${published.size} bytes of transient workflow context`);
+      if (!artifacts.length && !published) record.logs.push('No explicit workflow artifacts or context were published. Console output is available in the run logs.');
+      record.outputSummary = `${agent.name ?? agent.id} published ${artifacts.length} artifact(s)${published ? ' and transient context' : ''}`;
     } finally {
       scope.signal.removeEventListener('abort', cancelAgent);
       context.agentRuns.delete(record.nodeId);
-    }
-  }
-
-  async function recoverArtifacts(node, record, directory, reported) {
-    if ((await filesUnder(directory, true)).some(isIndexable)) return;
-    const candidates = [];
-    if (reported && path.resolve(reported) !== path.resolve(directory)) candidates.push(path.resolve(reported));
-    const cutoff = Date.parse(record.startedAt) - 10 * 60_000;
-    const agentKey = lower(node.agentId).replace(/[^a-z0-9-]/g, '-');
-    for (const entry of await readdir(storage.root, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !lower(entry.name).startsWith(`.${agentKey}`) || !lower(entry.name).endsWith('runs')) continue;
-      const root = path.join(storage.root, entry.name);
-      const entries = (await readdir(root, { withFileTypes: true })).filter(child => child.isDirectory());
-      for (const candidate of entries.length ? entries.map(child => path.join(root, child.name)) : [root]) {
-        if ((await stat(candidate)).mtimeMs >= cutoff) candidates.push(candidate);
-      }
-    }
-    const available = await Promise.all([...new Set(candidates)].map(async candidate => ({ candidate, info: await optionalStat(candidate) })));
-    const newest = available.filter(entry => entry.info?.isDirectory()).sort((left, right) => right.info.mtimeMs - left.info.mtimeMs);
-    for (const { candidate } of newest.slice(0, 6)) {
-      if (!(await filesUnder(candidate, true)).some(isIndexable)) continue;
-      const copied = await copyArtifacts(candidate, directory, name => name === '.doxie-artifact.json');
-      if (copied) {
-        record.logs.push(`[output guardrail] recovered ${copied} artifact file(s) from ${candidate}`);
-        return;
-      }
     }
   }
 
@@ -919,10 +1170,16 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
 
   async function aggregate(context, node, record, upstream, directory) {
     const { definition } = context;
-    const files = (await Promise.all(upstream.map(folder => filesUnder(folder)))).flat();
+    const files = upstream.flatMap(source => source.artifacts);
+    if (!files.length) {
+      record.outputSummary = 'No explicit artifacts to aggregate';
+      return;
+    }
     const sections = [];
-    for (const file of files) sections.push(`<!-- from: ${path.basename(file)} -->\n${await readFile(file, 'utf8')}`);
-    await writeFile(safePath(directory, 'merged.md'), sections.join('\n\n---\n\n') || '(no upstream files to merge)', 'utf8');
+    for (const source of upstream) {
+      for (const file of source.artifacts) sections.push(`<!-- from: ${file.relativePath} -->\nSource: ${source.nodeId}\n\n${await describeArtifact(file)}`);
+    }
+    await writeFile(safePath(directory, 'merged.md'), sections.join('\n\n---\n\n'), 'utf8');
     await manifest(directory, {
       producerId: definition.id, producerName: definition.name, kind: 'workflow-aggregate', title: `${definition.name} aggregate`,
       tags: ['workflow', 'aggregate', definition.id, node.id], files: ['merged.md'],
@@ -948,9 +1205,15 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const stamp = now().slice(0, 19).replaceAll('-', '').replaceAll(':', '').replace('T', '-');
     const filename = substitute(node.outputFileName || inputs.filename, run.triggerInputs).trim() || `workflow-${stamp}.md`;
     const file = safePath(workspace.path, filename);
-    const files = (await Promise.all(upstream.map(folder => filesUnder(folder)))).flat();
+    const files = upstream.flatMap(source => source.artifacts);
+    if (!files.length) {
+      record.outputSummary = 'No explicit artifacts to write to the workspace';
+      return;
+    }
     const sections = [`# Workflow output (${definition.id})`, `Run \`${run.id}\` delivered at ${now()}.`, `Composed from ${files.length} upstream file(s).`];
-    for (const upstreamFile of files) sections.push(`---\n\n## from \`${path.basename(upstreamFile)}\`\n\n${await readFile(upstreamFile, 'utf8')}`);
+    for (const source of upstream) {
+      for (const file of source.artifacts) sections.push(`---\n\n## from \`${file.relativePath}\`\n\nSource: ${source.nodeId}\n\n${await describeArtifact(file)}`);
+    }
     try {
       await writeFile(file, `${sections.join('\n\n')}\n`, { encoding: 'utf8', signal: scope.signal });
       await manifest(workspace.path, {
@@ -966,34 +1229,44 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     }
   }
 
-  async function decide(context, node, record, inputs, upstream, directory) {
+  async function decide(context, scope, node, record, inputs, upstream, directory) {
     const { definition } = context;
     const source = inputs.source || inputs.source_file || inputs['source-file'] || 'result.json';
     const selector = inputs.path || inputs.json_path || inputs['json-path'] || null;
     const requested = normalized(inputs.operator || inputs.op || 'truthy').replaceAll('_', '-');
     const operator = decisionOperators.get(requested) ?? requested;
     const expected = inputs.value ?? inputs.expected ?? '';
-    const sourcePath = await readUpstreamFile(upstream, source);
-    const actual = sourcePath ? getJsonPath(JSON.parse(await readFile(sourcePath, 'utf8')), selector) : undefined;
-    const matched = evaluateDecision(actual, operator, expected, Boolean(sourcePath));
-    const selectedBranch = String(matched);
-    const reason = !sourcePath ? `source '${source}' was not found`
-      : actual === undefined ? `path '${selector}' was not found` : matched ? 'condition matched' : 'condition did not match';
-    let copied = 0;
-    for (const folder of upstream) {
-      copied += await copyArtifacts(folder, directory, filename => ['decision.json', '.doxie-artifact.json'].includes(filename));
+    const interpolatesLoopItem = Object.values(node.inputs ?? {}).some(value => /\{\{\s*loop\./i.test(String(value)));
+    let payload;
+    let actual;
+    let matched;
+    try {
+      payload = await upstreamJson(upstream, source, !inputs.source && !inputs.source_file && !inputs['source-file']);
+      actual = payload ? getJsonPath(JSON.parse(payload.text), selector) : undefined;
+      matched = evaluateDecision(actual, operator, expected, Boolean(payload));
+    } catch (error) {
+      if (payload?.transient || interpolatesLoopItem) throw new Error('Could not evaluate the decision from transient inputs.');
+      throw error;
     }
+    const redact = payload?.transient || interpolatesLoopItem;
+    const selectedBranch = String(matched);
+    const reason = redact ? (matched ? 'condition matched' : 'condition did not match')
+      : !payload ? `source '${source}' was not found`
+        : actual === undefined ? `path '${selector}' was not found` : matched ? 'condition matched' : 'condition did not match';
+    const forwarded = await forwardArtifacts(upstream, directory, new Set(['decision.json']), scope.signal);
     const actualKind = actual === undefined ? null : actual === null ? 'Null' : Array.isArray(actual) ? 'Array'
       : typeof actual === 'boolean' ? actual ? 'True' : 'False' : `${typeof actual}`.replace(/^./, letter => letter.toUpperCase());
     await writeJson(safePath(directory, 'decision.json'), {
-      selectedBranch, matched, source, sourcePath, path: selector, operator, expected, actual: actual === undefined ? null : scalar(actual),
-      actualKind, reason, evaluatedAt: now(),
+      selectedBranch, matched,
+      ...(redact ? {} : { source, sourcePath: payload?.sourcePath ?? null, path: selector, operator, expected,
+        actual: actual === undefined ? null : scalar(actual), actualKind }),
+      reason, evaluatedAt: now(),
     });
     await manifest(directory, {
       producerId: 'if-else', producerName: 'If/Else', kind: 'workflow-decision-node', title: `${definition.name} decision`,
-      tags: ['workflow', 'decision', definition.id, node.id, selectedBranch],
+      tags: ['workflow', 'decision', definition.id, node.id, selectedBranch], files: [...forwarded, 'decision.json'],
     });
-    record.logs.push(`[if-else] selected branch '${selectedBranch}' (${reason}); forwarded ${copied} upstream file(s)`);
+    record.logs.push(`[if-else] selected branch '${selectedBranch}' (${reason}); forwarded ${forwarded.length} upstream file(s)`);
     record.outputSummary = `if/else: ${selectedBranch}`;
     return selectedBranch;
   }
@@ -1036,18 +1309,11 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     }
     record.logs.push(`[approval-gate] approved${result.comment ? ` - ${result.comment}` : ''}`);
     record.outputSummary = 'approved';
-    let copied = 0;
-    for (const folder of upstream) {
-      try {
-        copied += await copyArtifacts(folder, directory, filename => filename === '_approval-comment.md', false);
-      } catch (error) {
-        record.logs.push(`[approval-gate] [warning] ${error.message}`);
-      }
-    }
+    const forwarded = await forwardArtifacts(upstream, directory, new Set(['_approval-comment.md']), scope.signal);
     if (result.comment) {
       await writeFile(safePath(directory, '_approval-comment.md'), result.comment, 'utf8');
     }
-    record.logs.push(`[approval-gate] forwarded ${copied} upstream file(s)`);
+    record.logs.push(`[approval-gate] forwarded ${forwarded.length} upstream file(s)`);
   }
 
   async function executeLoop(context, parentScope, node, record, inputs, upstream, directory) {
@@ -1068,9 +1334,10 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const [entry] = entries;
     const exit = exits[0] ?? bodyNodes.find(candidate => !bodyEdges.some(edge => edge.fromNodeId === candidate.id))?.id ?? entry;
     const source = inputs.array_source || 'result.json';
-    const sourceFile = await readUpstreamFile(upstream, source);
-    const array = sourceFile ? getJsonPath(JSON.parse(await readFile(sourceFile, 'utf8')), inputs.array_path) : [];
+    const payload = await upstreamJson(upstream, source, !inputs.array_source);
+    const array = payload ? getJsonPath(JSON.parse(payload.text), inputs.array_path) : [];
     if (!Array.isArray(array)) throw new Error(`Loop array source '${source}' does not contain a JSON array at '${inputs.array_path || '(root)'}'`);
+    const arrayNode = payload ? getJsonNode(parseTree(payload.text), inputs.array_path) : undefined;
     const parsedConcurrency = Number(inputs.concurrency);
     const concurrency = inputs.concurrency && Number.isSafeInteger(parsedConcurrency) ? Math.max(1, parsedConcurrency) : 4;
     const continueOnFailure = normalized(inputs.on_failure) === 'continue';
@@ -1086,21 +1353,28 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const failFast = new AbortController();
     const signal = AbortSignal.any([parentScope.signal, failFast.signal]);
     const outcomes = new Array(array.length);
+    const iterationContexts = new Array(array.length);
     let next = 0;
     async function worker() {
       while (!signal.aborted && next < array.length) {
         const index = next++;
-        const iteration = { index, item: array[index], total: array.length };
+        const itemNode = arrayNode?.children?.[index];
+        const itemJson = itemNode ? payload.text.slice(itemNode.offset, itemNode.offset + itemNode.length) : JSON.stringify(array[index]);
+        const iteration = { index, item: array[index], itemJson, itemNode, sourceJson: payload?.text, total: array.length };
         const iterationDir = path.join(directory, `iter-${index}`);
         try {
           await mkdir(safePath(directory, `iter-${index}`), { recursive: true });
-          const inputFolder = path.join(iterationDir, '_loop-input');
-          await mkdir(safePath(iterationDir, '_loop-input'), { recursive: true });
-          await writeJson(safePath(inputFolder, 'item.json'), iteration.item);
+          const loopInput = {
+            kind: 'loop-item', nodeId: node.id,
+            artifacts: [{ relativePath: 'item.json', mediaType: 'application/json', sizeBytes: Buffer.byteLength(itemJson), content: itemJson, transient: true }],
+          };
           const scope = {
-            loop: iteration, signal, base: iterationDir, outputDir: id => path.join(iterationDir, id),
+            loop: iteration, loopEntry: entry, signal, base: iterationDir, outputDir: id => path.join(iterationDir, id), contexts: new Map(),
             nodeRun: node => run.nodeRuns[`${node.id}#iter-${index}`],
-            inputFolders: async (node, edges) => node.id === entry ? [inputFolder] : await getInputFolders(scope, edges),
+            inputSources: async (node, edges) => {
+              const sources = await getInputSources(scope, edges);
+              return node.id === entry ? [loopInput, ...sources] : [...sources, loopInput];
+            },
           };
           for (const bodyNode of bodyNodes) {
             const key = `${bodyNode.id}#iter-${index}`;
@@ -1112,7 +1386,8 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
           const success = exitRun.status === 'Succeeded';
           const error = success ? null : bodyNodes.flatMap(bodyNode => scope.nodeRun(bodyNode).logs)
             .find(line => line.startsWith('[error]')) ?? 'iteration failed';
-          outcomes[index] = { index, success, outputDir, error, files: (await filesUnder(outputDir)).map(file => path.basename(file)) };
+          outcomes[index] = { index, success, outputDir, error, files: (await artifactEntries(outputDir)).map(file => file.relativePath) };
+          if (success) iterationContexts[index] = scope.contexts.get(exit);
         } catch (error) {
           outcomes[index] = { index, success: false, outputDir: iterationDir, error: error.message, files: [] };
         }
@@ -1125,6 +1400,8 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     });
     const successes = complete.filter(outcome => outcome.success);
     await writeJson(resultFile, continueOnFailure ? successes : complete);
+    const retainedContexts = iterationContexts.filter(Boolean);
+    writeNodeContexts(parentScope, record, node, retainedContexts.flat(), retainedContexts.length > 0);
     record.outputSummary = `loop: ${successes.length}/${array.length} succeeded`;
     record.logs.push(`[loop] ${record.outputSummary} → results.json`);
     for (const bodyNode of bodyNodes) {
@@ -1230,7 +1507,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     clearTimeout(timer);
     const jobs = [...active.entries()];
     for (const [id] of jobs) stop(id);
-    await Promise.allSettled(jobs.map(([, context]) => context.task));
+    await Promise.allSettled([...interrupted, ...jobs.map(([, context]) => context.task)]);
   }
 
   return { run, listRuns, getRun, wait, approve, stop, rerun, addHint, clearHistory: store.clear, start, tick, close };

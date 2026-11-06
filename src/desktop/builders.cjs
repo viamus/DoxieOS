@@ -1,8 +1,10 @@
 const { randomUUID } = require('node:crypto');
-const { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { parse } = require('jsonc-parser');
 const { settingsFor } = require('./providers.cjs');
+const { normalizeExecution, resolveExecution } = require('./execution.cjs');
+const { safePath } = require('./storage.cjs');
 
 const safeId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const knownKinds = new Set(['agent', 'workflow']);
@@ -23,6 +25,22 @@ function write(path, data) {
   renameSync(temporary, path);
 }
 
+function builderRequest(messages, text) {
+  const recent = [];
+  let size = 0;
+  for (const turn of messages.slice(-20).reverse()) {
+    size += Buffer.byteLength(JSON.stringify(turn));
+    if (size > 64 * 1024) break;
+    recent.unshift(turn);
+  }
+  const request = { schema: 'doxie.builder-request.v1', previousTurns: recent, omittedTurns: messages.length - recent.length, message: text };
+  return [
+    'Read AGENTS.md for this builder’s instructions. Inspect the existing draft before changing it.',
+    'Continue from the explicitly provided conversation below. If omittedTurns is greater than zero, the full transcript is available in .draft/desktop-session.json.',
+    JSON.stringify(request, null, 2),
+  ].join('\n\n');
+}
+
 function createBuilders({ storage, agents, emit }) {
   const current = new Set();
   const base = storage.roots.sandboxes;
@@ -30,20 +48,23 @@ function createBuilders({ storage, agents, emit }) {
 
   function paths(id) {
     if (!/^builder-(agent|workflow)-[a-z0-9-]+$/.test(id)) throw new Error('Invalid builder session.');
-    const directory = join(base, id);
-    return { directory, draft: join(directory, '.draft') };
+    const directory = safePath(base, id);
+    return { directory, draft: safePath(directory, '.draft') };
   }
 
   function get(id) {
     const { draft } = paths(id);
-    const saved = read(join(draft, 'desktop-session.json'));
-    const manifest = read(join(draft, 'manifest.json'));
+    const saved = read(safePath(draft, 'desktop-session.json'));
     if (!saved && !existsSync(draft)) return null;
-    const legacy = read(join(draft, 'builder-meta.json')) || {};
+    const legacy = read(safePath(draft, 'builder-meta.json')) || {};
     const kind = id.startsWith('builder-agent-') ? 'agent' : 'workflow';
+    const drafts = [safePath(draft, 'manifest.json')];
+    if (kind === 'workflow') drafts.push(safePath(draft, 'workflow.json'));
+    const latest = drafts.map(path => ({ path, time: statSync(path, { throwIfNoEntry: false })?.mtimeMs }))
+      .filter(candidate => candidate.time !== undefined).sort((a, b) => b.time - a.time)[0];
     return {
       id, kind, messages: [], status: 'Ready', editingId: legacy.editAgentId || legacy.editWorkflowId,
-      ...saved, ...(current.has(id) ? { status: 'Running' } : {}), draft: manifest,
+      ...saved, ...(current.has(id) ? { status: 'Running' } : {}), draft: latest ? read(latest.path) : null,
     };
   }
 
@@ -56,9 +77,9 @@ function createBuilders({ storage, agents, emit }) {
 
   function persist(session) {
     const { draft } = paths(session.id);
-    const { draft: manifest, ...data } = session;
+    const { draft: manifest, providerSessionId, ...data } = session;
     data.updatedAt = new Date().toISOString();
-    write(join(draft, 'desktop-session.json'), data);
+    write(safePath(draft, 'desktop-session.json'), data);
     const updated = get(session.id);
     emit({ type: 'builder:changed', session: updated });
     return updated;
@@ -73,21 +94,22 @@ function createBuilders({ storage, agents, emit }) {
     if (editingId && !original) throw new Error('Catalog item not found.');
     const workspace = params.workspaceId ? storage.get('workspaces', params.workspaceId) : null;
     if (params.workspaceId && !workspace) throw new Error('Workspace not found.');
-    const skill = storage.get('skills', `${kind}-builder`);
-    const skillBody = skill?.body || skill?.content || readFileSync(join(storage.roots.skills, `${kind}-builder`, 'body.md'), 'utf8');
+    const builder = storage.get('agents', `${kind}-builder`, 'default');
+    if (!builder?.body) throw new Error('The bundled builder agent is missing.');
+    const execution = resolveExecution(settingsFor(storage), builder.execution, params);
     mkdirSync(join(draft, 'new-agents'), { recursive: true });
     const context = [
       `# DoxieOS ${kind} builder`,
-      'Use the canonical skill below to work with the user and update .draft/manifest.json in this sandbox. The user will review the draft before promotion. Keep edits inside this sandbox.',
+      'Use the canonical agent instructions below to work with the user and update .draft/manifest.json in this sandbox. The user will review the draft before promotion. Keep edits inside this sandbox.',
       workspace ? `Attached workspace for reference: ${workspace.path}` : '',
       `Canonical catalog: ${storage.root}`,
-      skillBody,
+      builder.body,
     ].filter(Boolean).join('\n\n');
     for (const name of ['CLAUDE.md', 'AGENTS.md']) writeFileSync(join(directory, name), context);
     if (original) write(join(draft, 'manifest.json'), original);
     return persist({
       id, kind, workspaceId: workspace?.id, editingId, catalogId: params.catalogId || original?.catalogId,
-      providerId: params.providerId || settingsFor(storage).defaultProvider, status: 'Ready', messages: [],
+      ...execution, status: 'Ready', messages: [],
     });
   }
 
@@ -98,14 +120,13 @@ function createBuilders({ storage, agents, emit }) {
     if (typeof text !== 'string' || !text.trim()) throw new Error('Enter a message.');
     const { directory } = paths(id);
     const providerId = session.providerId || settingsFor(storage).defaultProvider;
-    const prompt = session.providerSessionId ? text : `Read AGENTS.md in this sandbox for the Doxie builder instructions.\n\nUser request:\n${text}`;
+    const prompt = builderRequest(session.messages, text);
     session.messages.push({ role: 'user', text });
     current.add(id);
     try {
       persist(session);
-      const job = agents.runBuilder(session.kind, { cwd: directory, providerId, sessionId: session.providerSessionId, prompt });
+      const job = agents.runBuilder(session.kind, { cwd: directory, providerId, model: session.model, prompt });
       const result = await agents.wait(job.id);
-      session.providerSessionId = result.sessionId || session.providerSessionId;
       session.status = result.status === 'Completed' ? 'Ready' : 'Failed';
       const source = result.status === 'Completed' ? 'stdout' : 'stderr';
       const reply = result.output.filter(item => item.source.toLowerCase() === source && !item.text.startsWith('▶')).map(item => item.text).join('\n');
@@ -132,7 +153,7 @@ function createBuilders({ storage, agents, emit }) {
         if (!fields.has(match[1])) throw new Error(`Mode ${id} references an undefined field: ${match[1]}`);
       }
     }
-    return { ...manifest, modes, body: manifest.systemPrompt || manifest.body || manifest.content };
+    return { ...manifest, modes, execution: normalizeExecution(manifest.execution), body: manifest.body || manifest.systemPrompt || manifest.content };
   }
 
   function promote(id, options = {}) {
@@ -150,6 +171,9 @@ function createBuilders({ storage, agents, emit }) {
       if (!nodeIds.size || nodeIds.size !== manifest.nodes.length) throw new Error('The workflow needs nodes with distinct IDs.');
       for (const edge of manifest.edges || []) {
         if (!nodeIds.has(edge.fromNodeId) || !nodeIds.has(edge.toNodeId)) throw new Error('The draft contains an edge with an unknown node.');
+      }
+      for (const node of manifest.nodes) {
+        if (Object.hasOwn(node, 'execution')) node.execution = normalizeExecution(node.execution);
       }
       const newAgentsDirectory = join(draft, 'new-agents');
       const newAgents = existsSync(newAgentsDirectory) ? readdirSync(newAgentsDirectory, { withFileTypes: true }) : [];

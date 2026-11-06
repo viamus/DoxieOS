@@ -32,31 +32,32 @@ test-results/
 # Canonical authoring layer (.doxie/) - DoxieOS reads this folder at
 # runtime; provider shims are regenerated from it.
 #
-# The public repository ships only the core Doxie kit. Custom skills,
-# agents, libraries, and workflows stay local by default.
+# The public repository ships the core agents and native tool definitions.
+# Custom catalog content and the legacy skills layout stay local by default.
 .doxie/libraries/*
 .doxie/workflows/*
 .doxie/skills/*
-!.doxie/skills/agent-builder/
-!.doxie/skills/agent-builder/**
-!.doxie/skills/aggregate/
-!.doxie/skills/aggregate/**
-!.doxie/skills/approval-gate/
-!.doxie/skills/approval-gate/**
-!.doxie/skills/library/
-!.doxie/skills/library/**
-!.doxie/skills/loop/
-!.doxie/skills/loop/**
-!.doxie/skills/prompt/
-!.doxie/skills/prompt/**
-!.doxie/skills/sandbox/
-!.doxie/skills/sandbox/**
-!.doxie/skills/workflow-builder/
-!.doxie/skills/workflow-builder/**
-!.doxie/skills/workflow-output-contract-designer/
-!.doxie/skills/workflow-output-contract-designer/**
-!.doxie/skills/write-to-workspace/
-!.doxie/skills/write-to-workspace/**
+.doxie/agents/*
+!.doxie/agents/agent-builder/
+!.doxie/agents/prompt/
+!.doxie/agents/workflow-builder/
+!.doxie/agents/workflow-output-contract-designer/
+.doxie/agents/*/*
+!.doxie/agents/*/body.md
+!.doxie/agents/*/manifest.json
+!.doxie/agents/prompt/agent.md
+!.doxie/agents/prompt/run.md
+.doxie/tools/*
+!.doxie/tools/aggregate/
+!.doxie/tools/approval-gate/
+!.doxie/tools/if-else/
+!.doxie/tools/library/
+!.doxie/tools/loop/
+!.doxie/tools/sandbox/
+!.doxie/tools/write-to-workspace/
+.doxie/tools/*/*
+!.doxie/tools/*/body.md
+!.doxie/tools/*/manifest.json
 .doxie/private/
 
 # Provider shims - entirely derived from .doxie/, never tracked.

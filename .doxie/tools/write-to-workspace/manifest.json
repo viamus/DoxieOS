@@ -1,0 +1,25 @@
+{
+  "id": "write-to-workspace",
+  "displayName": "Write to Workspace",
+  "description": "Write the workflow's upstream text artifacts into an explicitly selected Doxie workspace.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "deliver": {
+      "description": "Deliver a Markdown file to the selected workspace.",
+      "fields": [
+        {
+          "id": "workspace",
+          "label": "Target workspace ID",
+          "placeholder": "release-notes",
+          "required": true
+        },
+        {
+          "id": "filename",
+          "label": "Target filename",
+          "placeholder": "daily-brief.md"
+        }
+      ]
+    }
+  }
+}

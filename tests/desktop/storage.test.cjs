@@ -209,7 +209,7 @@ test('localizes legacy and newly selected catalog roots before permitting writes
   assert.equal(team.path, path.join(storage.root, '.doxie', 'catalogs', 'team'));
   assert.equal(storage.get('libraries', 'policy', 'team').name, 'Team policy');
   storage.saveCatalogs([...storage.listCatalogs(), { id: 'other', name: 'Other', path: external }]);
-  assert.equal(storage.get('skills', 'review', 'other').path, path.join(storage.root, '.doxie', 'catalogs', 'other', 'skills', 'review'));
+  assert.equal(storage.get('skills', 'review', 'other').path, path.join(storage.root, '.doxie', 'catalogs', 'other', 'agents', 'review'));
   storage.save('skills', { id: 'review', catalogId: 'other', body: 'New local body' });
   assert.equal(fs.readFileSync(path.join(external, 'skills', 'review', 'body.md'), 'utf8'), 'Review this change.');
   assert.equal(fs.existsSync(path.join(external, 'workflows')), false);
@@ -258,4 +258,52 @@ test('creates a managed workspace from a selected folder without using its metad
   write(path.join(source, 'memory'), 'Project file');
   storage.save('workspaces', { id: 'copy-with-memory-file', name: 'Another copy', path: source });
   assert.equal(storage.readFile('workspaces', 'copy-with-memory-file', 'memory').content, 'Project file');
+});
+
+test('keeps native tools out of the agent catalog and saves legacy agents in the canonical layout', t => {
+  const { home, open } = setup(t);
+  const root = path.join(home, 'project');
+  const legacyAgent = path.join(root, '.doxie', 'skills', 'review');
+  write(path.join(legacyAgent, 'manifest.json'), '{"id":"review"}');
+  write(path.join(legacyAgent, 'body.md'), 'Review this change.');
+  write(path.join(root, '.doxie', 'agents', 'review.md'), '---\nname: review\nmodel: inherit\n---\n\nReview the diff.');
+  write(path.join(root, '.doxie', 'skills', 'aggregate', 'manifest.json'), '{"id":"aggregate"}');
+  write(path.join(root, '.doxie', 'skills', 'aggregate', 'body.md'), 'Old connector.');
+  write(path.join(root, '.doxie', 'tools', 'aggregate', 'manifest.json'), '{"id":"aggregate","kind":"workflow"}');
+  write(path.join(root, '.doxie', 'tools', 'aggregate', 'body.md'), 'Native connector.');
+  const storage = open({ managed: true });
+  assert.deepEqual(storage.list('agents').map(agent => agent.id), ['review']);
+  assert.deepEqual(storage.list('tools').map(tool => tool.id), ['aggregate']);
+  assert.equal(storage.get('agents', 'review').path, legacyAgent);
+  const execution = { providerId: 'codex', model: 'gpt-5.5' };
+  const agent = storage.save('agents', { id: 'review', execution });
+  assert.deepEqual(agent.execution, execution);
+  assert.equal(agent.path, path.join(root, '.doxie', 'agents', 'review'));
+  assert.equal(agent.agentPath, path.join(agent.path, 'agent.md'));
+  assert.equal(agent.model, 'inherit');
+  assert.equal(agent.body, 'Review this change.');
+  assert.throws(() => storage.save('agents', { id: 'review', execution: { model: 'orphan-model' } }), /Select a provider/);
+  assert.deepEqual(storage.get('agents', 'review').execution, execution);
+  assert.equal(storage.get('skills', 'aggregate'), null);
+  assert.throws(() => storage.save('agents', { id: 'aggregate', body: 'Override' }), /built-in tool/);
+  assert.equal(fs.existsSync(path.join(root, '.claude', 'skills', 'aggregate')), false);
+});
+
+test('creates a native library atomically and refuses duplicate IDs', t => {
+  const { open } = setup(t);
+  const storage = open({ managed: true });
+  assert.throws(() => storage.createLibrary({ id: 'bad-library', memories: [{ id: 'same', content: 'first' }, { id: 'same', content: 'second' }] }), /duplicate/);
+  assert.equal(storage.get('libraries', 'bad-library'), null);
+  assert.throws(() => storage.createLibrary({ id: 'invalid-path', memories: [{ relativePath: 'docs/review.md', content: 'Ignored' }] }), /under memory/);
+  assert.throws(() => storage.createLibrary({ id: 'duplicate-path', memories: [
+    { relativePath: 'memories/review.md', content: 'First' }, { relativePath: 'Memories/Review.MD', content: 'Second' },
+  ] }), /duplicate/);
+  const binary = Buffer.from('Preserve UTF-8 text.\r\n');
+  const result = storage.createLibrary({ id: 'policy', name: 'Policy', memories: [
+    { id: 'review', content: 'Review changes.' }, { relativePath: 'memories/engineering/checklist.md', content: binary },
+  ] });
+  assert.equal(result.memories.find(memory => memory.relativePath === 'memory/review.md').content, 'Review changes.');
+  assert.throws(() => storage.createLibrary({ id: 'policy' }), /already exists/);
+  assert.equal(storage.get('libraries', 'policy').memories.length, 2);
+  assert.deepEqual(fs.readFileSync(path.join(result.path, 'memories', 'engineering', 'checklist.md')), binary);
 });

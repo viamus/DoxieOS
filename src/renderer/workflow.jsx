@@ -1,14 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDownToLine, ArrowRight, Bot, Check, Clock3, GitBranch, Grip, Layers3, Link2, Move, Pencil, Play, Plus, RotateCcw, Save, ShieldCheck, Square, Terminal, Trash2, Workflow, X } from 'lucide-react';
-import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, Status, Tag, active, go, invoke, nameOf, part, selectModes, slug, split, useApp, useAsync } from './ui.jsx';
+import { Activity, ArrowDownToLine, ArrowRight, BookOpen, Bot, Box, Check, Clock3, GitBranch, Grip, Layers3, Link2, Move, Pencil, Play, Plus, RotateCcw, Save, ShieldCheck, Square, Terminal, Trash2, Workflow, Wrench, X } from 'lucide-react';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, Status, Tag, active, go, invoke, nameOf, part, selectModes, slug, split, useApp, useAsync } from './ui.jsx';
 import { Guidance, LogOutput, recordRoute } from './automation.jsx';
 import { FilesBrowser } from './workbench.jsx';
 
-const nodeKinds = ['Trigger', 'Agent', 'Aggregate', 'Output', 'Loop', 'Decision'];
+const nodeKinds = ['Trigger', 'Agent', 'Aggregate', 'Output', 'Loop', 'Decision', 'Tool'];
 const triggerKinds = ['Manual', 'Cron', 'Event', 'Webhook'];
 const nodeKind = (kind) => nodeKinds[Number(kind)] || nodeKinds.find((value) => value.toLowerCase() === String(kind).toLowerCase()) || kind || 'Agent';
 const triggerKind = (kind) => triggerKinds[Number(kind)] || triggerKinds.find((value) => value.toLowerCase() === String(kind).toLowerCase()) || kind || 'Manual';
-const kindIcon = { Trigger: Play, Agent: Bot, Aggregate: Layers3, Output: ArrowDownToLine, Loop: RotateCcw, Decision: GitBranch };
+const legacyToolKinds = { Aggregate: 'aggregate', Output: 'write-to-workspace', Loop: 'loop', Decision: 'if-else' };
+const nativeTools = {
+  aggregate: { name: 'Aggregate', icon: Layers3 },
+  loop: { name: 'Loop', icon: RotateCcw },
+  'approval-gate': { name: 'Approval gate', icon: ShieldCheck },
+  'if-else': { name: 'If / else', icon: GitBranch },
+  'write-to-workspace': { name: 'Write to workspace', icon: ArrowDownToLine },
+  library: { name: 'Library', icon: BookOpen },
+  sandbox: { name: 'Sandbox', icon: Box },
+};
+const toolIdOf = (node) => node?.toolId || legacyToolKinds[nodeKind(node?.kind)] || (Object.hasOwn(nativeTools, node?.agentId) ? node.agentId : null);
+const nodeIcon = (node) => toolIdOf(node) ? nativeTools[toolIdOf(node)]?.icon || Wrench : nodeKind(node.kind) === 'Trigger' ? Play : Bot;
+const nodeType = (node) => toolIdOf(node) ? nativeTools[toolIdOf(node)]?.name || toolIdOf(node) : nodeKind(node.kind);
+const catalogAgent = (agents, id, catalogId) => agents.find((item) => item.id === id && item.catalogId === catalogId) || agents.find((item) => item.id === id);
 const width = 186;
 const height = 68;
 
@@ -76,11 +89,10 @@ function Graph({ nodes, edges, selected, select, updatePosition, nodeRuns = {} }
       })}
     </svg>
     {placed.map((node) => {
-      const kind = nodeKind(node.kind);
-      const Icon = kindIcon[kind] || Workflow;
+      const Icon = nodeIcon(node);
       const run = nodeRuns[node.id];
       return <button key={node.id} type="button" className={`graph-node ${selected === node.id ? 'selected' : ''} ${updatePosition ? 'draggable' : ''}`} style={{ left: node.x, top: node.y, width, height }} aria-pressed={selected === node.id} onClick={() => select(node.id)} onPointerDown={(event) => moveStart(event, node)} onPointerMove={move} onPointerUp={moveEnd} onPointerCancel={() => { drag.current = null; setPreview(null); }}>
-        <span className="node-icon"><Icon size={17} /></span><span className="node-text"><strong>{node.label || node.id}</strong><small>{run?.status || kind}</small></span>{updatePosition && <Grip className="node-grip" size={15} />}
+        <span className="node-icon"><Icon size={17} /></span><span className="node-text"><strong>{node.label || node.id}</strong><small>{run?.status || nodeType(node)}</small></span>{updatePosition && <Grip className="node-grip" size={15} />}
       </button>;
     })}
   </div></div>;
@@ -91,7 +103,7 @@ function EdgeEditor({ nodes, edges, set }) {
   const [target, setTarget] = useState('');
   const [condition, setCondition] = useState('');
   const label = (id) => nodes.find((node) => node.id === id)?.label || id;
-  const decision = nodeKind(nodes.find((node) => node.id === source)?.kind) === 'Decision';
+  const decision = toolIdOf(nodes.find((node) => node.id === source)) === 'if-else';
   return <Panel title="Connections" icon={Link2}><div className="panel-body stack">
     <div className="form-grid edge-form"><Field label="From"><select value={source} onChange={(event) => { setSource(event.target.value); setCondition(''); }}><option value="">Select source</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label || node.id}</option>)}</select></Field>
       <Field label="To"><select value={target} onChange={(event) => setTarget(event.target.value)}><option value="">Select destination</option>{nodes.filter((node) => node.id !== source).map((node) => <option key={node.id} value={node.id}>{node.label || node.id}</option>)}</select></Field>
@@ -109,24 +121,30 @@ function KeyValues({ values, change, label = 'Inputs' }) {
   </div>;
 }
 
-function NodeEditor({ node, nodes, change, remove }) {
+function NodeEditor({ node, nodes, catalogId, change, remove }) {
   const { state } = useApp();
   const kind = nodeKind(node.kind);
-  const activeAgent = [...state.agents, ...state.skills].find((agent) => agent.id === node.agentId);
-  const modes = selectModes(activeAgent);
-  const fields = modes[node.agentMode]?.fields || [];
+  const toolId = toolIdOf(node);
+  const activeTool = state.tools.find((tool) => tool.id === toolId);
+  const activeAgent = !toolId && catalogAgent(state.agents, node.agentId, catalogId);
+  const modes = selectModes(activeTool || activeAgent);
+  const mode = toolId ? node.toolMode || node.agentMode : node.agentMode;
+  const fields = modes[mode || Object.keys(modes)[0]]?.fields || [];
   const extra = Object.fromEntries(Object.entries(node.inputs || {}).filter(([key]) => !fields.some((field) => field.id === key)));
   const set = (patch) => change({ ...node, ...patch });
-  const candidates = [...new Map([...state.skills, ...state.agents].map((agent) => [agent.id, agent])).values()];
+  const candidates = [...new Set(state.agents.map(({ id }) => id))].map((id) => catalogAgent(state.agents, id, catalogId));
+  const modeField = Object.keys(modes).length > 0 && <Field label="Mode"><select value={mode || ''} onChange={(event) => set({ [toolId && kind === 'Tool' ? 'toolMode' : 'agentMode']: event.target.value })}><option value="">Default</option>{Object.keys(modes).map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>;
+  const workspaceField = <Field label="Workspace"><select value={node.workspaceId || ''} onChange={(event) => set({ workspaceId: event.target.value || null })}><option value="">Workflow workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>;
   return <Panel title="Selected node" icon={Move} actions={kind !== 'Trigger' && <IconButton icon={Trash2} label="Remove node" onClick={remove} />}><div className="panel-body stack">
     <div className="form-grid"><Field label="Node ID"><input readOnly value={node.id} /></Field><Field label="Label"><input required value={node.label || ''} onChange={(event) => set({ label: event.target.value })} /></Field></div>
-    {kind === 'Agent' && <div className="form-grid">
+    {kind === 'Agent' && !toolId && <div className="form-grid">
       <Field label="Agent"><select required value={node.agentId || ''} onChange={(event) => { const agentId = event.target.value; set({ agentId, agentMode: Object.keys(selectModes(candidates.find((item) => item.id === agentId)))[0] || '' }); }}><option value="">Select agent</option>{node.agentId && !candidates.some(({ id }) => id === node.agentId) && <option value={node.agentId}>{node.agentId}</option>}{candidates.map((agent) => <option key={agent.id} value={agent.id}>{nameOf(agent)}</option>)}</select></Field>
-      {Object.keys(modes).length > 0 && <Field label="Mode"><select value={node.agentMode || ''} onChange={(event) => set({ agentMode: event.target.value })}><option value="">Default</option>{Object.keys(modes).map((mode) => <option key={mode} value={mode}>{mode}</option>)}</select></Field>}
-      <Field label="Workspace"><select value={node.workspaceId || ''} onChange={(event) => set({ workspaceId: event.target.value || null })}><option value="">Workflow workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>
+      {modeField}{workspaceField}
+      <ExecutionFields value={node.execution} inherited={activeAgent?.execution} inheritedLabel={activeAgent?.execution?.providerId ? 'Agent default' : 'Application default'} requireProvider onChange={({ providerId, model }) => set({ execution: providerId ? { providerId, ...(model ? { model } : {}) } : null })} />
     </div>}
-    {kind === 'Output' && <div className="form-grid"><Field label="Output workspace"><select value={node.outputWorkspaceId || ''} onChange={(event) => set({ outputWorkspaceId: event.target.value || null })}><option value="">Workflow workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field><Field label="Output filename"><input value={node.outputFileName || ''} onChange={(event) => set({ outputFileName: event.target.value })} placeholder="report.md" /></Field></div>}
-    {kind !== 'Trigger' && kind !== 'Loop' && <Field label="Loop membership"><select value={node.loopId || ''} onChange={(event) => set({ loopId: event.target.value || null })}><option value="">Outside a loop</option>{nodes.filter((item) => item.id !== node.id && nodeKind(item.kind) === 'Loop').map((item) => <option key={item.id} value={item.id}>{item.label || item.id}</option>)}</select></Field>}
+    {toolId && <><div className="form-grid"><Field label="Native tool"><input readOnly value={nameOf(activeTool) || nodeType(node)} /></Field>{modeField}{['library', 'sandbox'].includes(toolId) && workspaceField}</div>{activeTool?.description && <p className="muted">{activeTool.description}</p>}</>}
+    {toolId === 'write-to-workspace' && <div className="form-grid"><Field label="Output workspace"><select value={node.outputWorkspaceId || ''} onChange={(event) => set({ outputWorkspaceId: event.target.value || null })}><option value="">Workflow workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field><Field label="Output filename"><input value={node.outputFileName || ''} onChange={(event) => set({ outputFileName: event.target.value })} placeholder="report.md" /></Field></div>}
+    {kind !== 'Trigger' && toolId !== 'loop' && <Field label="Loop membership"><select value={node.loopId || ''} onChange={(event) => set({ loopId: event.target.value || null })}><option value="">Outside a loop</option>{nodes.filter((item) => item.id !== node.id && toolIdOf(item) === 'loop').map((item) => <option key={item.id} value={item.id}>{item.label || item.id}</option>)}</select></Field>}
     {fields.map((field) => <FieldInput key={field.id} field={field} value={node.inputs?.[field.id]} onChange={(value) => set({ inputs: { ...node.inputs, [field.id]: value } })} />)}
     {kind !== 'Trigger' && <KeyValues values={extra} change={(values) => set({ inputs: { ...Object.fromEntries(Object.entries(node.inputs || {}).filter(([key]) => fields.some((field) => field.id === key))), ...values } })} label="Additional inputs" />}
     {kind !== 'Trigger' && <p className="muted">Use <code>{'{{trigger.input-id}}'}</code> or <code>{'{{previous-node-id.output}}'}</code> to reference earlier values.</p>}
@@ -170,16 +188,17 @@ function WorkflowForm({ existing }) {
   const set = (patch) => setDraft((current) => ({ ...current, ...patch }));
   const node = draft.nodes.find((item) => item.id === selected);
   const catalogs = state.catalogs || state.settings.catalogs || [];
+  const tools = state.tools.length ? state.tools : Object.entries(nativeTools).map(([id, definition]) => ({ id, name: definition.name }));
   const setNode = (id, patch) => setDraft((current) => ({ ...current, nodes: current.nodes.map((item) => item.id === id ? { ...item, ...patch } : item) }));
   const addNode = () => {
-    const approval = add === 'Approval';
-    const rootId = slug(add);
+    const tool = add === 'Agent' ? null : tools.find(({ id }) => id === add);
+    const rootId = tool?.id || slug(add);
     let number = 1;
     while (draft.nodes.some((item) => item.id === `${rootId}-${number}`)) number += 1;
     const id = `${rootId}-${number}`;
     const anchor = node || draft.nodes.at(-1);
-    const entry = { id, kind: approval ? 'Agent' : add, label: approval ? 'Approval gate' : add, x: (anchor?.x || 30) + 238, y: anchor?.y || 50 };
-    if (approval) entry.agentId = 'approval-gate';
+    const entry = { id, kind: tool ? 'Tool' : 'Agent', label: nameOf(tool) || 'Agent', x: (anchor?.x || 30) + 238, y: anchor?.y || 50 };
+    if (tool) { entry.toolId = tool.id; entry.toolMode = Object.keys(selectModes(tool))[0]; }
     set({ nodes: [...draft.nodes, entry] });
     setSelected(id);
   };
@@ -208,10 +227,10 @@ function WorkflowForm({ existing }) {
       <div className="actions start"><label className="check"><input type="checkbox" checked={draft.enabled !== false} onChange={(event) => set({ enabled: event.target.checked })} /> Enabled</label><label className="check"><input type="checkbox" checked={!!draft.isPrivate} onChange={(event) => set({ isPrivate: event.target.checked })} /> Private</label></div>
     </div></Panel>
     <TriggerEditor trigger={draft.trigger || { kind: 'Manual' }} set={(trigger) => set({ trigger })} />
-    <Panel title="Workflow graph" icon={GitBranch} hint="Drag a node to move it. Select a node to configure it." actions={<><select aria-label="Node type" value={add} onChange={(event) => setAdd(event.target.value)}>{[...nodeKinds.filter((kind) => kind !== 'Trigger'), 'Approval'].map((kind) => <option key={kind}>{kind}</option>)}</select><Button icon={Plus} onClick={addNode}>Add node</Button><Button icon={Grip} onClick={() => set({ nodes: layout(draft.nodes, draft.edges, true) })}>Auto layout</Button></>}>
+    <Panel title="Workflow graph" icon={GitBranch} hint="Drag a node to move it. Select a node to configure it." actions={<><select aria-label="Node type" value={add} onChange={(event) => setAdd(event.target.value)}><option value="Agent">Agent</option><optgroup label="Native tools">{tools.map((tool) => <option key={tool.id} value={tool.id}>{nameOf(tool)}</option>)}</optgroup></select><Button icon={Plus} onClick={addNode}>Add node</Button><Button icon={Grip} onClick={() => set({ nodes: layout(draft.nodes, draft.edges, true) })}>Auto layout</Button></>}>
       <Graph nodes={draft.nodes} edges={draft.edges} selected={selected} select={setSelected} updatePosition={(id, x, y) => setNode(id, { x, y })} />
     </Panel>
-    {node && <NodeEditor key={node.id} node={node} nodes={draft.nodes} change={(next) => setNode(node.id, next)} remove={() => { set({ nodes: draft.nodes.filter((item) => item.id !== node.id).map((item) => item.loopId === node.id ? { ...item, loopId: null } : item), edges: draft.edges.filter((edge) => edge.fromNodeId !== node.id && edge.toNodeId !== node.id) }); setSelected(''); }} />}
+    {node && <NodeEditor key={node.id} node={node} nodes={draft.nodes} catalogId={draft.catalogId} change={(next) => setNode(node.id, next)} remove={() => { set({ nodes: draft.nodes.filter((item) => item.id !== node.id).map((item) => item.loopId === node.id ? { ...item, loopId: null } : item), edges: draft.edges.filter((edge) => edge.fromNodeId !== node.id && edge.toNodeId !== node.id) }); setSelected(''); }} />}
     <EdgeEditor nodes={draft.nodes} edges={draft.edges} set={(edges) => set({ edges })} />
     <Panel title="Environment" icon={Terminal}><div className="panel-body"><KeyValues values={draft.env || {}} change={(env) => set({ env })} label="Environment variables" /></div></Panel>
     <div className="actions"><Button type="submit" variant="primary" icon={Save} disabled={pending}>Save workflow</Button></div>
@@ -276,10 +295,15 @@ export function WorkflowPage({ id, catalogId, runId }) {
   <div className="toolbar"><Status status={workflow.enabled === false ? 'Disabled' : 'Enabled'} /><Tag>{triggerKind(workflow.trigger?.kind)}</Tag>{workflow.trigger?.cronExpression && <Tag>{workflow.trigger.cronExpression}</Tag>}<Tag>{workflow.category || 'Other'}</Tag><label className="check"><input type="checkbox" checked={workflow.enabled !== false} onChange={(event) => perform('catalog:save', ['workflows', { ...workflow, enabled: event.target.checked }])} /> Enable workflow</label><IconButton icon={Trash2} label="Delete workflow" onClick={() => setConfirm(true)} /></div>
   <Panel title="Workflow graph" icon={GitBranch} actions={<Tag>{nodes.length} nodes</Tag>}><Graph nodes={nodes} edges={edges} selected={node?.id} select={setSelectedNode} nodeRuns={nodeRuns} /></Panel>
   <div className="dashboard-grid detail-grid"><Panel title="Run timeline" icon={Activity} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('workflow:stop', [run.id])}>Stop</Button>}</>}>
-    {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.triggeredBy && <Tag>{run.triggeredBy}</Tag>}</div><div className="row-list">{nodes.map((item) => <ItemRow key={item.id} title={item.label || item.id} detail={nodeKind(item.kind)} icon={kindIcon[nodeKind(item.kind)] || Workflow} onClick={() => setSelectedNode(item.id)}><Status status={nodeRuns[item.id]?.status || 'Pending'} /></ItemRow>)}</div>
+    {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.triggeredBy && <Tag>{run.triggeredBy}</Tag>}</div><div className="row-list">{nodes.map((item) => {
+      const step = nodeRuns[item.id];
+      const provider = state.providers.find(({ id }) => id === step?.providerId);
+      const detail = [nodeType(item), nameOf(provider) || step?.providerId, step?.model].filter(Boolean).join(' · ');
+      return <ItemRow key={item.id} title={item.label || item.id} detail={detail} icon={nodeIcon(item)} onClick={() => setSelectedNode(item.id)}><Status status={step?.status || 'Pending'} /></ItemRow>;
+    })}</div>
       {active(run.status) && <div className="panel-body"><Guidance title="Guide the running workflow…" submit={(text) => perform('workflow:guide', [run.id, text], 'Guidance sent')} /></div>}
     </> : result.loading && selectedRun ? <Loading /> : <Empty title="No run selected" icon={Activity} />}
-  </Panel><Panel title={node?.label || 'Node output'} icon={Terminal} actions={nodeRun && <Status status={nodeRun.status} />}>
+  </Panel><Panel title={node?.label || 'Node output'} icon={Terminal} actions={nodeRun && <>{nodeRun.hasTransientContext && <Tag>Transient handoff</Tag>}<Status status={nodeRun.status} /></>}>
     {nodeRun ? <><LogOutput lines={nodeRun.logs} />{nodeRun.outputSummary && <div className="panel-body"><pre>{typeof nodeRun.outputSummary === 'string' ? nodeRun.outputSummary : JSON.stringify(nodeRun.outputSummary, null, 2)}</pre></div>}
       {showApproval && <div className="panel-body stack"><strong>Awaiting your decision</strong><div className="actions start"><Button icon={Check} variant="primary" onClick={() => setDecision({ approval: true, node })}>Approve</Button><Button icon={X} variant="danger" onClick={() => setDecision({ approval: false, node })}>Reject</Button></div></div>}
       {!active(run.status) && <div className="panel-body"><Button icon={RotateCcw} onClick={() => setRerun(true)}>Rerun from this node</Button></div>}

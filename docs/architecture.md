@@ -32,7 +32,7 @@ flowchart TD
 | Preload | Named IPC operations and runtime events exposed to the renderer. |
 | Main | Validates operations and owns filesystem access, SQLite, processes, and dialogs. |
 | Agents | Catalog parsing, provider prompt assembly, run persistence, process lifecycle. |
-| Workflows | Graph execution, node dispatch, trigger handling, output contracts. |
+| Workflows | Graph execution, selected-edge handoffs, transient context, native tools and durable artifact contracts. |
 | Consoles | PTY sessions and streaming output. |
 | Storage | SQLite state, catalog roots, workspaces, sandboxes, run outputs. |
 
@@ -52,11 +52,17 @@ sequenceDiagram
     UI->>R: Dispatch through Electron IPC
     R->>C: Load agent/workflow definition
     R->>W: Load workspace context and mounted memories
-    R->>P: Start provider process with assembled prompt
+    R->>P: Start a fresh provider session with the typed request
     P-->>R: Stream output and result metadata
-    R->>H: Persist run state, usage, logs, outputs
+    P-->>R: Publish transient context and durable artifacts
+    R->>H: Persist run state, selected model, usage, logs, durable outputs
     H-->>UI: Render history/detail/notifications
 ```
+
+The handoff lives for the active workflow. It carries context JSON as the
+exact text published by the producer and indexes isolated artifact copies for
+the consumer. The engine drops the transport at workflow end. Native tools run
+inside the engine, with no model selection or provider process.
 
 ## Workflow Run States
 
@@ -104,7 +110,7 @@ from Settings uses the same profile as agent runs and consoles.
 
 ```mermaid
 flowchart TD
-    Skill[".doxie/skills/<id>"] --> Normalize["Doxie model"]
+    Agent[".doxie/agents/<id>"] --> Normalize["Doxie agent definition"]
     Normalize --> ClaudeSkill[".claude/skills/<id>/SKILL.md"]
     Normalize --> CodexIndex[".codex/AGENTS.md"]
     Normalize --> CodexSkills[".agents/skills/<id>/SKILL.md"]

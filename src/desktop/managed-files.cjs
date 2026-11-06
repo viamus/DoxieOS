@@ -3,6 +3,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const catalogKinds = ['agents', 'skills', 'workflows', 'libraries'];
+const nativeToolIds = new Set(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'sandbox', 'write-to-workspace']);
 const excludedNames = new Set(['.git', '.private', '.mcp.json', '.claude', '.claude.json', '.codex', '.agents', '.providers', 'node_modules']);
 const emptyCounts = () => ({ agents: 0, skills: 0, workflows: 0, libraries: 0, workspaces: 0, files: 0, skipped: 0 });
 
@@ -84,7 +85,9 @@ function createManagedFiles({ root, safePath, stat }) {
     if (!source) return;
     fs.mkdirSync(destination, { recursive: true });
     for (const entry of entries(source)) {
-      if (entry.name.startsWith('.') || (kind === 'agents' ? !entry.isFile() || !/\.md$/i.test(entry.name) : !entry.isDirectory())) {
+      if (entry.name.startsWith('.') || !entry.isDirectory()
+        || (['agents', 'skills'].includes(kind) && nativeToolIds.has(entry.name.toLowerCase()))
+        || (kind === 'tools' && !nativeToolIds.has(entry.name))) {
         counts.skipped++;
         continue;
       }
@@ -100,17 +103,12 @@ function createManagedFiles({ root, safePath, stat }) {
         continue;
       }
       const to = safePath(destination, entry.name);
-      if (entry.isFile()) {
-        if (!copyFile(from, to)) continue;
-        counts.files++;
-      } else {
-        const temporary = path.join(destination, `.doxie-copy-${randomUUID()}`);
-        try {
-          copyTree(from, temporary, counts);
-          fs.renameSync(temporary, to);
-        } finally {
-          fs.rmSync(temporary, { force: true, recursive: true });
-        }
+      const temporary = path.join(destination, `.doxie-copy-${randomUUID()}`);
+      try {
+        copyTree(from, temporary, counts);
+        fs.renameSync(temporary, to);
+      } finally {
+        fs.rmSync(temporary, { force: true, recursive: true });
       }
       counts[kind]++;
     }
@@ -120,14 +118,35 @@ function createManagedFiles({ root, safePath, stat }) {
     if (contains(source, destination) || contains(destination, source)) throw new Error('Select a source folder outside the destination workbench');
   }
 
+  function copyCatalog(source, destination, counts, includeTools = false) {
+    const agentDirectory = target(`${destination}/agents`);
+    for (const kind of catalogKinds) {
+      const folder = sourceDirectory(source, kind);
+      copyItems(kind, folder, kind === 'skills' ? agentDirectory : target(`${destination}/${kind}`), counts, true);
+      if (kind !== 'agents' || !folder) continue;
+      for (const entry of entries(folder)) {
+        if (!entry.isFile() || !/^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/i.test(entry.name)) continue;
+        const id = entry.name.slice(0, -3);
+        if (nativeToolIds.has(id.toLowerCase())) continue;
+        const targetFile = target(`${destination}/agents/${id}/agent.md`);
+        if (stat(targetFile)) continue;
+        fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+        if (copyFile(safePath(folder, entry.name), targetFile)) {
+          counts.agents++;
+          counts.files++;
+        }
+      }
+    }
+    if (includeTools) copyItems('tools', sourceDirectory(source, 'tools'), target(`${destination}/tools`), counts, true);
+  }
+
   function importWorkbench(source) {
     const folder = path.resolve(source);
     if (!stat(folder)?.isDirectory()) throw new Error('Select an existing Doxie folder');
     assertDisjoint(fs.realpathSync(folder), fs.realpathSync(root));
     const counts = emptyCounts();
-    for (const kind of catalogKinds) {
-      copyItems(kind, sourceDirectory(folder, `.doxie/${kind}`), target(`.doxie/${kind}`), counts, true);
-    }
+    const canonical = sourceDirectory(folder, '.doxie');
+    if (canonical) copyCatalog(canonical, '.doxie', counts);
     copyItems('workspaces', sourceDirectory(folder, '.workspace'), target('.workspace'), counts, true);
     return counts;
   }
@@ -155,7 +174,7 @@ function createManagedFiles({ root, safePath, stat }) {
     const folder = canonical && !catalogKinds.some(kind => sourceDirectory(source, kind)) ? canonical : source;
     assertDisjoint(fs.realpathSync(folder), path.resolve(fs.realpathSync(root), path.relative(root, destination)));
     const counts = emptyCounts();
-    for (const kind of catalogKinds) copyItems(kind, sourceDirectory(folder, kind), target(`.doxie/catalogs/${id}/${kind}`), counts, true);
+    copyCatalog(folder, `.doxie/catalogs/${id}`, counts);
     return true;
   }
 
@@ -164,22 +183,26 @@ function createManagedFiles({ root, safePath, stat }) {
     if (bundledFiles) {
       for (const file of bundledFiles) {
         const relative = file.replace(/\\/g, '/').replace(/^\.doxie\//, '');
-        const [kind, ...parts] = relative.split('/');
-        if (!catalogKinds.includes(kind) || !parts.length || parts.some(excluded)) continue;
+        const [kind, id, ...parts] = relative.split('/');
+        if ((!catalogKinds.includes(kind) && kind !== 'tools') || !id || [id, ...parts].some(excluded)) continue;
+        const agentId = kind === 'agents' && !parts.length ? id.replace(/\.md$/i, '') : id;
+        if (['agents', 'skills'].includes(kind) && nativeToolIds.has(agentId.toLowerCase())) continue;
+        if (kind === 'tools' && !nativeToolIds.has(id)) continue;
+        const destinationRelative = kind === 'skills' ? ['agents', id, ...parts].join('/')
+          : kind === 'agents' && !parts.length && /\.md$/i.test(id) ? `agents/${agentId}/agent.md` : relative;
         const from = safePath(bundle, relative);
         if (!stat(from)?.isFile()) continue;
-        const destination = target(`.doxie/${relative}`);
+        const destination = target(`.doxie/${destinationRelative}`);
         if (stat(destination)) continue;
         fs.mkdirSync(path.dirname(destination), { recursive: true });
         copyFile(from, destination);
       }
       return;
     }
-    const counts = emptyCounts();
-    for (const kind of catalogKinds) copyItems(kind, sourceDirectory(bundle, kind), target(`.doxie/${kind}`), counts, true);
+    copyCatalog(bundle, '.doxie', { ...emptyCounts(), tools: 0 }, true);
   }
 
   return { importWorkbench, importCatalog, seed, catalogRoot, copyWorkspace };
 }
 
-module.exports = { createManagedFiles };
+module.exports = { createManagedFiles, nativeToolIds };

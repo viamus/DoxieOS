@@ -19,7 +19,7 @@ const navigation = [
   { to: '/history', key: 'Nav.History', label: 'History', icon: History },
 ];
 
-const emptyState = { agents: [], workflows: [], workspaces: [], libraries: [], skills: [], agentRuns: [], workflowRuns: [], notifications: [], consoles: [], settings: {}, providers: [] };
+const emptyState = { agents: [], workflows: [], workspaces: [], libraries: [], tools: [], agentRuns: [], workflowRuns: [], notifications: [], consoles: [], settings: {}, providers: [] };
 
 function currentRoute() {
   const [pathname, queryString = ''] = (window.location.hash.slice(1) || '/').split('?');

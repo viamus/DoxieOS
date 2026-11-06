@@ -1,0 +1,53 @@
+{
+  "id": "prompt",
+  "description": "Run a focused model transformation on declared inputs and emit text, Markdown, JSON, or transient workflow context.",
+  "displayName": "Prompt",
+  "category": "Transform",
+  "requirements": [],
+  "modes": {
+    "run": {
+      "fields": [
+        {
+          "id": "prompt",
+          "label": "Prompt (what to do with the input)",
+          "placeholder": "Read the index.md in the workflow input dir. Extract every Feature ID listed under the 'Refinement candidates' section. Output a JSON object: { \"feature_ids\": [<int>, ...] }.",
+          "required": true
+        },
+        {
+          "id": "input_text",
+          "label": "Input text (used only when no upstream node and no input file)",
+          "placeholder": "(leave empty when chained after another node)",
+          "required": false
+        },
+        {
+          "id": "input_file",
+          "label": "Input file path (alternative to input text)",
+          "placeholder": ".\\.workspace\\<my-workspace>\\some-file.md",
+          "required": false
+        },
+        {
+          "id": "output_format",
+          "label": "Output format (text / md / json)",
+          "placeholder": "text",
+          "required": false
+        },
+        {
+          "id": "output_schema",
+          "label": "Output schema (only with json — sample object or JSON Schema)",
+          "placeholder": "{ \"feature_ids\": [12345, 12346] }",
+          "required": false
+        },
+        {
+          "id": "system_prompt",
+          "label": "System prompt (optional persona / hard rules)",
+          "placeholder": "(leave empty unless needed)",
+          "required": false
+        }
+      ],
+      "argumentsTemplate": "run --prompt \"{prompt}\" --input-text \"{input_text}\" --input-file \"{input_file}\" --output-format {output_format} --output-schema \"{output_schema}\" --system-prompt \"{system_prompt}\"",
+      "hidden": false,
+      "description": "Apply a prompt to explicit inputs and emit the requested output format.",
+      "requiresWorkspace": false
+    }
+  }
+}

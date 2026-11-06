@@ -2,6 +2,7 @@ const { existsSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { executablePath } = require('./processes.cjs');
 const { safePath } = require('./storage.cjs');
+const { resolveExecution } = require('./execution.cjs');
 
 const definitions = {
   'claude-code': { id: 'claude-code', name: 'Claude Code', executable: 'claude', models: [] },
@@ -58,30 +59,26 @@ function settingsFor(storage) {
 
 function providerFor(storage, id, options = {}) {
   const settings = settingsFor(storage);
-  const normalized = id === 'claude' ? 'claude-code' : id || settings.defaultProvider;
-  if (!Object.hasOwn(settings.providers, normalized)) throw new Error('Unknown provider.');
-  const provider = settings.providers[normalized];
+  const { providerId, model } = resolveExecution(settings, options.preference, { providerId: id, model: options.model });
+  const provider = settings.providers[providerId];
   const environment = providerEnvironment(storage, { ...process.env, ...provider.environment, ...options.env });
   delete environment.ELECTRON_RUN_AS_NODE;
   delete environment.CLAUDECODE;
   const executable = executablePath(provider.executable, environment);
   if (!executable) throw new Error(`${provider.name} CLI was not found. Configure its executable in Settings.`);
-  const model = String(options.model || provider.model || '');
-  if (model && !/^[\w.:-]+$/.test(model)) throw new Error('Invalid provider model.');
   return { ...provider, executable, model, environment };
 }
 
-function headlessArgs(provider, sessionId) {
+function headlessArgs(provider) {
   const model = provider.model ? ['--model', provider.model] : [];
-  const resume = /^[\w-]+$/.test(sessionId || '') ? sessionId : null;
   if (provider.id === 'codex') {
-    if (resume) return ['exec', 'resume', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json', ...model, resume, '-'];
-    return ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json', ...model, '--color', 'never', '-'];
+    return ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json',
+      '--ephemeral', ...model, '--color', 'never', '-'];
   }
   return [
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
     '--verbose', '--include-partial-messages', '--dangerously-skip-permissions',
-    ...model, ...(resume ? ['--resume', resume] : []),
+    '--no-session-persistence', ...model,
   ];
 }
 
