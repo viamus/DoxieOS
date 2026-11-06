@@ -5,13 +5,12 @@
 # DoxieOS
 
 [![CI](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml/badge.svg)](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml)
-[![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![Electron](https://img.shields.io/badge/Desktop-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-DoxieOS is a local-first operating layer for AI-assisted engineering work. It
-turns a developer machine into a control plane for agents, workflows,
-workspaces, reusable memory, provider shims, live consoles, notifications, and
-reviewable delivery.
+DoxieOS is a local desktop workbench for AI-assisted engineering. Agents,
+workflows, workspaces, reusable memory, live consoles, and run history share
+one Electron application built with Node.js and React.
 
 Claude Code and OpenAI Codex are supported provider CLIs, but they are not the
 product boundary. DoxieOS owns the canonical `.doxie/` catalog and emits
@@ -19,7 +18,7 @@ provider-specific compatibility files from that source of truth.
 
 ## What You Get
 
-- A local web app for launching, observing, and reviewing agent work.
+- A desktop workbench for launching, observing, and reviewing agent work.
 - A canonical `.doxie/` catalog for agents, workflows, libraries, and memories.
 - Provider-neutral execution for Claude Code, OpenAI Codex, and future CLI-backed providers.
 - Workspace-aware memory mounting for project standards and team context.
@@ -27,7 +26,7 @@ provider-specific compatibility files from that source of truth.
 - Agent and workflow builders with draft previews and catalog promotion.
 - Live consoles, run history, usage tracking, release notes, and notifications.
 - MCP-aware settings for Claude/Codex config reconciliation.
-- Docker Compose support for local containerized operation.
+- ZIP transfer for agents, workflows, workspaces, and libraries.
 
 ## Documentation
 
@@ -37,15 +36,17 @@ The full product documentation lives in [docs/](docs/README.md).
 - [Architecture](docs/architecture.md)
 - [Authoring Agents And Workflows](docs/authoring-agents-and-workflows.md)
 - [Operations Guide](docs/operations.md)
+- [Release History](docs/release-notes/README.md)
 - [Licensing And Attribution](docs/licensing.md)
 
 ## Architecture At A Glance
 
 ```mermaid
 flowchart TD
-    UI["DoxieOS Web Shell"] --> Catalog[".doxie/ catalog"]
-    UI --> Runner["Agent and Workflow Runner"]
-    UI --> State["SQLite State"]
+    UI["React workbench"] -->|Electron IPC| Main["Electron main process"]
+    Main --> Catalog[".doxie/ catalog"]
+    Main --> Runner["Agent and Workflow Runner"]
+    Main --> State["SQLite State"]
     Runner --> Workspace["Workspace Context"]
     Runner --> Providers["Provider Adapters"]
     Providers --> Claude["Claude Code CLI"]
@@ -58,41 +59,28 @@ flowchart TD
 
 ## Run Locally
 
-Install the .NET SDK pinned in [global.json](global.json), then run:
+Install Node.js 22.17 or newer and npm. From the repository root, install the
+locked dependencies, verify them, and launch the workbench.
 
 ```bash
-dotnet run --project src/Viamus.Doxie.Orchestrator
+node tools/check-dependencies.mjs
+npm ci --ignore-scripts
+npm audit signatures
+npm audit --audit-level=high
+npm rebuild electron node-pty --ignore-scripts=false
+node node_modules/electron/install.js
+npm start
 ```
 
-The app listens on `http://localhost:5034` by default.
+Provider-backed actions use Claude Code or OpenAI Codex installed and signed in
+on the same machine. The workbench itself opens directly in Electron.
 
-Useful development commands:
+Use `npm test` for Node tests, `npm run test:desktop` for Electron integration
+tests, and `npm run package` to create a desktop bundle. See the operations guide
+for setup, data paths, and the upgrade from DoxieOS 1.x. [Operations guide](docs/operations.md)
 
-```bash
-dotnet restore Solution.slnx
-dotnet build Solution.slnx
-dotnet test Solution.slnx
-```
-
-## Run With Docker Compose
-
-```bash
-docker compose up --build
-```
-
-The default Compose profile exposes `http://localhost:6034`, bind-mounts the
-canonical `.doxie/` catalog and `.private/` folder, and persists runtime state
-plus provider auth in named Docker volumes.
-
-Use another host port with:
-
-```bash
-DOXIE_HTTP_PORT=6134 docker compose up --build
-```
-
-If MCP servers run beside DoxieOS in Docker, use their Docker service names
-instead of `localhost`. Host-machine MCP services can be reached from the
-container with `host.docker.internal`.
+On Windows x64, extract `release/DoxieOS-win32-x64.zip` and open `DoxieOS.exe`
+from the extracted folder.
 
 ## Repository Shape
 
@@ -100,9 +88,9 @@ container with `host.docker.internal`.
 .
 ├── .doxie/                         # Canonical Doxie catalog
 ├── docs/                           # Product documentation
-├── src/                            # .NET / Blazor application
-├── tests/                          # Automated tests
-├── docker-compose.yml              # Containerized local runtime
+├── src/desktop/                    # Electron main process and Node runtime
+├── src/renderer/                   # React workbench
+├── tests/                          # Node and Electron tests
 ├── LICENSE                         # Apache License 2.0
 └── NOTICE                          # Attribution notice for redistributions
 ```

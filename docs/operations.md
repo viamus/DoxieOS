@@ -1,95 +1,94 @@
 # Operations Guide
 
-This guide covers local operation, Docker Compose, MCP configuration, storage,
-and validation.
+## Build and launch
 
-## Local Development
+Install Node.js 22.17 or newer with npm. From the repository root, install the
+locked dependency tree and verify registry signatures and high-severity audit
+findings before enabling the two desktop dependencies' setup scripts.
 
-Install the .NET SDK pinned in `global.json`.
-
-```bash
-dotnet restore Solution.slnx
-dotnet build Solution.slnx
-dotnet test Solution.slnx
-dotnet run --project src/Viamus.Doxie.Orchestrator
+```sh
+node tools/check-dependencies.mjs
+npm ci --ignore-scripts
+npm audit signatures
+npm audit --audit-level=high
+npm rebuild electron node-pty --ignore-scripts=false
+node node_modules/electron/install.js
+npm start
 ```
 
-The app listens on `http://localhost:5034` by default in local development.
+`npm start` builds the React workbench and opens Electron. Use `npm run build`
+to build the renderer by itself. The packaged executable loads that build from
+disk and uses Electron's embedded Node.js runtime.
 
-## Docker Compose
+`npm run package` creates an unsigned desktop bundle for the host platform.
+On Windows x64, extract `release/DoxieOS-win32-x64.zip` and run
+`DoxieOS.exe` from the extracted `DoxieOS-win32-x64` folder. Keep the
+executable beside its bundled resources. The portable app stores user settings
+and default workbench data in the Electron user data directory.
 
-```bash
-docker compose up --build
-```
+## Open a workbench folder
 
-The default Compose setup exposes DoxieOS on host port `6034` and keeps state in
-named volumes.
+Development launches use the repository folder. The packaged app defaults to
+the `workbench` folder under Electron's user data directory and seeds the
+bundled `.doxie/` catalog there. Use **File → Open Doxie folder** to select an
+existing workbench, or set `DOXIE_ROOT` before launch to select it explicitly.
 
-```mermaid
-flowchart TD
-    Host["Host machine"] --> Compose["Docker Compose"]
-    Compose --> App["DoxieOS container"]
-    App --> Home["doxie_home"]
-    App --> State["doxie_state"]
-    App --> Workspaces["doxie_workspaces"]
-    App --> Runs["doxie_runs"]
-    App --> Sandboxes["doxie_sandboxes"]
-```
+| Workbench path | Purpose |
+| --- | --- |
+| `.doxie/` | Canonical skills, subagents, workflows, and libraries. |
+| `.workspace/` | Workspace folders, mounts, notes, and durable output. |
+| `.runs/` | Workflow node output and agent run artifacts. |
+| `.sandbox/` | Builder sessions and scratch folders. |
+| `.private/` | User-owned private content. |
+| `.claude/`, `.agents/`, `.codex/` | Provider compatibility files. |
 
-Use `DOXIE_HTTP_PORT` to expose a different host port:
+SQLite stores run history, streamed output, and application settings. The
+**Settings** page shows the active database and workbench paths. Set
+`DOXIE_DATABASE_PATH` to select a different database. Set `DOXIE_USER_DATA` to
+isolate Electron profile data for testing.
 
-```bash
-DOXIE_HTTP_PORT=6134 docker compose up --build
-```
+## Upgrade from DoxieOS 1.x
 
-## MCP Servers
+1. Close DoxieOS 1.x before opening the same workbench or database in the desktop app.
+2. Open the original workbench folder. The desktop app reads the existing catalog, workspaces, mounts, and artifacts in place.
+3. The desktop app looks for `Viamus.Doxie.Orchestrator/state.db` in the previous release's user data location. This includes `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS. Set `DOXIE_DATABASE_PATH` for a different location or an exported database from an earlier containerized install.
+4. Open **Settings** and verify that the displayed paths, custom catalogs, provider settings, and MCP definitions point to the expected locations.
 
-DoxieOS can reconcile MCP server definitions from Claude and Codex provider
-configs into durable app state. When DoxieOS runs in Docker and an MCP server
-runs in another container, use Docker service names instead of `localhost`.
+The desktop app also reads DoxieOS 1.x ZIP archives. Transfer an agent,
+workflow, workspace, or library through its catalog page. Workflow and
+workspace bundles can carry related agents. The import dialog requests a
+choice when an existing item differs from its archived counterpart.
 
-```mermaid
-flowchart LR
-    Doxie["DoxieOS container"] --> Network["Docker network"]
-    Network --> Mcp["Optional MCP server"]
-```
+## Providers and MCP
 
-For host-machine services, use `host.docker.internal` from inside the container.
+Install and sign in to Claude Code or OpenAI Codex on the machine running
+DoxieOS. **Settings** shows the detected executables and lets you select the
+default provider and configure each provider. An agent run or an interactive
+console launches its provider on demand.
 
-## Storage
+MCP configuration lives under **Settings**. DoxieOS reconciles the configured
+servers with the provider files. The providers connect to those MCP servers
+when invoked. The configured URLs and commands must resolve on the host where
+DoxieOS and the providers run.
 
-| Path | Purpose | Usually Committed? |
-| --- | --- | --- |
-| `.doxie/` | Canonical catalog. | Yes, for shared assets. |
-| `.private/` | Private local provider or work content. | No. |
-| `.workspace/` | User-owned workspaces. | No by default. |
-| `.runs/` | Workflow and agent run outputs. | No by default. |
-| `.sandbox/` | Temporary scratch work. | No. |
-| SQLite state | Runtime app state. | No. |
+## Workflow triggers
 
-## Triggers
+| Trigger | Desktop behavior |
+| --- | --- |
+| Manual | Starts from the workbench. |
+| Cron | Evaluates enabled schedules in UTC while Electron is running and skips overlapping runs. |
+| Event / webhook | Definitions remain in the catalog for compatibility. |
 
-```mermaid
-flowchart TD
-    Manual["Manual"] --> Immediate["Runs immediately"]
-    Cron["Cron"] --> Daemon["Embedded daemon ticks once per minute"]
-    Daemon --> SkipOverlap["Skips overlapping runs"]
-    Event["Event"] --> Persisted["Persisted, not wired yet"]
-    Webhook["Webhook"] --> Persisted
-```
-
-Manual triggers run immediately. Cron triggers fire from a daemon embedded in
-DoxieOS. The daemon only fires enabled workflows and skips overlapping runs.
-Crons stop when DoxieOS is not running.
+DoxieOS 2 uses Electron IPC for workbench operations. The 1.x HTTP API,
+SignalR, and Docker launch entry points were retired with the server runtime.
 
 ## Validation
 
-Use the narrowest validation that proves the change:
-
-```bash
-dotnet build Solution.slnx
-dotnet test Solution.slnx
+```sh
+npm test
+npm run test:desktop
+npm run package
 ```
 
-For frontend changes, also run the app and verify the affected route in the
-browser.
+The Node tests use temporary databases and workbench folders. Run the Electron
+tests in a graphical session or under Xvfb on headless Linux.

@@ -19,13 +19,15 @@ workspace_*/
 # Local private directory for user-owned files and experiments.
 .private/
 
-# Visual Studio cache (created next to the .slnx)
-.vs/
-
-# .NET build artifacts (any project under the workspace)
+# Local dependencies, desktop bundles and test artifacts
+node_modules/
+dist/
+release/
+playwright-report/
+test-results/
 **/bin/
 **/obj/
-**/*.user
+.vs/
 
 # Canonical authoring layer (.doxie/) - DoxieOS reads this folder at
 # runtime; provider shims are regenerated from it.

@@ -15,21 +15,15 @@ This is where you author. Everything else is derived.
 
 ## What this folder is for
 
-Provider-specific layouts (`.claude/`, `.codex/`) are auto-generated. DoxieOS regenerates them on every save under `.doxie/` via an in-process `FileSystemWatcher` (300 ms debounce).
+Edit canonical content here. Electron regenerates provider compatibility files
+under `.claude/`, `.agents/`, and `.codex/` on save and watches configured
+catalog folders for external edits. The public repository tracks the bundled
+catalog. Keep personal content in a separate workbench or custom catalog and
+use the relevant catalog page to share a ZIP bundle.
 
-`.doxie/`, `.claude/`, and `.codex/` are **all gitignored**. The contents of `.doxie/` are per-developer config — your personal skills, agents, libraries, and workflows live on your machine, not in changes.
-
-This means:
-
-- **One authoring surface** instead of N. The same skill ships to every CLI you support.
-- **No provider lock-in.** Adding a new provider is one new emitter; no per-skill migration.
-- **No accidental config sharing.** Your `.doxie/` content stays on your machine. Teams that need to share skills/libraries/workflows do it through DoxieOS's first-party kit (shipped as embedded resources) or by exporting/importing zips via the Settings UI.
-
-## What this folder is NOT for
-
-- **Not** a place to store generated artifacts. The pipeline rewrites them on every save; manual edits are overwritten.
-- **Not** a runtime cache. State (run history, settings) lives in SQLite under `%LOCALAPPDATA%`.
-- **Not** for libraries unrelated to DoxieOS — those go elsewhere in the workspace.
+Run history and settings live in SQLite. Workspace output and scratch files
+live under `.workspace/`, `.runs/`, and `.sandbox/`. The Settings page shows
+the active paths.
 
 ## Skill manifest schema
 
@@ -75,11 +69,14 @@ The Claude shim copies this 1:1 to `.claude/agents/<id>.md`. Codex gets an entry
 
 ## Editing canon while DoxieOS is offline
 
-The watcher only fires while the orchestrator is running. If you edit `.doxie/` while it's offline (or after a fresh checkout), open **Settings â†’ Doxie codegen â†’ Regenerate shims** to force a pass. Reports counts in a toast.
+DoxieOS regenerates provider files on launch. While the desktop app is open,
+use **Settings → Regenerate provider files** to trigger a refresh manually.
 
 ## Migrating an existing skill from `.claude/` to `.doxie/`
 
-If you upgraded from v0.1 with skills authored under `.claude/skills/`, open **Settings â†’ Doxie codegen â†’ Migrate legacy skills**. DoxieOS scans `.claude/` for unmanaged folders (those without the `doxie/generated` marker), folds each into the new `.doxie/` shape, and runs a regen pass to verify the output matches what Claude Code was reading before. Hand-authored folders that don't carry the marker are left alone until you click migrate.
+The legacy catalog migration copies unmanaged `.claude/` assets and old
+`.workflows/` definitions into the canonical `.doxie/` structure. The desktop
+workbench can also import DoxieOS 1.x ZIP archives.
 
 ## Idempotency contract
 

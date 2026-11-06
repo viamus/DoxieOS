@@ -1,19 +1,19 @@
 # Architecture
 
-DoxieOS is a .NET / Blazor Server application with a canonical Doxie catalog,
-provider-specific compatibility generation, local SQLite state, and CLI-backed
-agent execution.
+DoxieOS is an Electron application. React renders the workbench and the
+Electron main process runs the Node.js catalog, workflow engine, SQLite state,
+PTY consoles, and provider adapters.
 
 ## System Overview
 
 ```mermaid
 flowchart TD
-    Browser["Browser UI"] --> Blazor["Blazor Server App"]
-    Blazor --> Catalog["Doxie Catalog Store"]
-    Blazor --> SQLite["SQLite State"]
-    Blazor --> Runner["Agent / Workflow Runner"]
-    Blazor --> Notifications["Notifications Bus"]
-    Blazor --> Consoles["PTY Console Store"]
+    Renderer["React workbench"] <-->|Preload IPC bridge| Main["Electron main process"]
+    Main --> Catalog["Doxie Catalog Store"]
+    Main --> SQLite["SQLite State"]
+    Main --> Runner["Agent / Workflow Runner"]
+    Main --> Notifications["Notifications Bus"]
+    Main --> Consoles["PTY Console Store"]
     Catalog --> Doxie[".doxie/"]
     Catalog --> CustomCatalogs["Custom Catalog Roots"]
     Runner --> ProviderResolver["Provider Resolver"]
@@ -21,17 +21,19 @@ flowchart TD
     ProviderResolver --> CodexCLI["OpenAI Codex CLI"]
     Runner --> RunOutputs[".runs/"]
     Runner --> Workspace[".workspace/"]
-    Notifications --> Browser
+    Notifications --> Main
 ```
 
 ## Runtime Boundaries
 
 | Boundary | Responsibility |
 | --- | --- |
-| UI | Pages, settings, builders, history, notifications, graph editing, release notes. |
+| Renderer | Pages, settings, builders, history, notifications, and graph editing. |
+| Preload | Named IPC operations and runtime events exposed to the renderer. |
+| Main | Validates operations and owns filesystem access, SQLite, processes, and dialogs. |
 | Agents | Catalog parsing, provider prompt assembly, run persistence, process lifecycle. |
 | Workflows | Graph execution, node dispatch, trigger handling, output contracts. |
-| Context | PTY/process abstractions and platform-specific child process control. |
+| Consoles | PTY sessions and streaming output. |
 | Storage | SQLite state, catalog roots, workspaces, sandboxes, run outputs. |
 
 ## Execution Flow
@@ -47,7 +49,7 @@ sequenceDiagram
     participant H as History
 
     U->>UI: Start agent or workflow
-    UI->>R: Dispatch request
+    UI->>R: Dispatch through Electron IPC
     R->>C: Load agent/workflow definition
     R->>W: Load workspace context and mounted memories
     R->>P: Start provider process with assembled prompt
@@ -62,13 +64,13 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> Queued
     Queued --> Running
-    Running --> WaitingForApproval
-    WaitingForApproval --> Running: Approved
-    WaitingForApproval --> Cancelled: Rejected
-    Running --> Completed
+    Running --> AwaitingApproval
+    AwaitingApproval --> Running: Approved
+    AwaitingApproval --> Cancelled: Rejected or previous session ended
+    Running --> Succeeded
     Running --> Failed
     Running --> Cancelled
-    Completed --> [*]
+    Succeeded --> [*]
     Failed --> [*]
     Cancelled --> [*]
 ```
@@ -91,20 +93,19 @@ local unless there is a deliberate reason to share them.
 
 ## Provider Compatibility
 
-DoxieOS does not make Claude Code or Codex the source of truth. Instead, it emits
-compatibility files from `.doxie/` so providers can run against the same catalog.
+DoxieOS emits provider compatibility files from the canonical `.doxie/` catalog.
+Claude Code and Codex consume the files and the context assembled at dispatch.
 
 ```mermaid
 flowchart TD
     Skill[".doxie/skills/<id>"] --> Normalize["Doxie model"]
     Normalize --> ClaudeSkill[".claude/skills/<id>/SKILL.md"]
     Normalize --> CodexIndex[".codex/AGENTS.md"]
+    Normalize --> CodexSkills[".agents/skills/<id>/SKILL.md"]
     Normalize --> UI["DoxieOS pages"]
     Normalize --> Runner["Provider dispatch"]
 ```
 
 ## Release Notes
 
-App release notes are stored under
-`src/Viamus.Doxie.Orchestrator/docs/release-notes/` because they are embedded in
-the application assembly and shown in the release notes modal.
+Previous release notes and illustrations are available in the [release history](release-notes/README.md).
