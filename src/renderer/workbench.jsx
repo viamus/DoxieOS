@@ -360,7 +360,7 @@ function NewConsole({ close }) {
   </div><footer className="modal-footer"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" icon={Terminal} disabled={starting}>Open console</Button></footer></form></Modal>;
 }
 
-export function ConsolesPage({ sessionId }) {
+export function ConsolesPage({ sessionId, builderReturn }) {
   const { state, perform } = useApp();
   const t = useText();
   const [showNew, setShowNew] = useState(false);
@@ -372,7 +372,7 @@ export function ConsolesPage({ sessionId }) {
     window.addEventListener('keydown', handle);
     return () => window.removeEventListener('keydown', handle);
   }, [fullscreen]);
-  return <div className="page"><PageHeading title={t('Consoles.Title', 'Consoles')} icon={Terminal} subtitle={t('Consoles.Subtitle', 'Open a live shell or provider session in a workspace.')} actions={<Button variant="primary" icon={Plus} onClick={() => setShowNew(true)}>{t('Consoles.NewSession', 'New session')}</Button>} />
+  return <div className="page"><PageHeading title={t('Consoles.Title', 'Consoles')} icon={Terminal} subtitle={t('Consoles.Subtitle', 'Open a live shell or provider session in a workspace.')} back={builderReturn ? { to: builderReturn, label: 'Back to builder' } : undefined} actions={<Button variant="primary" icon={Plus} onClick={() => setShowNew(true)}>{t('Consoles.NewSession', 'New session')}</Button>} />
     <div className={`split-view terminal-view ${fullscreen ? 'fullscreen' : ''}`}>
       <Panel title={t('Consoles.Sessions', 'Sessions')} icon={Terminal} className="terminal-sessions">{state.consoles.length ? <div className="row-list">{state.consoles.map((item) => <ItemRow key={item.id} title={item.label || item.name || item.id} detail={item.workspaceId || item.kind} to={`/consoles?session=${part(item.id)}`}><Status status={item.status} /></ItemRow>)}</div> : <Empty compact title="No sessions" icon={Terminal} />}</Panel>
       <Panel title={session?.label || session?.name || 'Terminal'} icon={Terminal} actions={<>{session?.status === 'Running' && <><VoiceInput append={(text) => invoke('console:write', session.id, text).catch(() => {})} /><Button icon={Square} onClick={() => perform('console:stop', [session.id], 'Console stopped')}>Stop</Button></>}{session && session.status !== 'Running' && <IconButton icon={Trash2} label="Remove console" onClick={() => perform('console:remove', [session.id])} />}{session && <IconButton icon={fullscreen ? Minimize2 : Maximize2} label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(!fullscreen)} />}</>}>

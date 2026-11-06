@@ -20,7 +20,7 @@ function createConsoles({ storage, emit }) {
     if (options.workspaceId && !workspace) throw new Error('Workspace not found.');
     const cwd = workspace?.path || storage.root;
     const requestedProvider = options.providerId || (Object.hasOwn(definitions, options.kind) ? options.kind : null);
-    const provider = requestedProvider ? providerFor(storage, requestedProvider, { model: options.model }) : null;
+    const provider = requestedProvider ? providerFor(storage, requestedProvider, { model: options.model, localCodex: options.localCodex }) : null;
     const env = { ...(provider?.environment || providerEnvironment(storage)), TERM: 'xterm-256color', DOXIE_PROJECT_ROOT: storage.root, DOXIE_ROOT: storage.root };
     delete env.ELECTRON_RUN_AS_NODE;
     const executable = provider?.executable || (windows

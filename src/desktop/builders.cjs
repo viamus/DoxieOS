@@ -8,6 +8,7 @@ const { safePath } = require('./storage.cjs');
 
 const safeId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const knownKinds = new Set(['agent', 'workflow']);
+const providerNames = { codex: 'Codex', 'claude-code': 'Claude Code', ollama: 'Ollama', lmstudio: 'LM Studio' };
 
 function read(path) {
   try {
@@ -41,6 +42,26 @@ function builderRequest(messages, text) {
   ].join('\n\n');
 }
 
+function describeFailure(providerId, diagnostics, { id: runId, status } = {}) {
+  const provider = providerNames[providerId] || 'The provider';
+  const source = { providerId, ...(runId ? { runId } : {}) };
+  if (/\b(?:unauthori[sz]ed|401\s+(?:client error|unauthorized))\b|missing (?:bearer|api key)|authentication (?:failed|required)|not logged in|(?:run|please)\s+\S*\s*(?:login|sign in)|(?:login|sign.in) (?:is )?required/i.test(diagnostics)) {
+    return { ...source, kind: 'authentication', message: providerId === 'codex'
+      ? 'Sign in to the installed Codex CLI with ChatGPT, then retry this message.'
+      : `Sign in to ${provider}, then retry this message.` };
+  }
+  if (/\b(?:429|rate.limit|quota exceeded|too many requests)\b/i.test(diagnostics)) {
+    return { ...source, kind: 'rate-limit', message: `${provider} reached a usage limit. Retry when it is available or change the builder model.` };
+  }
+  if (['Cancelled', 'Interrupted'].includes(status)) {
+    return { ...source, kind: 'cancelled', message: 'The builder response was interrupted. Retry the last message to continue.' };
+  }
+  if (/\bCLI was not found\b/i.test(diagnostics)) {
+    return { ...source, kind: 'provider', message: `Install ${provider} or configure its executable in Settings, then retry.` };
+  }
+  return { ...source, kind: 'provider', message: `${provider} could not finish this response. Check the provider and model, then retry.` };
+}
+
 function createBuilders({ storage, agents, emit }) {
   const current = new Set();
   const base = storage.roots.sandboxes;
@@ -62,10 +83,21 @@ function createBuilders({ storage, agents, emit }) {
     if (kind === 'workflow') drafts.push(safePath(draft, 'workflow.json'));
     const latest = drafts.map(path => ({ path, time: statSync(path, { throwIfNoEntry: false })?.mtimeMs }))
       .filter(candidate => candidate.time !== undefined).sort((a, b) => b.time - a.time)[0];
-    return {
+    const session = {
       id, kind, messages: [], status: 'Ready', editingId: legacy.editAgentId || legacy.editWorkflowId,
       ...saved, ...(current.has(id) ? { status: 'Running' } : {}), draft: latest ? read(latest.path) : null,
     };
+    if (session.status === 'Running' && !current.has(id)) {
+      session.status = 'Failed';
+      session.failure = describeFailure(session.providerId, '', { status: 'Interrupted' });
+    }
+    if (session.status === 'Failed' && !session.failure) {
+      const last = session.messages.at(-1);
+      session.failure = describeFailure(session.providerId, last?.role === 'assistant' ? last.text || last.content || '' : '');
+      // Older releases appended the failed provider's diagnostics as an assistant turn.
+      if (last?.role === 'assistant') session.messages = session.messages.slice(0, -1);
+    }
+    return session;
   }
 
   function list(kind) {
@@ -113,30 +145,64 @@ function createBuilders({ storage, agents, emit }) {
     });
   }
 
-  async function message(id, text) {
+  function idleSession(id) {
     const session = get(id);
     if (!session) throw new Error('Builder session not found.');
     if (current.has(id)) throw new Error('The builder is already responding.');
+    return session;
+  }
+
+  function updateExecution(id, params = {}) {
+    const session = idleSession(id);
+    const builder = storage.get('agents', `${session.kind}-builder`, 'default');
+    const execution = resolveExecution(settingsFor(storage), builder?.execution, params);
+    return persist({ ...session, effort: null, ...execution });
+  }
+
+  function message(id, text) {
     if (typeof text !== 'string' || !text.trim()) throw new Error('Enter a message.');
-    const { directory } = paths(id);
+    return respond(idleSession(id), text, false);
+  }
+
+  function retry(id) {
+    const session = idleSession(id);
+    const turn = session.messages.at(-1);
+    const text = turn?.text ?? turn?.content;
+    if (!session.failure || turn?.role !== 'user' || typeof text !== 'string' || !text.trim()) throw new Error('There is no failed builder message to retry.');
+    return respond(session, text, true);
+  }
+
+  async function respond(session, text, retrying) {
+    const { id } = session;
+    const { directory, draft } = paths(id);
     const providerId = session.providerId || settingsFor(storage).defaultProvider;
-    const prompt = builderRequest(session.messages, text);
-    session.messages.push({ role: 'user', text });
+    const prompt = builderRequest(retrying ? session.messages.slice(0, -1) : session.messages, text);
+    if (!retrying) session.messages.push({ role: 'user', text });
+    session.status = 'Running';
+    session.failure = null;
     current.add(id);
     try {
       persist(session);
       const job = agents.runBuilder(session.kind, { cwd: directory, providerId, model: session.model, effort: session.effort, prompt });
       const result = await agents.wait(job.id);
-      session.status = result.status === 'Completed' ? 'Ready' : 'Failed';
-      const source = result.status === 'Completed' ? 'stdout' : 'stderr';
-      const reply = result.output.filter(item => item.source.toLowerCase() === source && !item.text.startsWith('▶')).map(item => item.text).join('\n');
-      session.messages.push({ role: 'assistant', text: reply || `Provider run ${result.status.toLowerCase()}.` });
+      const output = result?.output || [];
+      if (result?.status === 'Completed') {
+        const reply = output.filter(item => item.source.toLowerCase() === 'stdout' && !item.text.startsWith('▶')).map(item => item.text).join('\n');
+        if (reply || read(safePath(draft, 'manifest.json'))) {
+          session.status = 'Ready';
+          session.messages.push({ role: 'assistant', text: reply || 'The draft is ready to review.' });
+        } else {
+          session.failure = { kind: 'response', providerId, runId: job.id, message: 'The provider returned no response or draft. Retry the last message.' };
+        }
+      } else {
+        session.failure = describeFailure(providerId, output.map(item => item.text).join('\n'), { id: job.id, status: result?.status });
+      }
     } catch (error) {
-      session.status = 'Failed';
-      session.messages.push({ role: 'assistant', text: error.message });
+      session.failure = describeFailure(providerId, error.message);
     } finally {
       current.delete(id);
     }
+    if (session.failure) session.status = 'Failed';
     return persist(session);
   }
 
@@ -153,7 +219,9 @@ function createBuilders({ storage, agents, emit }) {
         if (!fields.has(match[1])) throw new Error(`Mode ${id} references an undefined field: ${match[1]}`);
       }
     }
-    return { ...manifest, modes, execution: normalizeExecution(manifest.execution), body: manifest.body || manifest.systemPrompt || manifest.content };
+    const body = manifest.body || manifest.systemPrompt || manifest.content;
+    if (typeof body !== 'string' || !body.trim()) throw new Error('The draft needs agent instructions. Ask the builder to add them before saving.');
+    return { ...manifest, modes, execution: normalizeExecution(manifest.execution), body };
   }
 
   function promote(id, options = {}) {
@@ -190,7 +258,7 @@ function createBuilders({ storage, agents, emit }) {
     return result;
   }
 
-  return { start, get, list, message, promote };
+  return { start, get, list, message, retry, updateExecution, promote };
 }
 
 module.exports = { createBuilders };

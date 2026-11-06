@@ -1,5 +1,7 @@
 const { existsSync, readFileSync } = require('node:fs');
-const { join } = require('node:path');
+const { homedir } = require('node:os');
+const { join, resolve } = require('node:path');
+const toml = require('@iarna/toml');
 const { executablePath } = require('./processes.cjs');
 const { safePath } = require('./storage.cjs');
 const { reasoningEfforts, normalizeEffort, resolveExecution } = require('./execution.cjs');
@@ -11,6 +13,16 @@ const definitions = {
   ollama: { id: 'ollama', name: 'Ollama', executable: 'codex', requiresAuth: false, localBaseUrl: localProviderBaseUrl('ollama') },
   lmstudio: { id: 'lmstudio', name: 'LM Studio', executable: 'codex', requiresAuth: false, localBaseUrl: localProviderBaseUrl('lmstudio') },
 };
+
+const installedCodexHome = () => resolve(process.env.CODEX_HOME || join(homedir(), '.codex'));
+
+function installedCodexAuthStore(home) {
+  try {
+    const settings = toml.parse(readFileSync(join(home, 'config.toml'), 'utf8').replace(/^\uFEFF/, ''));
+    const store = settings.cli_auth_credentials_store;
+    return ['auto', 'file', 'keyring', 'ephemeral'].includes(store) ? store : null;
+  } catch { return null; }
+}
 
 function readJson(path, fallback = {}) {
   try {
@@ -49,6 +61,7 @@ function settingsFor(storage) {
     return [id, {
       ...provider, reasoningEfforts: reasoningEfforts[id] || [],
       installed: Boolean(executablePath(provider.executable, env)),
+      ...(id === 'codex' ? { localAuthenticated: existsSync(join(installedCodexHome(), 'auth.json')) } : {}),
       authenticated: !provider.requiresAuth ? null : id === 'codex'
         ? Boolean(env.OPENAI_API_KEY || existsSync(join(env.CODEX_HOME, 'auth.json')))
         : Boolean(env.ANTHROPIC_API_KEY || env.CLAUDE_CODE_OAUTH_TOKEN || existsSync(join(env.CLAUDE_CONFIG_DIR, '.credentials.json'))),
@@ -70,12 +83,20 @@ function providerFor(storage, id, options = {}) {
   const provider = settings.providers[providerId];
   if (provider.localBaseUrl && !model) throw new Error(`Select a model for ${provider.name}.`);
   const environment = providerEnvironment(storage, { ...process.env, ...provider.environment, ...options.env });
+  const localCodex = providerId === 'codex' && options.localCodex === true;
+  if (localCodex) {
+    environment.CODEX_HOME = installedCodexHome();
+    for (const key of Object.keys(environment)) {
+      if (/^(openai_api_key|openai_base_url|codex_api_key)$/i.test(key)) delete environment[key];
+    }
+  }
   delete environment.ELECTRON_RUN_AS_NODE;
   delete environment.CLAUDECODE;
   if (providerId === 'claude-code' && effort) environment.CLAUDE_CODE_EFFORT_LEVEL = effort;
   const executable = executablePath(provider.executable, environment);
   if (!executable) throw new Error(`${provider.name} CLI was not found. Configure its executable in Settings.`);
-  return { ...provider, executable, model, effort, environment };
+  return { ...provider, executable, model, effort, environment, localCodex,
+    ...(localCodex ? { authStore: installedCodexAuthStore(environment.CODEX_HOME) } : {}) };
 }
 
 function usesCodex(provider) {
@@ -106,8 +127,10 @@ function headlessArgs(provider) {
   const model = provider.model ? ['--model', provider.model] : [];
   const effort = effortArgs(provider);
   if (usesCodex(provider)) {
+    const localAuth = provider.localCodex ? ['--ignore-user-config', '-c', "forced_login_method='chatgpt'",
+      ...(provider.authStore ? ['-c', `cli_auth_credentials_store='${provider.authStore}'`] : [])] : [];
     return ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json',
-      '--ephemeral', ...localProviderArgs(provider), ...model, ...effort, '--color', 'never', '-'];
+      '--ephemeral', ...localAuth, ...localProviderArgs(provider), ...model, ...effort, '--color', 'never', '-'];
   }
   return [
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json',

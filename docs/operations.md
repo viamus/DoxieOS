@@ -81,6 +81,11 @@ the provider profile managed by DoxieOS. You can also select the default
 provider and configure each executable from that section. An agent run or an
 interactive console launches its provider on demand.
 
+Codex builder sessions run the installed `codex exec` with the machine's
+existing ChatGPT sign-in. The CLI opens a fresh ephemeral turn while DoxieOS
+keeps the draft and conversation in AppData. If the CLI requires sign-in,
+open **Authenticate** from the builder and retry the last message after login.
+
 Model selectors can refresh the installed providers' inventory and show its
 source. Codex and Claude Code use model metadata from the DoxieOS or installed
 CLI profiles when available. In provider settings, **Default model** lists

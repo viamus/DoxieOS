@@ -51,7 +51,11 @@ function Router({ route }) {
     return id ? <WorkflowPage id={id} catalogId={catalogId} runId={runId} /> : <WorkflowsPage />;
   }
   if (section === 'workspaces') return id && child === 'files' ? <WorkspaceFilesPage id={id} path={rest.map(decode).join('/')} /> : <WorkspacesPage />;
-  if (section === 'consoles') return <ConsolesPage sessionId={query.get('session') || id} />;
+  if (section === 'consoles') {
+    const returnTo = query.get('returnTo');
+    const builderReturn = /^\/(?:agents\/new|workflows\/new\/chat)(?:\?|$)/.test(returnTo || '') ? returnTo : undefined;
+    return <ConsolesPage sessionId={query.get('session') || id} builderReturn={builderReturn} />;
+  }
   if (section === 'libraries') return <LibrariesPage />;
   if (section === 'history') return <HistoryPage />;
   if (section === 'notifications') return <NotificationsPage />;
