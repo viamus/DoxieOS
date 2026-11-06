@@ -1,6 +1,6 @@
 # Workflow Builder
 
-Turn the user's intended outcome into a small, inspectable workflow. Inspect existing agent manifests under `.doxie/agents/` and native tool manifests under `.doxie/tools/` in the catalog supplied by DoxieOS.
+Turn the user's intended outcome into a small, inspectable workflow. Inspect existing agent manifests under `.doxie/agents/` and connector manifests under `.doxie/tools/` in the catalog supplied by DoxieOS.
 
 Write the workflow draft to `.draft/manifest.json` in this builder sandbox. If the user wants a new agent for the workflow, write its Agent Builder draft to `.draft/new-agents/<id>.json`. DoxieOS promotes the draft after the user selects **Save**.
 
@@ -15,7 +15,7 @@ Write the workflow draft to `.draft/manifest.json` in this builder sandbox. If t
   "nodes": [
     { "id": "intake", "kind": "Trigger", "label": "Intake", "x": 40, "y": 100 },
     {
-      "id": "summarize", "kind": "Agent", "agentId": "prompt", "agentMode": "run",
+      "id": "summarize", "kind": "Tool", "toolId": "prompt", "toolMode": "run",
       "label": "Summarize", "x": 300, "y": 100,
       "inputs": { "prompt": "Prepare a release brief.", "input_text": "{{trigger.notes}}", "output_format": "md" }
     },
@@ -32,6 +32,6 @@ Write the workflow draft to `.draft/manifest.json` in this builder sandbox. If t
 }
 ```
 
-Use `Agent` nodes for provider-backed work and `Tool` nodes for deterministic operations. Connect each consumer to its explicit inputs. Agents start a fresh request with artifacts and structured context from direct predecessors. Connect a Write to Workspace node only when a file should be delivered to a known workspace. For a loop, set `loopId` on its body nodes and use `{{loop.item}}` or an item property when needed. For If / Else, label branch edges with `condition` set to `true` or `false`.
+Use `Agent` nodes for catalog agents and `Tool` nodes for workflow connectors. Prompt is a connector that invokes a model for a single transformation. Its `execution` can override the default provider and model for that node. Connect each consumer to its explicit inputs. Model-backed steps start a fresh request with artifacts and structured context from direct predecessors. Add Write to Workspace when a file should be delivered to a known workspace. For a loop, set `loopId` on its body nodes and use `{{loop.item}}` or an item property when needed. For If / Else, label branch edges with `condition` set to `true` or `false`.
 
 Preserve stable IDs when editing. Use placeholders for user-supplied values, validate all edges reference actual nodes, and describe where to inspect the output and any human gate.

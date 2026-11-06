@@ -3,7 +3,7 @@ const { existsSync } = require('node:fs');
 const { join } = require('node:path');
 const pty = require('node-pty');
 const { executablePath, invocation } = require('./processes.cjs');
-const { providerFor, providerEnvironment } = require('./providers.cjs');
+const { definitions, providerFor, providerEnvironment, usesCodex, localProviderArgs } = require('./providers.cjs');
 
 function size(value, fallback) {
   return Number.isInteger(value) ? Math.max(2, Math.min(500, value)) : fallback;
@@ -19,16 +19,20 @@ function createConsoles({ storage, emit }) {
     const workspace = options.workspaceId ? storage.get('workspaces', options.workspaceId) : null;
     if (options.workspaceId && !workspace) throw new Error('Workspace not found.');
     const cwd = workspace?.path || storage.root;
-    const requestedProvider = options.providerId || (['codex', 'claude-code'].includes(options.kind) ? options.kind : null);
-    const provider = requestedProvider ? providerFor(storage, requestedProvider) : null;
+    const requestedProvider = options.providerId || (Object.hasOwn(definitions, options.kind) ? options.kind : null);
+    const provider = requestedProvider ? providerFor(storage, requestedProvider, { model: options.model }) : null;
     const env = { ...(provider?.environment || providerEnvironment(storage)), TERM: 'xterm-256color', DOXIE_PROJECT_ROOT: storage.root, DOXIE_ROOT: storage.root };
     delete env.ELECTRON_RUN_AS_NODE;
     const executable = provider?.executable || (windows
       ? executablePath('pwsh', env) || executablePath('powershell', env) || env.ComSpec
       : env.SHELL || '/bin/sh');
     const login = options.auth || options.kind === 'auth';
+    if (login && provider?.requiresAuth === false) throw new Error(`${provider.name} uses a local endpoint.`);
     let args = windows && executable && !/cmd\.exe$/i.test(executable) ? ['-NoLogo'] : [];
-    if (provider?.id === 'codex') args = login ? ['login'] : ['--dangerously-bypass-approvals-and-sandbox'];
+    if (provider && usesCodex(provider)) args = login ? ['login'] : [
+      '--dangerously-bypass-approvals-and-sandbox', ...localProviderArgs(provider),
+      ...(provider.localBaseUrl ? ['--model', provider.model] : []),
+    ];
     if (provider?.id === 'claude-code') args = login ? ['auth', 'login'] : ['--dangerously-skip-permissions'];
     const mcpConfig = join(storage.root, '.mcp.json');
     if (provider?.id === 'claude-code' && !login && existsSync(mcpConfig)) args.push('--mcp-config', mcpConfig);

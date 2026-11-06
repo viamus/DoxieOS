@@ -235,6 +235,38 @@ test('repairs missing bundled files on startup while retaining managed edits', t
   assert.equal(fs.existsSync(path.join(restarted.get('skills', 'review').path, 'local-notes.md')), false);
 });
 
+test('updates shipped connector definitions in an existing profile and preserves extra files', t => {
+  const { home, open } = setup(t);
+  for (const mode of ['tracked', 'packaged']) {
+    const bundledRoot = path.join(home, `bundle-${mode}`);
+    const toolSource = path.join(bundledRoot, '.doxie', 'tools', 'library');
+    const agentSource = path.join(bundledRoot, '.doxie', 'agents', 'review');
+    const files = ['.doxie/tools/library/manifest.json', '.doxie/tools/library/body.md',
+      '.doxie/agents/review/manifest.json', '.doxie/agents/review/body.md'];
+    const options = { root: path.join(home, `profile-${mode}`), managed: true, bundledRoot,
+      bundledFiles: mode === 'tracked' ? files : undefined };
+    write(path.join(toolSource, 'manifest.json'), '{"id":"library","modes":{"create":{}}}');
+    write(path.join(toolSource, 'body.md'), 'Initial connector instructions.');
+    write(path.join(agentSource, 'manifest.json'), '{"id":"review"}');
+    write(path.join(agentSource, 'body.md'), 'Bundled agent.');
+    const first = open(options);
+    const installedTool = first.get('tools', 'library');
+    assert.deepEqual(Object.keys(installedTool.modes), ['create']);
+    first.save('agents', { id: 'review', body: 'Local agent changes.' });
+    write(path.join(installedTool.path, 'local-notes.md'), 'Local connector notes.');
+    write(path.join(toolSource, 'manifest.json'), '{"id":"library","modes":{"create":{},"mount":{"fields":[{"id":"libraryId","lookup":"libraries"}]}}}');
+    write(path.join(toolSource, 'body.md'), 'Updated connector instructions.');
+    write(path.join(toolSource, 'local-notes.md'), 'An unlisted file.');
+    write(path.join(agentSource, 'body.md'), 'Updated bundled agent.');
+    const restarted = open(options);
+    const updated = restarted.get('tools', 'library');
+    assert.equal(updated.modes.mount.fields[0].lookup, 'libraries');
+    assert.equal(updated.body, 'Updated connector instructions.');
+    assert.equal(fs.readFileSync(path.join(updated.path, 'local-notes.md'), 'utf8'), 'Local connector notes.');
+    assert.equal(restarted.get('agents', 'review').body, 'Local agent changes.');
+  }
+});
+
 test('creates a managed workspace from a selected folder without using its metadata or altering its files', t => {
   const { home, open } = setup(t);
   const source = path.join(home, 'external-project');
@@ -260,7 +292,7 @@ test('creates a managed workspace from a selected folder without using its metad
   assert.equal(storage.readFile('workspaces', 'copy-with-memory-file', 'memory').content, 'Project file');
 });
 
-test('keeps native tools out of the agent catalog and saves legacy agents in the canonical layout', t => {
+test('keeps connectors and internal builders out of the agent catalog and migrates a legacy agent on save', t => {
   const { home, open } = setup(t);
   const root = path.join(home, 'project');
   const legacyAgent = path.join(root, '.doxie', 'skills', 'review');
@@ -271,9 +303,28 @@ test('keeps native tools out of the agent catalog and saves legacy agents in the
   write(path.join(root, '.doxie', 'skills', 'aggregate', 'body.md'), 'Old connector.');
   write(path.join(root, '.doxie', 'tools', 'aggregate', 'manifest.json'), '{"id":"aggregate","kind":"workflow"}');
   write(path.join(root, '.doxie', 'tools', 'aggregate', 'body.md'), 'Native connector.');
+  write(path.join(root, '.doxie', 'agents', 'prompt', 'manifest.json'), '{"id":"prompt","execution":{"providerId":"codex","model":"legacy-prompt"}}');
+  write(path.join(root, '.doxie', 'agents', 'prompt', 'body.md'), 'Previous Prompt instructions.');
+  write(path.join(root, '.doxie', 'tools', 'prompt', 'manifest.json'), '{"id":"prompt","kind":"workflow","modelBacked":true}');
+  write(path.join(root, '.doxie', 'tools', 'prompt', 'body.md'), 'Run the transformation.');
+  write(path.join(root, '.claude', 'skills', 'prompt', 'SKILL.md'), 'Legacy generated Prompt.');
+  write(path.join(root, '.claude', 'skills', 'prompt', 'doxie', 'generated'), 'Doxie-generated');
   const storage = open({ managed: true });
+  storage.save('agents', { id: 'workflow-builder', body: 'Author a workflow.' });
   assert.deepEqual(storage.list('agents').map(agent => agent.id), ['review']);
-  assert.deepEqual(storage.list('tools').map(tool => tool.id), ['aggregate']);
+  assert.deepEqual(storage.list('tools').map(tool => tool.id), ['aggregate', 'prompt']);
+  assert.equal(storage.get('agents', 'workflow-builder').body, 'Author a workflow.');
+  assert.equal(storage.get('agents', 'prompt'), null);
+  assert.equal(storage.get('tools', 'prompt').modelBacked, true);
+  assert.deepEqual(storage.getDispatchAgent('prompt').execution, { providerId: 'codex', model: 'legacy-prompt' });
+  const promptExecution = { providerId: 'claude-code', model: 'prompt-new' };
+  storage.setConnectorExecution('prompt', promptExecution);
+  assert.deepEqual(storage.getDispatchAgent('prompt').execution, promptExecution);
+  assert.equal(storage.getDispatchAgent('prompt').path, path.join(root, '.doxie', 'tools', 'prompt'));
+  assert.equal(storage.getDispatchAgent('prompt').body, 'Run the transformation.');
+  storage.setConnectorExecution('prompt', null);
+  assert.equal(storage.get('tools', 'prompt').execution, null);
+  assert.throws(() => storage.setConnectorExecution('aggregate', promptExecution), /does not support/);
   assert.equal(storage.get('agents', 'review').path, legacyAgent);
   const execution = { providerId: 'codex', model: 'gpt-5.5' };
   const agent = storage.save('agents', { id: 'review', execution });
@@ -285,8 +336,10 @@ test('keeps native tools out of the agent catalog and saves legacy agents in the
   assert.throws(() => storage.save('agents', { id: 'review', execution: { model: 'orphan-model' } }), /Select a provider/);
   assert.deepEqual(storage.get('agents', 'review').execution, execution);
   assert.equal(storage.get('skills', 'aggregate'), null);
-  assert.throws(() => storage.save('agents', { id: 'aggregate', body: 'Override' }), /built-in tool/);
+  assert.throws(() => storage.save('agents', { id: 'aggregate', body: 'Override' }), /built-in connector/);
   assert.equal(fs.existsSync(path.join(root, '.claude', 'skills', 'aggregate')), false);
+  assert.equal(fs.existsSync(path.join(root, '.claude', 'skills', 'prompt')), false);
+  assert.equal(fs.existsSync(path.join(root, '.claude', 'skills', 'workflow-builder')), false);
 });
 
 test('creates a native library atomically and refuses duplicate IDs', t => {

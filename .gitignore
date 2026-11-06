@@ -32,32 +32,31 @@ test-results/
 # Canonical authoring layer (.doxie/) - DoxieOS reads this folder at
 # runtime; provider shims are regenerated from it.
 #
-# The public repository ships the core agents and native tool definitions.
+# The public repository ships the core agents and workflow connector definitions.
 # Custom catalog content and the legacy skills layout stay local by default.
 .doxie/libraries/*
 .doxie/workflows/*
 .doxie/skills/*
 .doxie/agents/*
 !.doxie/agents/agent-builder/
-!.doxie/agents/prompt/
 !.doxie/agents/workflow-builder/
 !.doxie/agents/workflow-output-contract-designer/
 .doxie/agents/*/*
 !.doxie/agents/*/body.md
 !.doxie/agents/*/manifest.json
-!.doxie/agents/prompt/agent.md
-!.doxie/agents/prompt/run.md
 .doxie/tools/*
 !.doxie/tools/aggregate/
 !.doxie/tools/approval-gate/
 !.doxie/tools/if-else/
 !.doxie/tools/library/
 !.doxie/tools/loop/
+!.doxie/tools/prompt/
 !.doxie/tools/sandbox/
 !.doxie/tools/write-to-workspace/
 .doxie/tools/*/*
 !.doxie/tools/*/body.md
 !.doxie/tools/*/manifest.json
+!.doxie/tools/prompt/run.md
 .doxie/private/
 
 # Provider shims - entirely derived from .doxie/, never tracked.

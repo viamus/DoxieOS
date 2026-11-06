@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
-import { AlertCircle, ArrowLeft, ChevronRight, CircleHelp, Inbox, LoaderCircle, Mic, MicOff, Search, X } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ChevronRight, CircleHelp, Inbox, LoaderCircle, Mic, MicOff, RotateCw, Search, X } from 'lucide-react';
 import { messages } from './messages.js';
 
 export const AppContext = createContext(null);
@@ -83,9 +83,53 @@ export function Field({ label, hint, children }) {
   return <label className="field"><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
 }
 
-export function ExecutionFields({ value, onChange, inherited, inheritedLabel = 'Application default', requireProvider = false }) {
+const modelSources = {
+  'claude-cli-advertised': 'Claude Code CLI', 'claude-profile': 'Claude Code profile',
+  'claude-host-settings': 'Installed Claude settings', 'claude-host-cache': 'Installed Claude cache',
+  'claude-workbench-settings': 'DoxieOS Claude settings', 'claude-workbench-cache': 'DoxieOS Claude cache',
+  'codex-host-catalog': 'Installed Codex catalog', 'codex-host-cache': 'Installed Codex cache', 'codex-host-settings': 'Installed Codex settings',
+  'codex-workbench-catalog': 'DoxieOS Codex catalog', 'codex-workbench-cache': 'DoxieOS Codex cache', 'codex-workbench-settings': 'DoxieOS Codex settings',
+  'ollama-loopback': 'Local Ollama server', 'lmstudio-loopback': 'Local LM Studio server', configured: 'DoxieOS settings',
+};
+
+export function ModelField({ providerId, value, onChange, suggestions, placeholder, disabled, required, hint, label = 'Model' }) {
   const { state } = useApp();
   const modelsId = useId();
+  const statusId = useId();
+  const force = useRef(null);
+  const [revision, setRevision] = useState(0);
+  const canDiscover = Boolean(providerId && !disabled);
+  const inventory = useAsync(() => {
+    if (!canDiscover) return null;
+    const refresh = force.current === providerId;
+    if (refresh) force.current = null;
+    return invoke('models:list', providerId, { refresh }).then((result) => ({ ...result, providerId }));
+  }, [providerId, canDiscover, revision]);
+  const current = inventory.value?.providerId === providerId ? inventory.value : null;
+  const configured = suggestions || state.settings.providers?.[providerId]?.models || [];
+  const detected = current?.models || [];
+  const models = new Map();
+  for (const model of [...detected, ...(Array.isArray(configured) ? configured : [])]) {
+    const id = typeof model === 'string' ? model : model.id;
+    if (id && !models.has(id)) models.set(id, typeof model === 'string' ? { id } : model);
+  }
+  const source = modelSources[current?.source] || current?.source;
+  const status = current?.status === 'ready' ? `${detected.length} ${detected.length === 1 ? 'model' : 'models'}` : current?.status === 'empty' ? 'No models reported' : 'Inventory unavailable';
+  const summary = inventory.loading ? 'Checking model inventory…' : [status, source, current?.status !== 'ready' && models.size ? `${models.size} configured` : null].filter(Boolean).join(' · ');
+  return <div className="model-field">
+    <Field label={label} hint={hint}>
+      <input aria-label={label} aria-describedby={canDiscover ? statusId : undefined} list={modelsId} value={value || ''} disabled={disabled} required={required} maxLength={200} onChange={(event) => onChange(event.target.value)} placeholder={placeholder || 'Provider default'} />
+      <datalist id={modelsId}>{[...models.values()].map((model) => <option key={model.id} value={model.id} label={[model.label !== model.id && model.label, modelSources[model.source]].filter(Boolean).join(' · ') || undefined} />)}</datalist>
+    </Field>
+    {canDiscover && <div className="model-inventory">
+      <small id={statusId} role="status" title={current?.message || inventory.error || undefined}>{summary}</small>
+      <IconButton icon={RotateCw} label="Refresh models" disabled={inventory.loading} onClick={() => { force.current = providerId; setRevision((current) => current + 1); }} />
+    </div>}
+  </div>;
+}
+
+export function ExecutionFields({ value, onChange, inherited, inheritedLabel = 'Application default', requireProvider = false }) {
+  const { state } = useApp();
   const normalize = (id) => id === 'claude' ? 'claude-code' : id;
   const providerId = normalize(value?.providerId) || '';
   const defaultId = normalize(inherited?.providerId || state.settings.defaultProvider);
@@ -93,18 +137,16 @@ export function ExecutionFields({ value, onChange, inherited, inheritedLabel = '
   const provider = state.settings.providers?.[effectiveId] || state.providers.find(({ id }) => id === effectiveId);
   const defaultProvider = state.providers.find(({ id }) => id === defaultId);
   const defaultModel = (effectiveId === defaultId && inherited?.model) || provider?.model;
-  const suggested = Array.isArray(provider?.models) ? provider.models : [];
   const modelDisabled = requireProvider && !providerId;
+  const modelRequired = !modelDisabled && !defaultModel && Boolean(provider?.requiresModel || provider?.localBaseUrl);
+  const modelHint = modelDisabled ? 'Select a provider to set a model override.' : modelRequired ? 'Select or enter a model for this local provider.' : undefined;
   return <>
     <Field label="Provider"><select aria-label="Provider" value={providerId} onChange={(event) => onChange({ providerId: event.target.value, model: '' })}>
       <option value="">{inheritedLabel}{defaultProvider ? ` · ${nameOf(defaultProvider)}` : ''}</option>
       {providerId && !state.providers.some(({ id }) => id === providerId) && <option value={providerId}>{providerId}</option>}
       {state.providers.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}
     </select></Field>
-    <Field label="Model" hint={modelDisabled ? 'Select a provider to set a model override.' : undefined}>
-      <input aria-label="Model" list={modelsId} value={value?.model || ''} disabled={modelDisabled} maxLength={200} onChange={(event) => onChange({ providerId, model: event.target.value })} placeholder={defaultModel || 'Provider default'} />
-      <datalist id={modelsId}>{suggested.map((item) => <option key={item.id || item} value={item.id || item} />)}</datalist>
-    </Field>
+    <ModelField providerId={effectiveId} value={value?.model} suggestions={provider?.models} disabled={modelDisabled} required={modelRequired} placeholder={defaultModel} hint={modelHint} onChange={(model) => onChange({ providerId, model })} />
   </>;
 }
 
@@ -147,14 +189,28 @@ export function Confirm({ title, detail, close, confirm, label = 'Delete' }) {
   return <Modal title={title} close={close}><div className="modal-body"><p>{detail}</p></div><footer className="modal-footer"><Button onClick={close}>Cancel</Button><Button variant="danger" onClick={confirm}>{label}</Button></footer></Modal>;
 }
 
-export function FieldInput({ field, value, onChange }) {
-  const options = Array.isArray(field.options) ? field.options : [];
+const lookupKinds = new Set(['libraries', 'workspaces', 'agents', 'workflows']);
+
+export function FieldInput({ field, value, onChange, catalogId = 'default', allowExpression = false }) {
+  const { state } = useApp();
+  const [preferExpression, setPreferExpression] = useState(null);
+  const lookup = lookupKinds.has(field.lookup) && field.lookup;
+  const catalogScoped = lookup === 'agents' || lookup === 'workflows';
+  const records = lookup ? state[lookup].filter((record) => !catalogScoped || (record.catalogId || 'default') === catalogId) : [];
+  const options = lookup ? records.map((record) => ({ value: record.id, label: nameOf(record) })) : Array.isArray(field.options) ? field.options : [];
   const props = { value: value ?? field.defaultValue ?? '', required: field.required, onChange: (event) => onChange(event.target.value) };
-  return <Field label={`${field.label || field.id}${field.required ? ' *' : ''}`} hint={field.description}>
-    {options.length ? <select {...props}><option value="">Select…</option>{options.map((option) => <option key={option.value ?? option} value={option.value ?? option}>{option.label ?? option}</option>)}</select>
+  const entries = options.map((option) => <option key={option.value ?? option} value={option.value ?? option}>{option.label ?? option}</option>);
+  const unavailable = lookup && props.value && !records.some(({ id }) => id === props.value);
+  const label = field.label || field.id;
+  const expressionToggle = lookup && allowExpression;
+  const expression = expressionToggle && (preferExpression ?? String(props.value).includes('{{'));
+  const input = <Field label={`${label}${field.required ? ' *' : ''}`} hint={field.description || (lookup && !records.length ? `No ${lookup} available${catalogScoped ? ' in this catalog' : ''}.` : undefined)}>
+    {expression ? <input {...props} aria-label={label} placeholder="{{trigger.input-id}}" />
+      : lookup || options.length ? <select {...props} aria-label={label}><option value="">{field.placeholder || 'Select…'}</option>{unavailable && <option value={props.value}>{props.value} (unavailable)</option>}{entries}</select>
       : field.type === 'textarea' || field.multiline ? <textarea {...props} placeholder={field.placeholder} rows={3} />
         : <input {...props} placeholder={field.placeholder} />}
   </Field>;
+  return expressionToggle ? <div className="lookup-field">{input}<Button variant="ghost" onClick={() => setPreferExpression(!expression)}>{expression ? 'Choose an item' : 'Use expression'}</Button></div> : input;
 }
 
 export function selectModes(agent) {

@@ -3,10 +3,13 @@ const { join } = require('node:path');
 const { executablePath } = require('./processes.cjs');
 const { safePath } = require('./storage.cjs');
 const { resolveExecution } = require('./execution.cjs');
+const { localProviderBaseUrl } = require('./model-catalog.cjs');
 
 const definitions = {
   'claude-code': { id: 'claude-code', name: 'Claude Code', executable: 'claude', models: [] },
-  codex: { id: 'codex', name: 'OpenAI Codex', executable: 'codex', models: ['gpt-5.5'], model: 'gpt-5.5' },
+  codex: { id: 'codex', name: 'OpenAI Codex', executable: 'codex', models: [], model: 'gpt-5.5' },
+  ollama: { id: 'ollama', name: 'Ollama', executable: 'codex', models: [], requiresAuth: false, localBaseUrl: localProviderBaseUrl('ollama') },
+  lmstudio: { id: 'lmstudio', name: 'LM Studio', executable: 'codex', models: [], requiresAuth: false, localBaseUrl: localProviderBaseUrl('lmstudio') },
 };
 
 function readJson(path, fallback = {}) {
@@ -37,12 +40,13 @@ function providerEnvironment(storage, environment = process.env) {
 function settingsFor(storage) {
   const saved = jsonSetting(storage, 'desktop.providers', {});
   const providers = Object.fromEntries(Object.entries(definitions).map(([id, defaults]) => {
-    const provider = { ...defaults, ...saved[id], id };
+    const executable = saved[id]?.executable || (defaults.localBaseUrl && saved.codex?.executable) || defaults.executable;
+    const provider = { ...defaults, ...saved[id], id, executable, localBaseUrl: defaults.localBaseUrl, requiresAuth: defaults.requiresAuth !== false };
     const env = providerEnvironment(storage, { ...process.env, ...provider.environment });
     return [id, {
       ...provider,
       installed: Boolean(executablePath(provider.executable, env)),
-      authenticated: id === 'codex'
+      authenticated: !provider.requiresAuth ? null : id === 'codex'
         ? Boolean(env.OPENAI_API_KEY || existsSync(join(env.CODEX_HOME, 'auth.json')))
         : Boolean(env.ANTHROPIC_API_KEY || env.CLAUDE_CODE_OAUTH_TOKEN || existsSync(join(env.CLAUDE_CONFIG_DIR, '.credentials.json'))),
     }];
@@ -61,6 +65,7 @@ function providerFor(storage, id, options = {}) {
   const settings = settingsFor(storage);
   const { providerId, model } = resolveExecution(settings, options.preference, { providerId: id, model: options.model });
   const provider = settings.providers[providerId];
+  if (provider.localBaseUrl && !model) throw new Error(`Select a model for ${provider.name}.`);
   const environment = providerEnvironment(storage, { ...process.env, ...provider.environment, ...options.env });
   delete environment.ELECTRON_RUN_AS_NODE;
   delete environment.CLAUDECODE;
@@ -69,11 +74,29 @@ function providerFor(storage, id, options = {}) {
   return { ...provider, executable, model, environment };
 }
 
+function usesCodex(provider) {
+  return provider.id === 'codex' || Boolean(provider.localBaseUrl);
+}
+
+function localProviderArgs(provider) {
+  if (!provider.localBaseUrl) return [];
+  const id = `doxie_${provider.id}`;
+  const config = `model_providers.${id}`;
+  return [
+    '-c', `model_provider='${id}'`,
+    '-c', `${config}.name='${provider.name}'`,
+    '-c', `${config}.base_url='${provider.localBaseUrl}/v1'`,
+    '-c', `${config}.wire_api='responses'`,
+    '-c', `${config}.requires_openai_auth=false`,
+    '-c', "web_search='disabled'",
+  ];
+}
+
 function headlessArgs(provider) {
   const model = provider.model ? ['--model', provider.model] : [];
-  if (provider.id === 'codex') {
+  if (usesCodex(provider)) {
     return ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json',
-      '--ephemeral', ...model, '--color', 'never', '-'];
+      '--ephemeral', ...localProviderArgs(provider), ...model, '--color', 'never', '-'];
   }
   return [
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
@@ -83,7 +106,7 @@ function headlessArgs(provider) {
 }
 
 function inputMessage(provider, prompt) {
-  if (provider.id === 'codex') return prompt;
+  if (usesCodex(provider)) return prompt;
   const content = [{ type: 'text', text: prompt }];
   return JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n';
 }
@@ -94,7 +117,7 @@ function providerOutput(provider, line) {
   try { event = JSON.parse(line); }
   catch { return { lines: [line] }; }
   if (!event || typeof event !== 'object') return { lines: [line] };
-  if (provider.id === 'codex') {
+  if (usesCodex(provider)) {
     if (event.type === 'thread.started') return { sessionId: event.thread_id };
     if (event.type === 'item.completed') {
       if (event.item?.type === 'agent_message') return { lines: [event.item.text] };
@@ -107,7 +130,7 @@ function providerOutput(provider, line) {
       const large = input_tokens > 272_000;
       return { usage: {
         inputTokens: input, outputTokens: output, cacheReadTokens: cached_input_tokens, cacheCreationTokens: 0,
-        totalCostUsd: /^gpt-5\.5($|-2026-04-23$)/.test(provider.model)
+        totalCostUsd: provider.id === 'codex' && /^gpt-5\.5($|-2026-04-23$)/.test(provider.model)
           ? ((input * 5 + cached_input_tokens * 0.5) * (large ? 2 : 1) + output * 30 * (large ? 1.5 : 1)) / 1_000_000
           : null,
       } };
@@ -144,4 +167,4 @@ function providerOutput(provider, line) {
   };
 }
 
-module.exports = { definitions, settingsFor, providerFor, providerEnvironment, headlessArgs, inputMessage, providerOutput, readJson, jsonSetting };
+module.exports = { definitions, settingsFor, providerFor, providerEnvironment, usesCodex, localProviderArgs, headlessArgs, inputMessage, providerOutput, readJson, jsonSetting };

@@ -80,6 +80,24 @@ async function createLibrary({ storage, toolMode, inputs, workspace, sourceDirec
   return { summary: `Library ${id} · ${memories.length} memories` };
 }
 
+async function mountLibrary({ storage, inputs, workspace, outputDir, signal }) {
+  const libraryId = String(inputs.libraryid ?? inputs.libraryId ?? '').trim();
+  const library = libraryId ? storage.get('libraries', libraryId) : null;
+  if (!library) throw new Error('Select an existing library to mount.');
+  const workspaceId = String(inputs.workspace || workspace?.id || '').trim();
+  const target = workspaceId ? storage.get('workspaces', workspaceId) : null;
+  if (!target) throw new Error('Select an existing workspace to mount the library.');
+  signal?.throwIfAborted();
+  const mountedLibraryIds = target.mountedLibraryIds || [];
+  if (!mountedLibraryIds.some(id => id.toLowerCase() === library.id.toLowerCase())) {
+    storage.save('workspaces', { id: target.id, mountedLibraryIds: [...mountedLibraryIds, library.id] });
+  }
+  await writeReceipt(outputDir, 'library.json', {
+    schema: 'doxie.native-library-mount.v1', libraryId: library.id, workspaceId: target.id,
+  });
+  return { summary: `Mounted library ${library.id} in ${target.id}` };
+}
+
 async function manageSandbox({ toolMode, inputs, outputDir, scratchRoot, signal }) {
   if (!scratchRoot) throw new Error('Sandbox requires a running workflow.');
   signal?.throwIfAborted();
@@ -105,6 +123,7 @@ async function manageSandbox({ toolMode, inputs, outputDir, scratchRoot, signal 
 }
 
 function runNativeUtility(toolId, options) {
+  if (toolId === 'library' && options.toolMode === 'mount') return mountLibrary(options);
   if (toolId === 'library') return createLibrary(options);
   if (toolId === 'sandbox') return manageSandbox(options);
   throw new Error(`Unknown Doxie tool: ${toolId}`);

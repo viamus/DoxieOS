@@ -1,5 +1,5 @@
 import { expect, test, _electron as electron } from '@playwright/test';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,11 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
   const profile = join(directory, 'app-data');
   const root = join(profile, 'workbench');
   const outside = join(directory, 'outside');
+  const codexProfile = join(root, '.providers', 'codex');
+  await mkdir(codexProfile, { recursive: true });
+  await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [
+    { slug: 'doxie/producer-v1', display_name: 'Fixture producer', visibility: 'list' },
+  ] }));
   const executablePath = process.env.DOXIE_TEST_EXECUTABLE;
   const launchOptions = {
     ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }),
@@ -27,12 +32,12 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     if (process.env.DOXIE_TEST_SCREENSHOT) await page.screenshot({ path: process.env.DOXIE_TEST_SCREENSHOT });
     expect(new URL(page.url()).protocol).toBe('doxie:');
     expect(await page.evaluate(() => typeof window.require)).toBe('undefined');
-    const { storage: paths, agents, tools } = await page.evaluate(() => window.doxie.invoke('bootstrap'));
+    const { storage: paths, agents, connectors } = await page.evaluate(() => window.doxie.invoke('bootstrap'));
     expect(paths['App data']).toBe(profile);
     expect(paths['State database']).toBe(join(profile, 'state.db'));
     expect(paths.workspaces).toBe(join(root, '.workspace'));
-    expect(agents.map(agent => agent.id).sort()).toEqual(['agent-builder', 'prompt', 'workflow-builder', 'workflow-output-contract-designer']);
-    expect(tools.map(tool => tool.id).sort()).toEqual(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'sandbox', 'write-to-workspace']);
+    expect(agents.map(agent => agent.id)).toEqual(['workflow-output-contract-designer']);
+    expect(connectors.map(connector => connector.id).sort()).toEqual(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'prompt', 'sandbox', 'write-to-workspace']);
     expect(paths.agents).toBe(join(root, '.doxie', 'agents'));
     await expect(stat(outside)).rejects.toThrow(/ENOENT/);
     const security = await application.evaluate(({ BrowserWindow }) => {
@@ -93,9 +98,32 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     await page.locator('summary').filter({ hasText: 'Review notes' }).click();
     await expect(page.getByText('Keep decisions traceable.', { exact: true })).toBeVisible();
 
-    await page.evaluate(() => { window.location.hash = '/agents/prompt'; });
+    await page.evaluate(() => { window.location.hash = '/workflows/new'; });
+    await page.getByLabel('Name', { exact: true }).fill('Mount reference');
+    await page.getByLabel('Node type').selectOption('library');
+    await page.getByRole('button', { name: 'Add node', exact: true }).click();
+    await page.getByLabel('Mode', { exact: true }).selectOption('mount');
+    await page.getByLabel(/Existing library/).selectOption({ label: 'Local reference' });
+    await page.getByLabel(/Target workspace/).selectOption({ label: 'Migration lab' });
+    await page.getByRole('button', { name: 'Save workflow', exact: true }).first().click();
+    const mounted = await page.evaluate(() => window.doxie.invoke('workflow:start', 'mount-reference'));
+    await expect.poll(async () => (await page.evaluate(id => window.doxie.invoke('workflow:run', id), mounted.id)).status).toBe('Succeeded');
+    expect((await page.evaluate(() => window.doxie.invoke('catalog:get', 'workspaces', 'migration-lab'))).mountedLibraryIds).toEqual(['local-reference']);
+
+    await page.getByRole('link', { name: 'Connectors', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Connectors', exact: true })).toBeVisible();
+    await page.evaluate(() => { window.location.hash = '/connectors/prompt'; });
     await page.getByRole('button', { name: 'Execution defaults' }).click();
     await page.getByRole('dialog').getByLabel('Provider', { exact: true }).selectOption('codex');
+    await expect.poll(() => page.evaluate(async () => (await window.doxie.invoke('models:list', 'codex')).models.map(({ id }) => id)))
+      .toContain('doxie/producer-v1');
+    await expect(page.getByRole('dialog').locator('datalist option[value="doxie/producer-v1"]')).toHaveCount(1);
+    await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [
+      { slug: 'doxie/producer-v1', display_name: 'Fixture producer', visibility: 'list' },
+      { slug: 'doxie/consumer-v2', display_name: 'Fixture consumer', visibility: 'list' },
+    ] }));
+    await page.getByRole('dialog').getByRole('button', { name: 'Refresh models' }).click();
+    await expect(page.getByRole('dialog').locator('datalist option[value="doxie/consumer-v2"]')).toHaveCount(1);
     await page.getByRole('dialog').getByLabel('Model', { exact: true }).fill('doxie/producer-v1');
     await page.getByRole('dialog').getByRole('button', { name: 'Save defaults' }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -105,18 +133,27 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     const mock = join(directory, windows ? 'provider.cmd' : 'provider');
     await writeFile(mock, windows ? `@"${process.execPath}" "${fixture}" %*\r\n`
       : `#!/bin/sh\nexec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
-    const contextualRun = await page.evaluate(async executable => {
+    await page.evaluate(async executable => {
       await window.doxie.invoke('settings:save', { providers: { codex: { executable } } });
+    }, mock);
+    await page.getByLabel(/Prompt \(what to do with the input\)/).fill('Run the Prompt connector');
+    await page.getByRole('button', { name: 'Run connector', exact: true }).click();
+    await expect(page).toHaveURL(/#\/connectors\/prompt.*run=/);
+    const standaloneId = new URLSearchParams(new URL(page.url()).hash.split('?')[1]).get('run');
+    await expect.poll(async () => (await page.evaluate(id => window.doxie.invoke('agent:run', id), standaloneId)).status).toBe('Completed');
+    expect((await page.evaluate(id => window.doxie.invoke('agent:run', id), standaloneId)).connectorId).toBe('prompt');
+
+    const contextualRun = await page.evaluate(async () => {
       await window.doxie.invoke('catalog:save', 'workflows', {
         id: 'context-flow', name: 'Context flow', enabled: true, trigger: { kind: 'Manual' },
         nodes: [
-          { id: 'producer', kind: 'Agent', agentId: 'prompt', inputs: { prompt: 'Produce transient context' } },
+          { id: 'producer', kind: 'Tool', toolId: 'prompt', toolMode: 'run', inputs: { prompt: 'Produce transient context' } },
           { id: 'consumer', kind: 'Agent', agentId: 'prompt', inputs: { prompt: 'Consume transient context' }, execution: { providerId: 'codex', model: 'doxie/consumer-v2' } },
         ],
         edges: [{ fromNodeId: 'producer', toNodeId: 'consumer' }],
       });
       return window.doxie.invoke('workflow:start', 'context-flow');
-    }, mock);
+    });
     let finishedContext;
     await expect.poll(async () => {
       finishedContext = await page.evaluate(id => window.doxie.invoke('workflow:run', id), contextualRun.id);

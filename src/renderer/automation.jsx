@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, MessageSquare, Pencil, Play, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
+import { Activity, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, MessageSquare, Pencil, Play, Plug, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useText } from './ui.jsx';
 import { FilesBrowser, Markdown } from './workbench.jsx';
 
@@ -79,7 +79,7 @@ export function Guidance({ title, submit }) {
   return <form className="guidance input-action" onSubmit={async (event) => { event.preventDefault(); setSending(true); const ok = await submit(value.trim()); setSending(false); if (ok !== false) setValue(''); }}><input aria-label={title} placeholder={title} value={value} onChange={(event) => setValue(event.target.value)} /><Button type="submit" icon={Send} disabled={!value.trim() || sending}>Send</Button></form>;
 }
 
-function AgentRunForm({ agent, launch }) {
+function AgentRunForm({ agent, launch, connector }) {
   const { state } = useApp();
   const modes = selectModes(agent);
   const [mode, setMode] = useState(Object.keys(modes)[0] || '');
@@ -106,13 +106,13 @@ function AgentRunForm({ agent, launch }) {
     } finally { setPending(false); }
   }}>
     <div className="form-grid">
-      {!!Object.keys(modes).length && <Field label="Mode"><select value={mode} onChange={(event) => { setMode(event.target.value); setValues({}); }}>{Object.entries(modes).map(([id, item]) => <option key={id} value={id}>{item.label || item.name || id}</option>)}</select></Field>}
+      {!!Object.keys(modes).length && <Field label="Mode"><select aria-label="Mode" value={mode} onChange={(event) => { setMode(event.target.value); setValues({}); }}>{Object.entries(modes).map(([id, item]) => <option key={id} value={id}>{item.label || item.name || id}</option>)}</select></Field>}
       <Field label={`Workspace${selectedWorkspaceRequired ? ' *' : ''}`}><select required={selectedWorkspaceRequired} value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="">{selectedWorkspaceRequired ? 'Select a workspace' : 'DoxieOS data directory'}</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>
-      <ExecutionFields value={execution} onChange={setExecution} inherited={agent.execution} inheritedLabel={agent.execution?.providerId ? 'Agent default' : 'Application default'} />
+      <ExecutionFields value={execution} onChange={setExecution} inherited={agent.execution} inheritedLabel={agent.execution?.providerId ? connector ? 'Connector default' : 'Agent default' : 'Application default'} />
     </div>
     <p className="muted">Provider and model selections in this form apply to this run.</p>
     {modes[mode]?.description && <p className="muted">{modes[mode].description}</p>}
-    {fields.map((field) => <FieldInput key={field.id} field={field} value={values[field.id]} onChange={(value) => setValues((old) => ({ ...old, [field.id]: value }))} />)}
+    {fields.map((field) => <FieldInput key={field.id} field={field} catalogId={agent.catalogId} value={values[field.id]} onChange={(value) => setValues((old) => ({ ...old, [field.id]: value }))} />)}
     {!fields.length && <Field label="Arguments / prompt"><textarea rows={3} value={extra} onChange={(event) => setExtra(event.target.value)} placeholder="Describe what this agent should do…" /></Field>}
     <details className="inline-panel panel"><summary>Environment for this run {environment.length > 0 && <Tag>{environment.length}</Tag>}</summary><div className="stack check-grid">
       <p className="muted">Values are passed to the provider process for this run and cleared after it starts.</p>
@@ -124,11 +124,11 @@ function AgentRunForm({ agent, launch }) {
       <div className="actions start"><Button icon={Plus} onClick={() => setEnvironment((old) => [...old, { id: crypto.randomUUID(), name: '', value: '' }])}>Add variable</Button></div>
     </div></details>
     <ErrorNotice error={error} />
-    <div className="actions start"><Button type="submit" variant="primary" icon={Play} disabled={pending}>Run agent</Button></div>
+    <div className="actions start"><Button type="submit" variant="primary" icon={Play} disabled={pending}>{connector ? 'Run connector' : 'Run agent'}</Button></div>
   </form>;
 }
 
-function AgentDefaults({ agent }) {
+function AgentDefaults({ agent, connector }) {
   const { state, refresh, notify } = useApp();
   const [execution, setExecution] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -140,21 +140,22 @@ function AgentDefaults({ agent }) {
   return <>
     <Tag>{[nameOf(provider) || effectiveId, model].filter(Boolean).join(' · ') || 'Application default'}</Tag>
     <Button icon={Cpu} onClick={() => { setError(''); setExecution(agent.execution || {}); }}>Execution defaults</Button>
-    {execution && <Modal title="Agent execution defaults" icon={Cpu} close={close}><form onSubmit={async (event) => {
+    {execution && <Modal title={connector ? 'Connector execution defaults' : 'Agent execution defaults'} icon={Cpu} close={close}><form onSubmit={async (event) => {
       event.preventDefault();
       setSaving(true);
       setError('');
       const { providerId, model } = execution;
       const next = providerId ? { providerId, ...(model ? { model } : {}) } : null;
       try {
-        await invoke('catalog:save', 'agents', { id: agent.id, catalogId: agent.catalogId, execution: next });
+        if (connector) await invoke('connector:saveExecution', agent.id, next, agent.catalogId);
+        else await invoke('catalog:save', 'agents', { id: agent.id, catalogId: agent.catalogId, execution: next });
         await refresh();
         setExecution(null);
-        notify('Agent execution defaults saved');
+        notify('Execution defaults saved');
       } catch (problem) { setError(problem.message); }
       finally { setSaving(false); }
     }}><div className="modal-body stack">
-      <p>These defaults apply when a run or workflow node inherits this agent’s execution settings.</p>
+      <p>These defaults apply to direct runs and workflow nodes that inherit them.</p>
       <ExecutionFields value={execution} onChange={setExecution} requireProvider />
       <ErrorNotice error={error} />
     </div><footer className="modal-footer"><Button disabled={saving} onClick={close}>Cancel</Button><Button variant="primary" type="submit" disabled={saving}>Save defaults</Button></footer></form></Modal>}
@@ -199,32 +200,34 @@ function useAgentRun(id) {
   return result.id === id ? result : { loading: !!id };
 }
 
-export function AgentPage({ id, catalogId, runId }) {
+export function AgentPage({ id, catalogId, runId, connector = false }) {
   const { state, perform } = useApp();
   const [files, setFiles] = useState(false);
-  const agent = state.agents.find((item) => item.id === id && (!catalogId || item.catalogId === catalogId));
+  const section = connector ? 'connectors' : 'agents';
+  const back = { to: `/${section}`, label: connector ? 'Connectors' : 'Agents' };
+  const agent = state[section].find((item) => item.id === id && (!catalogId || item.catalogId === catalogId));
   const history = state.agentRuns.filter((run) => run.agentId === id && (!catalogId || !run.catalogId || catalogId === run.catalogId)).sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
   const selectedRun = runId || history[0]?.id;
   const detail = useAgentRun(selectedRun);
   const run = detail.value || history.find((item) => item.id === selectedRun);
   const buildQuery = new URLSearchParams({ edit: id });
   if (catalogId) buildQuery.set('catalog', catalogId);
-  if (!agent) return <div className="page"><PageHeading title="Agent not found" icon={Bot} back={{ to: '/agents', label: 'Agents' }} />{run && <Panel title={`Run ${run.id}`} icon={Terminal}><LogOutput lines={run.output} /></Panel>}</div>;
-  return <div className="page"><PageHeading title={nameOf(agent)} icon={iconOptions[agent.icon] || Bot} subtitle={agent.description} back={{ to: '/agents', label: 'Agents' }} actions={<><Button to={`/agents/new?${buildQuery}`} icon={Pencil}>Edit with AI</Button><Button icon={Download} onClick={() => perform('catalog:export', ['agents', id, agent.catalogId])}>Export</Button></>} />
-    <AgentMetadata agent={agent} />
+  if (!agent) return <div className="page"><PageHeading title="Agent not found" icon={Bot} back={back} />{run && <Panel title={`Run ${run.id}`} icon={Terminal}><LogOutput lines={run.output} /></Panel>}</div>;
+  return <div className="page"><PageHeading title={nameOf(agent)} icon={connector ? Plug : iconOptions[agent.icon] || Bot} subtitle={agent.description} back={back} actions={!connector && <><Button to={`/agents/new?${buildQuery}`} icon={Pencil}>Edit with AI</Button><Button icon={Download} onClick={() => perform('catalog:export', ['agents', id, agent.catalogId])}>Export</Button></>} />
+    {connector ? <div className="actions start"><Tag>Model-backed connector</Tag><AgentDefaults agent={agent} connector /></div> : <AgentMetadata agent={agent} />}
     <div className="dashboard-grid detail-grid">
-      <Panel title="Configure run" icon={Play}><AgentRunForm agent={agent} launch={async (params) => { const result = await perform('agent:start', [id, params]); if (result?.id) go(recordRoute('agents', agent, '', result.id)); return result; }} /></Panel>
+      <Panel title="Configure run" icon={Play}><AgentRunForm agent={agent} connector={connector} launch={async (params) => { const result = await perform(connector ? 'connector:start' : 'agent:start', [id, params]); if (result?.id) go(recordRoute(section, agent, '', result.id)); return result; }} /></Panel>
       <Panel title={run ? 'Execution' : 'Latest run'} icon={Terminal} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('agent:stop', [run.id])}>Stop</Button>}</>}>
         {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.providerId && <Tag>{nameOf(state.providers.find(({ id }) => id === run.providerId)) || run.providerId}</Tag>}{run.model && <Tag>{run.model}</Tag>}{run.exitCode !== null && run.exitCode !== undefined && <Tag>Exit {run.exitCode}</Tag>}</div>
           <LogOutput lines={run.output || run.logs} /><ErrorNotice error={detail.error} />
-          {active(run.status) && <div className="panel-body"><Guidance title="Guide the running agent…" submit={(text) => perform('agent:guide', [run.id, text], 'Guidance sent')} /></div>}
+          {active(run.status) && <div className="panel-body"><Guidance title={connector ? 'Guide the running connector…' : 'Guide the running agent…'} submit={(text) => perform('agent:guide', [run.id, text], 'Guidance sent')} /></div>}
           {run.usage && <div className="usage-grid"><div><small>Input tokens</small><strong>{Number(run.usage.inputTokens || 0).toLocaleString()}</strong></div><div><small>Output tokens</small><strong>{Number(run.usage.outputTokens || 0).toLocaleString()}</strong></div><div><small>Cost (USD)</small><strong>{run.usage.totalCostUsd ?? '—'}</strong></div></div>}
-        </> : detail.loading && selectedRun ? <Loading /> : <Empty title="No run selected" detail="Configure and run this agent to see its output here." icon={Terminal} />}
+        </> : detail.loading && selectedRun ? <Loading /> : <Empty title="No run selected" detail={connector ? 'Run this connector to see its output here.' : 'Run this agent to see its output here.'} icon={Terminal} />}
       </Panel>
     </div>
     {run && (run.outputDir || run.artifacts?.length) && <Panel title="Files produced" icon={FileText} actions={<Button onClick={() => setFiles(!files)}>{files ? 'Hide files' : 'Browse files'}</Button>}>{files && <FilesBrowser key={run.id} api="run-files" id={run.id} compact />}</Panel>}
     {agent.memories?.length > 0 && <Panel title="Memories" icon={BookOpen}><div className="panel-body stack">{agent.memories.map((memory) => <details key={memory.id || memory.name}><summary>{nameOf(memory)}</summary><Markdown>{memory.content}</Markdown></details>)}</div></Panel>}
-    <Panel title="History" icon={Clock3}>{history.length ? <div className="row-list">{history.map((item) => <ItemRow key={item.id} icon={Activity} to={recordRoute('agents', agent, '', item.id)} title={<DateTime value={item.startedAt} />} detail={item.id}><Status status={item.status} /></ItemRow>)}</div> : <Empty compact title="No previous runs" icon={Clock3} />}</Panel>
+    <Panel title="History" icon={Clock3}>{history.length ? <div className="row-list">{history.map((item) => <ItemRow key={item.id} icon={Activity} to={recordRoute(section, agent, '', item.id)} title={<DateTime value={item.startedAt} />} detail={item.id}><Status status={item.status} /></ItemRow>)}</div> : <Empty compact title="No previous runs" icon={Clock3} />}</Panel>
   </div>;
 }
 

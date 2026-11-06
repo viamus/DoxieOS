@@ -1,4 +1,4 @@
-const providerIds = new Set(['claude-code', 'codex']);
+const providerIds = new Set(['claude-code', 'codex', 'ollama', 'lmstudio']);
 
 function normalizeProvider(value) {
   if (value == null || value === '') return null;

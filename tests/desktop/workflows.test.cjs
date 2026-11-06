@@ -6,6 +6,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { setTimeout: delay } = require('node:timers/promises');
 const test = require('node:test');
 const { createWorkflows, parseCron, nextCron } = require('../../src/desktop/workflows.cjs');
+const { createStorage } = require('../../src/desktop/storage.cjs');
 
 function node(id, kind, properties = {}) {
   return { id, kind, label: id, x: 0, y: 0, ...properties };
@@ -35,6 +36,9 @@ async function fixture(t, definition, dispatch, initialize) {
       if (kind === 'workspaces' && id === workspace.id) return workspace;
       if (kind === 'agents') return { id, name: id, modes: { run: { argumentsTemplate: '{name}' } } };
       return null;
+    },
+    getDispatchAgent(id) {
+      return id === 'prompt' ? { id, name: 'Prompt', modes: { run: { argumentsTemplate: '{prompt}' } } } : this.get('agents', id);
     },
     list: kind => kind === 'workflows' ? [definition] : [],
   };
@@ -373,4 +377,53 @@ test('keeps transient loop items out of durable decision diagnostics and files',
   assert(!JSON.stringify({ run, decision }).includes(transientValue));
   await assert.rejects(readFile(path.join(decisionFolder, 'item.json')), { code: 'ENOENT' });
   await assert.rejects(readFile(itemSnapshot), { code: 'ENOENT' });
+});
+
+test('dispatches model-backed Prompt connectors and their legacy agent aliases with exact inputs', async t => {
+  const definition = workflow([
+    node('transform', 'Tool', { toolId: 'prompt', toolMode: 'run', execution: { providerId: 'codex', model: 'prompt-model' },
+      inputs: { Prompt: '  Refine {{trigger.item}}\n\nKeep spacing.  ', Options: { PreserveCase: true }, Enabled: false } }),
+    node('legacy', 'Agent', { agentId: 'prompt', agentMode: 'run', inputs: { prompt: 'Read upstream context.' } }),
+  ], [edge('transform', 'legacy')]);
+  const contextJson = ' { "selected": 900719925474099312345 }\n';
+  const { engine, launched } = await fixture(t, definition, async (id, params) => {
+    assert.equal(id, 'prompt');
+    assert.equal(params.modeId, 'run');
+    if (params.handoff.nodeId === 'transform') {
+      assert.deepEqual(params.inputs, { Prompt: '  Refine the draft\n\nKeep spacing.  ', Options: { PreserveCase: true }, Enabled: false });
+      assert.equal(params.arguments, 'Refine the draft Keep spacing.');
+      assert.equal(params.providerId, 'codex');
+      assert.equal(params.model, 'prompt-model');
+      await writeFile(params.contextOutputPath, contextJson);
+    } else {
+      assert.deepEqual(params.inputs, { prompt: 'Read upstream context.' });
+      assert.equal(params.handoff.sources[0].contextJson, contextJson);
+    }
+  });
+  const result = await engine.wait(engine.run(definition.id, { triggerInputs: { item: 'the draft' } }).id);
+  assert.equal(result.status, 'Succeeded');
+  assert.equal(result.nodeRuns.transform.model, 'prompt-model');
+  assert.equal(launched.length, 2);
+});
+
+test('mounts a library through a native connector and keeps repeated mounts idempotent', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'doxie-mount-'));
+  const storage = createStorage({ root, databasePath: ':memory:', managed: true });
+  const engine = createWorkflows({ storage, agents: { start() { assert.fail('Mount must run without a provider'); } } });
+  t.after(async () => {
+    await engine.close();
+    storage.close();
+    await rm(root, { force: true, recursive: true });
+  });
+  const workspace = storage.save('workspaces', { id: 'target' });
+  storage.createLibrary({ id: 'release', memories: [{ id: 'check', content: 'Read the checklist.' }] });
+  const definition = storage.save('workflows', workflow([
+    node('explicit', 'Tool', { toolId: 'library', toolMode: 'mount', inputs: { libraryId: 'release', workspace: workspace.id } }),
+    node('default-workspace', 'Tool', { toolId: 'library', toolMode: 'mount', inputs: { libraryId: 'release' } }),
+  ], [edge('explicit', 'default-workspace')], { workspaceId: workspace.id }));
+  const result = await engine.wait(engine.run(definition.id).id);
+  assert.equal(result.status, 'Succeeded');
+  assert.deepEqual(storage.get('workspaces', workspace.id).mountedLibraryIds, ['release']);
+  assert.match(await readFile(path.join(workspace.path, 'AGENTS.md'), 'utf8'), /Read the checklist/);
+  assert.equal(result.nodeRuns['default-workspace'].providerId, null);
 });

@@ -5,8 +5,9 @@ const { join } = require('node:path');
 const { test } = require('node:test');
 const { createAgents, matches } = require('../../src/desktop/agents.cjs');
 const { createStorage } = require('../../src/desktop/storage.cjs');
-const { headlessArgs, providerOutput } = require('../../src/desktop/providers.cjs');
+const { headlessArgs, inputMessage, providerOutput, providerFor } = require('../../src/desktop/providers.cjs');
 const { normalizeExecution, resolveExecution } = require('../../src/desktop/execution.cjs');
+const { invocation } = require('../../src/desktop/processes.cjs');
 
 test('reads legacy history and streams a new provider run with arguments on stdin', { timeout: 10_000 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'doxie agent test '));
@@ -98,4 +99,23 @@ test('resolves explicit execution overrides ahead of provider-specific agent pre
   assert.throws(() => normalizeExecution({ model: 'no-provider' }), /Select a provider/);
   assert.throws(() => normalizeExecution({ providerId: 'codex', model: 'unsafe & value' }), /Invalid provider model/);
   assert.ok(headlessArgs({ id: 'codex', model: 'codex-default' }).includes('--ephemeral'));
+});
+
+test('routes explicitly selected local models through the Codex Responses client', () => {
+  const storage = { root: tmpdir(), getSetting: () => null };
+  assert.throws(() => providerFor(storage, 'ollama'), /Select a model for Ollama/);
+  for (const [id, port] of [['ollama', 11434], ['lmstudio', 1234]]) {
+    const model = 'llama3.2:latest';
+    const provider = { id, name: id, model, localBaseUrl: `http://127.0.0.1:${port}` };
+    const args = headlessArgs(provider);
+    assert.equal(normalizeExecution({ providerId: id, model }).providerId, id);
+    assert.ok(args.includes(`model_providers.doxie_${id}.base_url='${provider.localBaseUrl}/v1'`));
+    assert.ok(args.includes(`model_providers.doxie_${id}.requires_openai_auth=false`));
+    assert.ok(args.includes('--ephemeral'));
+    assert.ok(!args.includes('--oss'));
+    assert.equal(args[args.indexOf('--model') + 1], model);
+    assert.doesNotThrow(() => invocation('codex.cmd', args));
+    assert.equal(inputMessage(provider, 'Hello'), 'Hello');
+    assert.deepEqual(providerOutput(provider, '{"type":"thread.started","thread_id":"local"}'), { sessionId: 'local' });
+  }
 });

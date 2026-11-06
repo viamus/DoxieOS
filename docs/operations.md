@@ -78,6 +78,17 @@ the provider profile managed by DoxieOS. You can also select the default
 provider and configure each executable from that section. An agent run or an
 interactive console launches its provider on demand.
 
+Model selectors can refresh the installed providers' inventory and show its
+source. Codex and Claude Code use model metadata from the DoxieOS or installed
+CLI profiles when available. A cached or advertised model can still require
+account access. You can enter a model ID directly for a custom provider setup.
+
+For local models, run your existing Ollama or LM Studio server on its default
+loopback port and choose an exposed model in DoxieOS. These adapters use the
+Codex CLI with the local Responses endpoint. Workflow agents require a model
+with tool support. DoxieOS discovery reads the server's model list and does not
+start model servers or download models.
+
 MCP configuration lives under **Settings**. DoxieOS reconciles the configured
 servers with the provider files. The providers connect to those MCP servers
 when invoked. The configured URLs and commands must resolve on the host where

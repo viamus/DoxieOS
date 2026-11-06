@@ -2,7 +2,9 @@
   "id": "prompt",
   "description": "Run a focused model transformation on declared inputs and emit text, Markdown, JSON, or transient workflow context.",
   "displayName": "Prompt",
-  "category": "Transform",
+  "category": "Connector",
+  "kind": "workflow",
+  "modelBacked": true,
   "requirements": [],
   "modes": {
     "run": {

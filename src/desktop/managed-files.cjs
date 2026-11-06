@@ -3,7 +3,8 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const catalogKinds = ['agents', 'skills', 'workflows', 'libraries'];
-const nativeToolIds = new Set(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'sandbox', 'write-to-workspace']);
+const connectorIds = new Set(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'prompt', 'sandbox', 'write-to-workspace']);
+const connectorFiles = ['manifest.json', 'body.md', 'run.md'];
 const excludedNames = new Set(['.git', '.private', '.mcp.json', '.claude', '.claude.json', '.codex', '.agents', '.providers', 'node_modules']);
 const emptyCounts = () => ({ agents: 0, skills: 0, workflows: 0, libraries: 0, workspaces: 0, files: 0, skipped: 0 });
 
@@ -48,11 +49,14 @@ function createManagedFiles({ root, safePath, stat }) {
     }
   }
 
-  function copyFile(source, destination) {
+  function copyFile(source, destination, replace = false) {
+    const previous = stat(destination);
+    if (previous && (!replace || !previous.isFile() || fs.readFileSync(source).equals(fs.readFileSync(destination)))) return false;
     const temporary = `${destination}.doxie-copy-${randomUUID()}.tmp`;
     try {
       fs.copyFileSync(source, temporary, fs.constants.COPYFILE_EXCL);
-      if (stat(destination)) return false;
+      const current = stat(destination);
+      if (current && (!replace || !current.isFile())) return false;
       fs.renameSync(temporary, destination);
       return true;
     } finally {
@@ -86,8 +90,7 @@ function createManagedFiles({ root, safePath, stat }) {
     fs.mkdirSync(destination, { recursive: true });
     for (const entry of entries(source)) {
       if (entry.name.startsWith('.') || !entry.isDirectory()
-        || (['agents', 'skills'].includes(kind) && nativeToolIds.has(entry.name.toLowerCase()))
-        || (kind === 'tools' && !nativeToolIds.has(entry.name))) {
+        || (['agents', 'skills'].includes(kind) && connectorIds.has(entry.name.toLowerCase()))) {
         counts.skipped++;
         continue;
       }
@@ -118,7 +121,7 @@ function createManagedFiles({ root, safePath, stat }) {
     if (contains(source, destination) || contains(destination, source)) throw new Error('Select a source folder outside the destination workbench');
   }
 
-  function copyCatalog(source, destination, counts, includeTools = false) {
+  function copyCatalog(source, destination, counts) {
     const agentDirectory = target(`${destination}/agents`);
     for (const kind of catalogKinds) {
       const folder = sourceDirectory(source, kind);
@@ -127,7 +130,7 @@ function createManagedFiles({ root, safePath, stat }) {
       for (const entry of entries(folder)) {
         if (!entry.isFile() || !/^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/i.test(entry.name)) continue;
         const id = entry.name.slice(0, -3);
-        if (nativeToolIds.has(id.toLowerCase())) continue;
+        if (connectorIds.has(id.toLowerCase())) continue;
         const targetFile = target(`${destination}/agents/${id}/agent.md`);
         if (stat(targetFile)) continue;
         fs.mkdirSync(path.dirname(targetFile), { recursive: true });
@@ -137,7 +140,6 @@ function createManagedFiles({ root, safePath, stat }) {
         }
       }
     }
-    if (includeTools) copyItems('tools', sourceDirectory(source, 'tools'), target(`${destination}/tools`), counts, true);
   }
 
   function importWorkbench(source) {
@@ -180,29 +182,26 @@ function createManagedFiles({ root, safePath, stat }) {
 
   function seed(bundle, bundledFiles) {
     if (!stat(bundle)?.isDirectory() || path.relative(bundle, target('.doxie')) === '') return;
-    if (bundledFiles) {
-      for (const file of bundledFiles) {
-        const relative = file.replace(/\\/g, '/').replace(/^\.doxie\//, '');
-        const [kind, id, ...parts] = relative.split('/');
-        if ((!catalogKinds.includes(kind) && kind !== 'tools') || !id || [id, ...parts].some(excluded)) continue;
-        const agentId = kind === 'agents' && !parts.length ? id.replace(/\.md$/i, '') : id;
-        if (['agents', 'skills'].includes(kind) && nativeToolIds.has(agentId.toLowerCase())) continue;
-        if (kind === 'tools' && !nativeToolIds.has(id)) continue;
-        const destinationRelative = kind === 'skills' ? ['agents', id, ...parts].join('/')
-          : kind === 'agents' && !parts.length && /\.md$/i.test(id) ? `agents/${agentId}/agent.md` : relative;
-        const from = safePath(bundle, relative);
-        if (!stat(from)?.isFile()) continue;
-        const destination = target(`.doxie/${destinationRelative}`);
-        if (stat(destination)) continue;
-        fs.mkdirSync(path.dirname(destination), { recursive: true });
-        copyFile(from, destination);
-      }
-      return;
+    if (!bundledFiles) copyCatalog(bundle, '.doxie', emptyCounts());
+    const files = bundledFiles ?? [...connectorIds].flatMap(id => connectorFiles.map(file => `tools/${id}/${file}`));
+    for (const file of files) {
+      const relative = file.replace(/\\/g, '/').replace(/^\.doxie\//, '');
+      const [kind, id, ...parts] = relative.split('/');
+      if ((!catalogKinds.includes(kind) && kind !== 'tools') || !id || [id, ...parts].some(excluded)) continue;
+      const agentId = kind === 'agents' && !parts.length ? id.replace(/\.md$/i, '') : id;
+      if (['agents', 'skills'].includes(kind) && connectorIds.has(agentId.toLowerCase())) continue;
+      if (kind === 'tools' && !connectorIds.has(id)) continue;
+      const destinationRelative = kind === 'skills' ? ['agents', id, ...parts].join('/')
+        : kind === 'agents' && !parts.length && /\.md$/i.test(id) ? `agents/${agentId}/agent.md` : relative;
+      const from = safePath(bundle, relative);
+      if (!stat(from)?.isFile()) continue;
+      const destination = target(`.doxie/${destinationRelative}`);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      copyFile(from, destination, kind === 'tools');
     }
-    copyCatalog(bundle, '.doxie', { ...emptyCounts(), tools: 0 }, true);
   }
 
   return { importWorkbench, importCatalog, seed, catalogRoot, copyWorkspace };
 }
 
-module.exports = { createManagedFiles, nativeToolIds };
+module.exports = { createManagedFiles, connectorIds };

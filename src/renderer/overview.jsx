@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleDollarSign, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Layers3, LayoutDashboard, Plus, Save, Settings2, Sparkles, Terminal, Trash2 } from 'lucide-react';
-import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, split, useApp, useText } from './ui.jsx';
+import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleDollarSign, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2 } from 'lucide-react';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, split, useApp, useText } from './ui.jsx';
 
 const categories = [
   { key: 'workflows', label: 'Workflows', icon: GitBranch, tone: 'copper' },
@@ -10,21 +10,23 @@ const categories = [
 ];
 
 function orderedRuns(state) {
-  return [...state.agentRuns.map((run) => ({ ...run, kind: 'agent' })), ...state.workflowRuns.map((run) => ({ ...run, kind: 'workflow' }))]
+  const connectorIds = new Set(state.connectors.map(({ id }) => id));
+  return [...state.agentRuns.map((run) => ({ ...run, kind: connectorIds.has(run.agentId) ? 'connector' : 'agent' })), ...state.workflowRuns.map((run) => ({ ...run, kind: 'workflow' }))]
     .sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
 }
 
 function runTitle(run, state) {
-  const id = run.kind === 'agent' ? run.agentId : run.workflowId;
+  const id = run.kind === 'workflow' ? run.workflowId : run.agentId;
   return nameOf(state[`${run.kind}s`].find((item) => item.id === id)) || id || run.id;
 }
 
 function RunList({ runs, compact = false }) {
   const { state } = useApp();
   return <div className="row-list">{runs.map((run) => {
-    const id = run.kind === 'agent' ? run.agentId : run.workflowId;
+    const id = run.kind === 'workflow' ? run.workflowId : run.agentId;
     const route = `/${run.kind}s/${part(id)}?run=${part(run.id)}${run.catalogId ? `&catalog=${part(run.catalogId)}` : ''}`;
-    return <ItemRow key={`${run.kind}/${run.id}`} to={route} icon={run.kind === 'agent' ? Bot : GitBranch} title={runTitle(run, state)} detail={!compact && <>{run.kind === 'agent' ? 'Agent' : 'Workflow'} <span className="middot">·</span> <DateTime value={run.startedAt} /></>}><Status status={run.status} /></ItemRow>;
+    const presentation = { agent: { label: 'Agent', icon: Bot }, connector: { label: 'Connector', icon: Plug }, workflow: { label: 'Workflow', icon: GitBranch } }[run.kind];
+    return <ItemRow key={`${run.kind}/${run.id}`} to={route} icon={presentation.icon} title={runTitle(run, state)} detail={!compact && <>{presentation.label} <span className="middot">·</span> <DateTime value={run.startedAt} /></>}><Status status={run.status} /></ItemRow>;
   })}</div>;
 }
 
@@ -96,7 +98,7 @@ export function HistoryPage() {
   const [confirm, setConfirm] = useState(false);
   const runs = orderedRuns(state).filter((run) => (kind === 'all' || run.kind === kind) && `${runTitle(run, state)} ${run.id} ${run.status}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="page"><PageHeading icon={History} title={t('History.Title', 'History')} subtitle={t('History.Subtitle', 'Review agent and workflow runs, most recent first.')} actions={<Button icon={Trash2} disabled={!runs.length} onClick={() => setConfirm(true)}>{t('History.Clear', 'Clear history')}</Button>} />
-    <div className="toolbar"><SearchBox value={search} setValue={setSearch} placeholder="Search runs…" /><select aria-label="Run type" value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">All runs</option><option value="agent">Agents</option><option value="workflow">Workflows</option></select></div>
+    <div className="toolbar"><SearchBox value={search} setValue={setSearch} placeholder="Search runs…" /><select aria-label="Run type" value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">All runs</option><option value="agent">Agents</option><option value="connector">Connectors</option><option value="workflow">Workflows</option></select></div>
     <Panel title={`${runs.length} ${runs.length === 1 ? 'run' : 'runs'}`} icon={History}>{runs.length ? <RunList runs={runs} /> : <Empty title="No matching runs" detail={t('History.Empty', 'Your executions appear here once an agent or workflow starts.')} />}</Panel>
     {confirm && <Confirm title="Clear run history" detail="Remove completed runs from history?" label="Clear history" close={() => setConfirm(false)} confirm={async () => { await perform('history:clear', [], 'History cleared'); setConfirm(false); }} />}
   </div>;
@@ -176,7 +178,7 @@ function ProviderEditor({ provider, config, close, save }) {
     } catch (problem) { setError(problem.message); }
   }}><div className="modal-body stack">
     <Field label="CLI executable"><input value={draft.executable} onChange={(event) => setDraft({ ...draft, executable: event.target.value })} /></Field>
-    <Field label="Default model" hint="Used when a run inherits this provider’s model."><input list="provider-model-options" maxLength={200} value={draft.model || ''} onChange={(event) => setDraft({ ...draft, model: event.target.value })} placeholder="CLI default" /><datalist id="provider-model-options">{split(draft.models).map((model, index) => <option value={model} key={`${model}/${index}`} />)}</datalist></Field>
+    <ModelField label="Default model" providerId={provider.id} value={draft.model} suggestions={split(draft.models)} hint="Used when a run inherits this provider’s model." placeholder="CLI default" onChange={(model) => setDraft({ ...draft, model })} />
     <Field label="Model names" hint="Separate models with commas."><input value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} /></Field>
     {replaceEnvironment ? <Field label="Environment variables" hint="Enter a JSON object with string values."><JsonInput value={environment} onChange={setEnvironment} /></Field> : <Button onClick={() => setReplaceEnvironment(true)}>Set environment variables</Button>}
     <ErrorNotice error={error} />
@@ -261,7 +263,7 @@ export function SettingsPage() {
       <div className="row-list">{state.providers.map((provider) => <ItemRow key={provider.id} icon={Terminal} title={provider.displayName || provider.name || provider.id} detail={[provider.executable || provider.id, provider.model].filter(Boolean).join(' · ')}>
         {settings.defaultProvider === provider.id ? <Tag>Default</Tag> : <Button variant="ghost" onClick={() => save({ defaultProvider: provider.id })}>Set as default</Button>}
         <Status status={provider.status || (provider.available === false ? 'Not found' : 'Available')} />
-        <Button onClick={async () => { const session = await perform('settings:auth', [provider.id]); if (session) go(`/consoles${session.id ? `?session=${part(session.id)}` : ''}`); }}>Authenticate</Button>
+        {provider.requiresAuth !== false && <Button onClick={async () => { const session = await perform('settings:auth', [provider.id]); if (session) go(`/consoles${session.id ? `?session=${part(session.id)}` : ''}`); }}>Authenticate</Button>}
         <IconButton icon={Settings2} label="Configure provider" onClick={() => setEditProvider(provider)} />
       </ItemRow>)}</div>
     </Panel>

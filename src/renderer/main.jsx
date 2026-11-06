@@ -1,9 +1,10 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Bell, BookOpen, Bot, CircleDot, Cpu, FolderKanban, GitBranch, History, LayoutDashboard, Menu, Settings2, Terminal, X } from 'lucide-react';
+import { Activity, Bell, BookOpen, Bot, CircleDot, Cpu, FolderKanban, GitBranch, History, LayoutDashboard, Menu, Plug, Settings2, Terminal, X } from 'lucide-react';
 import { AppContext, Button, Empty, ErrorNotice, IconButton, Loading, Modal, Status, href, invoke, useText } from './ui.jsx';
 import { Dashboard, HistoryPage, NotificationsPage, SettingsPage } from './overview.jsx';
 import { AgentsPage, AgentPage, BuilderPage, WorkflowsPage } from './automation.jsx';
+import { ConnectorPage, ConnectorsPage } from './connectors.jsx';
 import { WorkflowEditor, WorkflowPage } from './workflow.jsx';
 import { ConsolesPage, LibrariesPage, Markdown, WorkspaceFilesPage, WorkspacesPage } from './workbench.jsx';
 import logo from './doxie-face.svg';
@@ -14,12 +15,13 @@ const navigation = [
   { to: '/workspaces', key: 'Nav.Workspaces', label: 'Workspaces', icon: FolderKanban },
   { to: '/consoles', key: 'Nav.Consoles', label: 'Consoles', icon: Terminal },
   { to: '/agents', key: 'Nav.Agents', label: 'Agents', icon: Bot },
+  { to: '/connectors', key: 'Nav.Connectors', label: 'Connectors', icon: Plug },
   { to: '/workflows', key: 'Nav.Workflows', label: 'Workflows', icon: GitBranch },
   { to: '/libraries', key: 'Nav.Libraries', label: 'Libraries', icon: BookOpen },
   { to: '/history', key: 'Nav.History', label: 'History', icon: History },
 ];
 
-const emptyState = { agents: [], workflows: [], workspaces: [], libraries: [], tools: [], agentRuns: [], workflowRuns: [], notifications: [], consoles: [], settings: {}, providers: [] };
+const emptyState = { agents: [], connectors: [], workflows: [], workspaces: [], libraries: [], agentRuns: [], workflowRuns: [], notifications: [], consoles: [], settings: {}, providers: [] };
 
 function currentRoute() {
   const [pathname, queryString = ''] = (window.location.hash.slice(1) || '/').split('?');
@@ -39,8 +41,10 @@ function Router({ route }) {
   if (!section) return <Dashboard />;
   if (section === 'agents') {
     if (id === 'new') return <BuilderPage kind="agent" query={query} />;
+    if (id === 'prompt') return <ConnectorPage id={id} runId={runId} />;
     return id ? <AgentPage id={id} catalogId={catalogId} runId={runId} /> : <AgentsPage />;
   }
+  if (section === 'connectors') return id ? <ConnectorPage id={id} runId={runId} /> : <ConnectorsPage />;
   if (section === 'workflows') {
     if (id === 'new') return child === 'chat' ? <BuilderPage kind="workflow" query={query} /> : <WorkflowEditor />;
     if (child === 'edit') return <WorkflowEditor id={id} catalogId={catalogId} />;

@@ -7,12 +7,13 @@ const { parse: parseJsonc } = require('jsonc-parser');
 const YAML = require('yaml');
 const Zip = require('adm-zip');
 const { createShims } = require('./shims.cjs');
-const { createManagedFiles, nativeToolIds } = require('./managed-files.cjs');
+const { createManagedFiles, connectorIds } = require('./managed-files.cjs');
 const { normalizeExecution } = require('./execution.cjs');
 
 const catalogKinds = ['agents', 'skills', 'workflows', 'libraries'];
 const manifests = { skills: 'manifest.json', tools: 'manifest.json', workflows: 'workflow.json', libraries: 'library.json', workspaces: 'workspace.json' };
 const catalogSetting = 'doxie.catalog.customRoots';
+const promptExecutionSetting = 'doxie.connector.prompt.execution';
 const generatedContext = '<!-- DoxieOS: auto-generated from workspace.json mountedLibraries -->';
 const maxPreview = 256 * 1024;
 const maxImage = 4 * 1024 * 1024;
@@ -26,6 +27,7 @@ const unix = file => file.split(path.sep).join('/');
 const json = data => `${JSON.stringify(data, null, 2)}\n`;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const isAgentKind = kind => kind === 'agents' || kind === 'skills';
+const internalAgents = new Set(['agent-builder', 'workflow-builder']);
 
 function stat(file) {
   return fs.lstatSync(file, { throwIfNoEntry: false });
@@ -331,7 +333,7 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
   }
 
   function decideAgent({ id, files, agent }, catalog, overwrite, withSubagent = true) {
-    if (nativeToolIds.has(id)) throw new Error(`${id} is a built-in tool identifier`);
+    if (connectorIds.has(id)) throw new Error(`${id} is a built-in connector identifier`);
     const matches = listCatalogs().map(candidate => get('agents', id, candidate.id)).filter(Boolean);
     for (const match of matches) {
       const oldSkill = get('skills', id, match.catalogId);
@@ -391,7 +393,7 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
         const imported = parseAgentZip(readZip(entries.get(file), budget));
         if (agentId !== imported.id) throw new Error('Bundled agent identifier does not match its manifest');
         recognized.add(file);
-        if (!nativeToolIds.has(agentId)) {
+        if (!connectorIds.has(agentId)) {
           included.push(agentId);
           changes.push(...decideAgent(imported, catalog, overwrite));
         }
@@ -428,7 +430,7 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
       const source = safePath(root, relative);
       for (const entry of children(source)) {
         const id = kind === 'agents' && entry.isFile() && entry.name.endsWith('.md') ? entry.name.slice(0, -3) : entry.name;
-        if (!idPattern.test(id) || (isAgentKind(kind) && nativeToolIds.has(id))) continue;
+        if (!idPattern.test(id) || (isAgentKind(kind) && connectorIds.has(id))) continue;
         const from = safePath(source, entry.name);
         const target = safePath(roots[kind], isAgentKind(kind) ? id : entry.name);
         if (kind === 'agents') {
@@ -576,10 +578,10 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     return catalog;
   }
 
-  function load(kind, id, catalog) {
+  function load(kind, id, catalog, allowLegacyPrompt = false) {
     oneSegment(id);
     if (isAgentKind(kind)) {
-      if (nativeToolIds.has(id.toLowerCase())) return null;
+      if (connectorIds.has(id.toLowerCase()) && !(allowLegacyPrompt && id.toLowerCase() === 'prompt')) return null;
       const canonical = safePath(directory(catalog, 'agents'), id);
       const legacy = safePath(directory(catalog, 'legacySkills'), id);
       const agentCandidates = [canonical, legacy].filter(folder => stat(folder)?.isDirectory());
@@ -619,7 +621,13 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     const base = { ...metadata, ...info, name, description };
     if (kind === 'tools') {
       const body = readText(safePath(itemDir, 'body.md'));
-      return nativeToolIds.has(id) && Object.keys(metadata).length ? { ...base, body: body ?? '', modes: field(metadata, 'modes') ?? {} } : null;
+      if (!connectorIds.has(id) || !Object.keys(metadata).length) return null;
+      const result = { ...base, body: body ?? '', modes: field(metadata, 'modes') ?? {} };
+      if (id === 'prompt') {
+        return { ...result, modelBacked: true,
+          execution: promptExecution(() => field(metadata, 'execution') ?? load('agents', id, catalog, true)?.execution) };
+      }
+      return result;
     }
     if (kind === 'workflows') {
       if (!Object.keys(metadata).length) return null;
@@ -652,6 +660,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
         for (const entry of children(dir)) if (entry.isDirectory() && !entry.name.startsWith('.')) ids.add(entry.name);
       }
       for (const id of ids) {
+        if (isAgentKind(kind) && internalAgents.has(id.toLowerCase())) continue;
         let item;
         try { item = load(kind, id, catalog); } catch { continue; }
         if (item) items.set(id.toLowerCase(), item);
@@ -667,6 +676,26 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
       if (result) return result;
     }
     return null;
+  }
+
+  function getDispatchAgent(id, catalogId) {
+    if (typeof id !== 'string' || id.toLowerCase() !== 'prompt') return get('agents', id, catalogId);
+    const connector = get('tools', 'prompt');
+    if (connector) return { ...connector, connectorId: 'prompt' };
+    const legacy = load('agents', 'prompt', defaultCatalog, true);
+    return legacy && { ...legacy, modelBacked: true, connectorId: 'prompt', execution: promptExecution(() => legacy.execution) };
+  }
+
+  function promptExecution(fallback) {
+    const stored = getSetting(promptExecutionSetting);
+    try { return normalizeExecution(stored === null ? fallback() : JSON.parse(stored)); }
+    catch { return null; }
+  }
+
+  function setConnectorExecution(id, value) {
+    if (id !== 'prompt') throw new Error('This connector does not support provider preferences');
+    setSetting(promptExecutionSetting, normalizeExecution(value));
+    return get('tools', id);
   }
 
   function updateWorkspaceContext(workspace) {
@@ -701,7 +730,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   function save(kind, data) {
     if (!object(data) || (!catalogKinds.includes(kind) && kind !== 'workspaces')) throw new Error('Invalid catalog item');
     const id = validateId(data.id);
-    if (isAgentKind(kind) && nativeToolIds.has(id)) throw new Error(`${id} is a built-in tool identifier`);
+    if (isAgentKind(kind) && connectorIds.has(id)) throw new Error(`${id} is a built-in connector identifier`);
     const previous = get(kind, id);
     const catalog = kind === 'workspaces' ? defaultCatalog : selectCatalog(data.catalogId ?? previous?.catalogId);
     const current = get(kind, id, catalog.id) ?? previous;
@@ -981,7 +1010,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     return counts;
   }
 
-  return { root, roots, db, databasePath, managed, runsRoot: roots.runs, workspacesRoot: roots.workspaces, list, get, save, remove, regenerate, watchCatalog, importWorkbench, createLibrary,
+  return { root, roots, db, databasePath, managed, runsRoot: roots.runs, workspacesRoot: roots.workspaces, list, get, getDispatchAgent, setConnectorExecution, save, remove, regenerate, watchCatalog, importWorkbench, createLibrary,
     listCatalogs, saveCatalogs, getSetting, setSetting, listFiles, readFile, writeFile, deleteFile, resolveFile,
     ...createTransfers({ root, roots, get, directory, selectCatalog, listCatalogs, refreshWorkspaceContexts, updateWorkspaceContext, regenerate }),
     close() {

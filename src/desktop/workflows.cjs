@@ -14,7 +14,7 @@ const triggerKinds = ['manual', 'cron', 'event', 'webhook'];
 const terminal = new Set(['Succeeded', 'Failed', 'Cancelled']);
 const connectorKinds = new Map([
   ['aggregate', 'aggregate'], ['write-to-workspace', 'output'], ['loop', 'loop'],
-  ['if-else', 'decision'], ['approval-gate', 'approval'], ['library', 'library'], ['sandbox', 'sandbox'],
+  ['if-else', 'decision'], ['approval-gate', 'approval'], ['library', 'library'], ['sandbox', 'sandbox'], ['prompt', 'prompt'],
 ]);
 const transientFolder = '.doxie-transient';
 const maxContextBytes = 64 * 1024;
@@ -993,10 +993,14 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
 
   async function executeNode(context, scope, node, record, upstream) {
     const { run } = context;
-    const inputs = Object.fromEntries(Object.entries(node.inputs ?? {}).map(([key, value]) => [lower(key), substitute(value, run.triggerInputs, scope.loop)]));
     const kind = nodeKind(node);
-    if (scope.loop && !['agent', 'decision', 'library', 'sandbox'].includes(kind)) {
-      throw new Error(`Loop body node '${node.id}' must be an agent or supported native tool`);
+    const modelBacked = kind === 'agent' || kind === 'prompt';
+    const inputs = Object.fromEntries(Object.entries(node.inputs ?? {}).map(([key, value]) => [
+      modelBacked ? key : lower(key),
+      modelBacked && typeof value !== 'string' ? value : substitute(value, run.triggerInputs, scope.loop),
+    ]));
+    if (scope.loop && !['agent', 'decision', 'library', 'sandbox', 'prompt'].includes(kind)) {
+      throw new Error(`Loop body node '${node.id}' must be an agent or supported connector`);
     }
     if (kind === 'trigger') {
       record.logs.push(`trigger fired (${run.triggeredBy})`);
@@ -1006,6 +1010,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const directory = safePath(scope.base, node.id);
     await mkdir(directory, { recursive: true });
     switch (kind) {
+      case 'prompt':
       case 'agent': await withHandoff(context, scope, node, upstream, (handoff, transport) => dispatchAgent(context, scope, node, record, inputs, handoff, directory, transport)); break;
       case 'aggregate': await aggregate(context, node, record, upstream, directory); break;
       case 'output': await outputToWorkspace(context, scope, node, record, inputs, upstream); break;
@@ -1037,8 +1042,10 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
 
   async function utility(context, scope, node, toolId, record, inputs, handoff, directory) {
     const { run, definition } = context;
+    const toolMode = node.toolMode ?? node.agentMode;
+    const explicitMountTarget = toolId === 'library' && toolMode === 'mount' && inputs.workspace?.trim();
     const result = await runNativeUtility(toolId, {
-      storage, toolMode: node.toolMode ?? node.agentMode, inputs, workspace: workspaceFor(context, scope, node),
+      storage, toolMode, inputs, workspace: explicitMountTarget ? null : workspaceFor(context, scope, node),
       sourceDirectories: handoff.sources.map(source => source.artifactDirectory).filter(Boolean),
       outputDir: directory, scratchRoot: safePath(transientRoot(run.id), 'sandboxes'), signal: scope.signal,
       catalogId: definition.catalogId,
@@ -1050,16 +1057,20 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
 
   async function dispatchAgent(context, scope, node, record, inputs, handoff, directory, transport) {
     const { definition, run } = context;
-    if (!node.agentId) throw new Error(`Agent node '${node.id}' has no agent bound`);
-    const agent = (definition.catalogId && storage.get('agents', node.agentId, definition.catalogId)) || storage.get('agents', node.agentId);
-    if (!agent) throw new Error(`Unknown agent '${node.agentId}' in node '${node.id}'`);
+    const isPrompt = nodeKind(node) === 'prompt';
+    const agentId = isPrompt ? 'prompt' : node.agentId;
+    const role = isPrompt ? 'connector' : 'agent';
+    if (!agentId) throw new Error(`Agent node '${node.id}' has no agent bound`);
+    const agent = (definition.catalogId && storage.getDispatchAgent(agentId, definition.catalogId)) || storage.getDispatchAgent(agentId);
+    if (!agent) throw new Error(`Unknown ${role} '${agentId}' in node '${node.id}'`);
     const modes = Array.isArray(agent.modes) ? agent.modes : Object.entries(agent.modes ?? {}).map(([id, mode]) => ({ ...mode, id }));
-    const mode = node.agentMode ? modes.find(candidate => lower(candidate.id) === lower(node.agentMode)) : modes[0];
-    const modeId = mode?.id ?? node.agentMode ?? null;
+    const requestedMode = isPrompt ? node.toolMode ?? node.agentMode : node.agentMode;
+    const mode = requestedMode ? modes.find(candidate => lower(candidate.id) === lower(requestedMode)) : modes[0];
+    const modeId = mode?.id ?? requestedMode ?? null;
     const workspace = workspaceFor(context, scope, node);
-    if (mode?.requiresWorkspace && !workspace) throw new Error(`Agent mode '${modeId}' requires a workspace`);
+    if (mode?.requiresWorkspace && !workspace) throw new Error(`${role} mode '${modeId}' requires a workspace`);
     const { providerId, model } = node.execution ?? {};
-    if (model && !providerId) throw new Error(`Agent node '${node.id}' must specify the provider for its model override`);
+    if (model && !providerId) throw new Error(`Node '${node.id}' must specify the provider for its model override`);
     const upstream = handoff.sources.filter(source => source.artifactDirectory
       && (source.kind !== 'loop-item' || scope.loopEntry === node.id));
 
@@ -1082,9 +1093,9 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     if (workspace) record.logs.push(`cwd: workspace '${workspace.id}' (${workspace.path})`);
     const templated = mode?.argumentsTemplate;
     const args = typeof templated === 'string'
-      ? templated.replace(/\{([\w-]+)\}/g, (placeholder, key) => String(inputs[lower(key)] ?? '').trim()).replace(/\s+/g, ' ').trim()
+      ? templated.replace(/\{([\w-]+)\}/g, (placeholder, key) => String(caseInsensitive(inputs, key) ?? '').trim()).replace(/\s+/g, ' ').trim()
       : Object.entries(inputs).map(([key, value]) => `--${key} ${value}`).join(' ');
-    record.logs.push(`dispatching agent '${agent.name ?? agent.id}' (mode: ${modeId ?? 'default'})`);
+    record.logs.push(`dispatching ${role} '${agent.name ?? agent.id}' (mode: ${modeId ?? 'default'})`);
     publish(run);
 
     let mirrored = 0;
@@ -1103,13 +1114,13 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     }
 
     scope.signal.throwIfAborted();
-    const started = await agents.start(node.agentId, {
+    const started = await agents.start(agentId, {
       arguments: args, inputs, mode: modeId, modeId, keepSessionAlive: mode?.keepSessionAlive ?? false,
       workspaceId: workspace?.id, workspacePath: workspace?.path, cwd: workspace?.path, env, catalogId: agent.catalogId,
       providerId, model, handoff, guidance: [...context.hints], contextOutputPath: safePath(transport, 'context.json'), workflowRunId: run.id, onOutput,
     });
     const agentRunId = typeof started === 'string' ? started : started?.id;
-    if (!agentRunId) throw new Error(`Agent '${node.agentId}' did not return a run id`);
+    if (!agentRunId) throw new Error(`${role} '${agentId}' did not return a run id`);
     context.agentRuns.set(record.nodeId, agentRunId);
     const cancelAgent = () => {
       Promise.resolve().then(() => agents.stop(agentRunId)).catch(error => record.logs.push(`[warning] ${error.message}`));

@@ -4,8 +4,9 @@ const { randomUUID } = require('node:crypto');
 const { nextCron } = require('./workflows.cjs');
 const { safePath } = require('./storage.cjs');
 const { sweepScratch } = require('./housekeeping.cjs');
-const { definitions, settingsFor, jsonSetting } = require('./providers.cjs');
+const { definitions, settingsFor, providerEnvironment, jsonSetting } = require('./providers.cjs');
 const { normalizeModel } = require('./execution.cjs');
+const { discoverModels } = require('./model-catalog.cjs');
 const { executablePath, launch } = require('./processes.cjs');
 
 const privateRunFolder = name => name.toLowerCase() === '.doxie-transient';
@@ -61,6 +62,29 @@ async function openPath(shell, path) {
 }
 
 function createActions({ app, dialog, shell, window, storage, agents, workflows, consoles, builders, notifications, mcp, emit, releaseNotes }) {
+  const inventories = new Map();
+
+  function modelsFor(id, options) {
+    if (!Object.hasOwn(definitions, id)) throw new Error('Unknown provider.');
+    const cached = inventories.get(id);
+    if (cached && (!cached.expires || (!options?.refresh && cached.expires > Date.now()))) return cached.promise;
+    const provider = settingsFor(storage).providers[id];
+    const environment = providerEnvironment(storage, { ...process.env, ...provider.environment });
+    const entry = { expires: 0 };
+    entry.promise = discoverModels({
+      providerId: id, environment, hostEnvironment: process.env, workspaceRoot: storage.root,
+      executable: executablePath(provider.executable, environment), useHostProfiles: process.env.DOXIE_TEST !== '1',
+    }).then(inventory => {
+      const models = new Map(inventory.models.map(model => [model.id, model]));
+      for (const id of [...(Array.isArray(provider.models) ? provider.models : []), provider.model]) {
+        if (id && !models.has(id)) models.set(id, { id, label: id, source: 'configured' });
+      }
+      return { ...inventory, models: [...models.values()] };
+    }).finally(() => { entry.expires = Date.now() + 60_000; });
+    inventories.set(id, entry);
+    return entry.promise;
+  }
+
   function settings() {
     const current = settingsFor(storage);
     return {
@@ -79,12 +103,14 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       const old = jsonSetting(storage, 'desktop.providers', {});
       const configured = {};
       for (const [id, defaults] of Object.entries(definitions)) {
-        const value = patch.providers[id] || old[id] || defaults;
+        const value = { ...defaults, ...old[id], ...patch.providers[id] };
         const models = Array.isArray(value.models) ? value.models.map(normalizeModel).filter(Boolean) : defaults.models;
         const environment = validatedEnvironment(value.environment ?? old[id]?.environment);
-        configured[id] = { executable: String(value.executable || defaults.executable).trim(), model: normalizeModel(value.model), models, environment };
+        const executable = String(value.executable || defaults.executable).trim();
+        configured[id] = { ...(defaults.localBaseUrl && executable === defaults.executable ? {} : { executable }), model: normalizeModel(value.model), models, environment };
       }
       storage.setSetting('desktop.providers', configured);
+      inventories.clear();
     }
     if (patch.language) storage.setSetting('ui.language', patch.language);
     if (patch.defaultProvider) storage.setSetting('default_agent_provider', patch.defaultProvider);
@@ -125,6 +151,14 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     };
   }
 
+  function startRun(id, params) {
+    return agents.start(id, {
+      arguments: params.arguments, inputs: params.inputs || params.fields, mode: params.mode, modeId: params.modeId,
+      workspaceId: params.workspaceId, catalogId: params.catalogId, providerId: params.providerId, model: params.model,
+      env: validatedEnvironment(params.env, true),
+    });
+  }
+
   return {
     bootstrap() {
       const catalog = Object.fromEntries(['agents', 'workflows', 'workspaces', 'libraries', 'tools'].map(kind => [kind, storage.list(kind)]));
@@ -136,7 +170,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       });
       const configuration = settings();
       return {
-        ...catalog, root: storage.root, storage: {
+        ...catalog, connectors: catalog.tools, root: storage.root, storage: {
           'App data': app.getPath('userData'), 'Data directory': storage.root, 'State database': storage.databasePath,
           'Provider profiles': safePath(storage.root, '.providers'), ...publicRoots,
         },
@@ -273,11 +307,19 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
         child.once('spawn', () => { child.unref(); resolve(true); });
       });
     },
-    'agent:start': (id, params = {}) => agents.start(id, {
-      arguments: params.arguments, inputs: params.inputs || params.fields, mode: params.mode, modeId: params.modeId,
-      workspaceId: params.workspaceId, catalogId: params.catalogId, providerId: params.providerId, model: params.model,
-      env: validatedEnvironment(params.env, true),
-    }),
+    'agent:start': (id, params = {}) => {
+      if (!storage.get('agents', id, params.catalogId)) throw new Error('Agent not found.');
+      return startRun(id, params);
+    },
+    'connector:start': (id, params = {}) => {
+      if (!storage.get('tools', id)?.modelBacked) throw new Error('This connector runs inside a workflow.');
+      return startRun(id, params);
+    },
+    'connector:saveExecution': (id, execution) => {
+      const connector = storage.setConnectorExecution(id, execution);
+      emit({ type: 'catalog:changed', kind: 'tools' });
+      return connector;
+    },
     'agent:run': (id) => agents.getRun(id),
     'agent:stop': (id) => agents.stop(id),
     'agent:guide': (id, text) => agents.addHint(id, text),
@@ -299,6 +341,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'builder:message': (id, text) => builders.message(id, text),
     'builder:promote': (id, options) => builders.promote(id, options),
     'settings:save': saveSettings,
+    'models:list': modelsFor,
     'settings:auth': (providerId) => consoles.start({ providerId, auth: true }),
     'settings:importMcp': () => mcp.importGlobals(),
     'storage:cleanup': async () => ({ removed: await sweepScratch({ storage, builders, retentionMs: 0 }) }),

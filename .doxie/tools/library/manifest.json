@@ -1,7 +1,7 @@
 {
   "id": "library",
   "displayName": "Library",
-  "description": "Create a reusable Doxie library from explicitly selected Markdown or text.",
+  "description": "Create a reusable Doxie library from selected material or mount an existing library into a workspace.",
   "kind": "workflow",
   "category": "Tool",
   "modes": {
@@ -23,6 +23,23 @@
           "id": "description",
           "label": "Description",
           "placeholder": "Guidance for recurring work"
+        }
+      ]
+    },
+    "mount": {
+      "description": "Mount an existing library into a Doxie workspace.",
+      "fields": [
+        {
+          "id": "libraryId",
+          "label": "Existing library",
+          "lookup": "libraries",
+          "required": true
+        },
+        {
+          "id": "workspace",
+          "label": "Target workspace",
+          "lookup": "workspaces",
+          "required": true
         }
       ]
     },

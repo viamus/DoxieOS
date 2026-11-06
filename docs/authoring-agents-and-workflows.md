@@ -24,7 +24,7 @@ DoxieOS reads legacy `.doxie/skills/<id>/` definitions and accepts existing cata
 
 ## Workflow graphs
 
-Store a definition in `.doxie/workflows/<id>/workflow.json`. Use `Agent` nodes to invoke a Doxie agent and `Tool` nodes for deterministic operations. An edge makes the producer's handoff available to the direct consumer.
+Store a definition in `.doxie/workflows/<id>/workflow.json`. Use `Agent` nodes to invoke a Doxie agent and `Tool` nodes for workflow connectors. An edge makes the producer's handoff available to the direct consumer.
 
 ```json
 {
@@ -33,7 +33,7 @@ Store a definition in `.doxie/workflows/<id>/workflow.json`. Use `Agent` nodes t
   "trigger": { "kind": "manual", "inputs": [{ "id": "notes", "label": "Notes", "required": true }] },
   "nodes": [
     {
-      "id": "summarize", "kind": "Agent", "agentId": "prompt", "agentMode": "run",
+      "id": "summarize", "kind": "Tool", "toolId": "prompt", "toolMode": "run",
       "inputs": { "prompt": "Prepare a release brief.", "input_text": "{{trigger.notes}}", "output_format": "md" }
     },
     {
@@ -45,23 +45,24 @@ Store a definition in `.doxie/workflows/<id>/workflow.json`. Use `Agent` nodes t
 }
 ```
 
-Set a node's `execution` to override its agent's provider selection. A model belongs to an explicitly selected provider.
+Set a model-backed node's `execution` to override the provider selection for that step. A model belongs to an explicitly selected provider.
 
-| Native tool | Purpose |
+| Connector | Purpose |
 | --- | --- |
 | `aggregate` | Merge text artifacts from direct upstream nodes. |
 | `approval-gate` | Pause for an operator decision. |
 | `if-else` | Evaluate upstream JSON and select the `true` or `false` edge. |
-| `library` | Create a library from metadata, selected files, or workspace memory. |
+| `library` | Create a library from selected material or mount an existing library into a workspace. |
 | `loop` | Run a subgraph for each item of an upstream JSON array. |
+| `prompt` | Invoke a model for a focused transformation on declared inputs. |
 | `sandbox` | Allocate and list temporary run-owned folders. |
 | `write-to-workspace` | Deliver an explicit Markdown artifact to a selected workspace. |
 
-Older workflows that represent a native tool with an `agentId` still resolve that ID to the tool. New workflows should use `toolId` and `toolMode`.
+Older workflows that use a connector's ID as an `agentId` still resolve to that connector. Use `toolId` and `toolMode` in new workflows.
 
 ## Context and artifacts
 
-Each agent starts a fresh provider request. DoxieOS supplies a `doxie.agent-request.v1` object through the provider's stdin request. It includes the agent's mode, its explicit `inputs`, and an optional `handoff` object for the workflow. Use native Loop or Cron for repetition in place of a legacy persistent-session mode.
+Each model-backed step starts a fresh provider request. DoxieOS supplies a `doxie.agent-request.v1` object through the provider's stdin request. It includes the step's mode, its explicit `inputs`, and an optional `handoff` object for the workflow. Use native Loop or Cron for repetition.
 
 The `doxie.workflow-handoff.v1` handoff identifies the workflow, run, and node. For a loop it identifies the iteration. Its `sources` list describes direct upstream nodes and the current loop item, with each source's artifact directory, relative paths, media types, sizes, and optional `contextJson` text. A native tool that forwards context includes `forwardedContexts` with the original producer's node, iteration, and JSON text. Artifact directories are scoped snapshots and last only for the consumer's step.
 
@@ -71,7 +72,7 @@ The `doxie.workflow-handoff.v1` handoff identifies the workflow, run, and node. 
 
 ```mermaid
 flowchart LR
-    Producer["Agent or native tool"] -->|"Explicit files or transient JSON"| Consumer["Direct downstream step"]
+    Producer["Agent or connector"] -->|"Explicit files or transient JSON"| Consumer["Direct downstream step"]
     Consumer -->|"Explicit files"| Delivery["Write to Workspace"]
 ```
 

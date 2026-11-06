@@ -19,12 +19,12 @@ provider-specific compatibility files from that source of truth.
 ## What You Get
 
 - A desktop workbench for launching, observing, and reviewing agent work.
-- A canonical `.doxie/` catalog for agents, workflows, libraries, and memories.
-- Provider-neutral execution for Claude Code, OpenAI Codex, and future CLI-backed providers.
+- A canonical `.doxie/` catalog for agents, connectors, workflows, libraries, and memories.
+- Execution through Claude Code, OpenAI Codex, Ollama, and LM Studio.
 - Workspace-aware memory mounting for project standards and team context.
 - Workflow orchestration for repeatable multi-agent delivery.
 - Transient context across workflow edges and native operations for approval, loops, and libraries.
-- Model selection by agent and by workflow node.
+- Installed-provider model discovery and selection by agent, connector, and workflow node.
 - Agent and workflow builders with draft previews and catalog promotion.
 - Live consoles, run history, usage tracking, release notes, and notifications.
 - MCP-aware settings for Claude/Codex config reconciliation.

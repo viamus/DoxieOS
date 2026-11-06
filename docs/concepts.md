@@ -8,8 +8,8 @@ these concepts define the product model.
 | Concept | What It Means | Stored In |
 | --- | --- | --- |
 | Agent | A model-driven unit of work with instructions, inputs, an optional execution preference, and an output contract. | `.doxie/agents/<id>/` |
-| Native tool | A deterministic operation such as Approval, Loop, Aggregate, or Library. | `.doxie/tools/<id>/` |
-| Workflow | A graph of agent and native tool nodes with explicit dependencies. | `.doxie/workflows/<id>/workflow.json` |
+| Connector | A built-in operation such as Approval, Loop, Aggregate, Library, or the model-backed Prompt. | `.doxie/tools/<id>/` |
+| Workflow | A graph of agent and connector nodes with explicit dependencies. | `.doxie/workflows/<id>/workflow.json` |
 | Library | A reusable memory pack mounted into workspaces or dispatched agents. | `.doxie/libraries/<id>/` |
 | Workspace | A persistent project folder where agents can read context and write artifacts. | `.workspace/` by default |
 | Catalog | A root folder containing Doxie agents, workflows, and libraries. | `.doxie/` or custom catalog folders |
@@ -99,4 +99,6 @@ DoxieOS is provider-neutral. It prepares the run context and dispatches to the
 selected provider CLI. Provider compatibility is intentionally an adapter layer,
 not the product model.
 
-Supported provider families currently include Claude Code and OpenAI Codex.
+Claude Code and OpenAI Codex execute through their installed CLIs. Local
+models exposed by Ollama or LM Studio run through the Codex CLI's Responses
+client.

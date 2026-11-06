@@ -121,6 +121,12 @@ svg { flex: 0 0 auto; }
 .search:focus-within { border-color: var(--accent); }
 .search input { width: 100%; background: transparent; border: 0; outline: 0; padding-inline: 0; }
 .field { display: grid; align-content: start; gap: 5px; min-width: 0; font-size: 13px; }
+.model-field { min-width: 0; }
+.model-inventory { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--muted); margin-top: 3px; }
+.model-inventory small { min-width: 0; overflow-wrap: anywhere; }
+.model-inventory .icon-button { flex: 0 0 28px; width: 28px; min-height: 28px; }
+.form-grid:has(.model-inventory) { align-items: start; }
+.lookup-field > .button { margin-top: 2px; min-height: 27px; padding-block: 3px; }
 .field > span, .key-values > span { font-weight: 620; color: #e5e1d8; }
 .field small { color: var(--muted); font-size: 11px; }
 .field :is(input, select, textarea) { width: 100%; }

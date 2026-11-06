@@ -10,7 +10,8 @@
       "fields": [
         {
           "id": "workspace",
-          "label": "Target workspace ID",
+          "label": "Target workspace",
+          "lookup": "workspaces",
           "placeholder": "release-notes",
           "required": true
         },
