@@ -26,6 +26,9 @@ Thanks for sending changes. This is a small repo with a handful of collaborators
 
 4. Install Python 3 if your shell does not have PowerShell available. The Git hooks use it as the cross-platform fallback.
 
+On Windows, run `run.bat` to launch an available package or the prepared
+development build. Both use the Electron user data directory for runtime state.
+
 Enable the public content guard before your first commit:
 
 ```sh
@@ -68,4 +71,6 @@ Open a GitHub issue. Include:
 
 ## Local sandboxes & workspaces
 
-DoxieOS allocates `.sandbox/<tag>/` for transient agent scratch work and `.workspace/<name>/` for user-owned project folders. Both are gitignored — never push their contents.
+DoxieOS allocates `.sandbox/<tag>/` for transient agent scratch work and
+`.workspace/<name>/` for project files under its managed workbench. Use the
+bundled `.doxie/` catalog in the repository to contribute first-party assets.

@@ -1,15 +1,20 @@
 import { expect, test, _electron as electron } from '@playwright/test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 test('runs the workbench, a local terminal and a persisted approval workflow in Electron', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'doxie-e2e-'));
-  const root = join(directory, 'workbench');
+  const profile = join(directory, 'app-data');
+  const root = join(profile, 'workbench');
+  const outside = join(directory, 'outside');
   const executablePath = process.env.DOXIE_TEST_EXECUTABLE;
   const launchOptions = {
     ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }),
-    env: { ...process.env, DOXIE_ROOT: root, DOXIE_USER_DATA: join(directory, 'electron'), DOXIE_DATABASE_PATH: join(directory, 'state.db'), DOXIE_TEST: '1' },
+    env: {
+      ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1',
+      DOXIE_ROOT: outside, DOXIE_DATABASE_PATH: join(outside, 'state.db'), Storage__WorkspacesDirectory: join(outside, 'workspaces'),
+    },
   };
   let application;
   try {
@@ -21,6 +26,12 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     if (process.env.DOXIE_TEST_SCREENSHOT) await page.screenshot({ path: process.env.DOXIE_TEST_SCREENSHOT });
     expect(new URL(page.url()).protocol).toBe('doxie:');
     expect(await page.evaluate(() => typeof window.require)).toBe('undefined');
+    const { storage: paths, agents } = await page.evaluate(() => window.doxie.invoke('bootstrap'));
+    expect(paths['App data']).toBe(profile);
+    expect(paths['State database']).toBe(join(profile, 'state.db'));
+    expect(paths.workspaces).toBe(join(root, '.workspace'));
+    expect(agents.some(agent => agent.id === 'approval-gate')).toBe(true);
+    await expect(stat(outside)).rejects.toThrow(/ENOENT/);
     const security = await application.evaluate(({ BrowserWindow }) => {
       const options = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();
       return { contextIsolation: options.contextIsolation, nodeIntegration: options.nodeIntegration, sandbox: options.sandbox };
@@ -58,6 +69,12 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     await page.getByRole('dialog').getByRole('button', { name: 'Approve', exact: true }).click();
     await expect.poll(async () => (await page.evaluate(id => window.doxie.invoke('workflow:run', id), runId)).status).toBe('Succeeded');
     expect(await readFile(join(root, '.doxie', 'workflows', 'review-flow', 'workflow.json'), 'utf8')).toContain('Review flow');
+    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Clean temporary files', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Clean temporary files', exact: true }).click();
+    await expect(page.getByText('Removed 1 temporary folder.')).toBeVisible();
+    await expect(stat(join(root, '.runs', runId))).rejects.toThrow(/ENOENT/);
+    expect(await readFile(join(workspace.path, 'verification.md'), 'utf8')).toContain('Local workspace');
     expect(pageErrors).toEqual([]);
 
     await application.close();

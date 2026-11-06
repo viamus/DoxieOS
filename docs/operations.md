@@ -21,17 +21,18 @@ to build the renderer by itself. The packaged executable loads that build from
 disk and uses Electron's embedded Node.js runtime.
 
 `npm run package` creates an unsigned desktop bundle for the host platform.
-On Windows x64, extract `release/DoxieOS-win32-x64.zip` and run
-`DoxieOS.exe` from the extracted `DoxieOS-win32-x64` folder. Keep the
-executable beside its bundled resources. The portable app stores user settings
-and default workbench data in the Electron user data directory.
+On Windows x64, extract `release/DoxieOS-win32-x64.zip` and double-click
+`run.bat` or `DoxieOS.exe` inside the extracted folder. Keep the launcher,
+executable and bundled resources together. The repository's `run.bat` opens
+an available package first and can start the development build with already
+installed local dependencies.
 
-## Open a workbench folder
+## Storage and imports
 
-Development launches use the repository folder. The packaged app defaults to
-the `workbench` folder under Electron's user data directory and seeds the
-bundled `.doxie/` catalog there. Use **File → Open Doxie folder** to select an
-existing workbench, or set `DOXIE_ROOT` before launch to select it explicitly.
+Both development and packaged launches use Electron's user data directory.
+On Windows, this is `%APPDATA%\doxieos`. DoxieOS creates `state.db` and
+`workbench/` there, seeds the bundled catalog, and keeps provider profiles in
+separate directories within the same user data directory.
 
 | Workbench path | Purpose |
 | --- | --- |
@@ -40,19 +41,25 @@ existing workbench, or set `DOXIE_ROOT` before launch to select it explicitly.
 | `.runs/` | Workflow node output and agent run artifacts. |
 | `.sandbox/` | Builder sessions and scratch folders. |
 | `.private/` | User-owned private content. |
-| `.claude/`, `.agents/`, `.codex/` | Provider compatibility files. |
+| `.claude/`, `.agents/`, `.codex/` | Generated provider compatibility files. |
+| `.providers/` | DoxieOS-specific Codex and Claude Code profiles. |
 
 SQLite stores run history, streamed output, and application settings. The
-**Settings** page shows the active database and workbench paths. Set
-`DOXIE_DATABASE_PATH` to select a different database. Set `DOXIE_USER_DATA` to
-isolate Electron profile data for testing.
+**Settings** page shows the active database and workbench paths. Use **File →
+Import workbench…** to copy missing `.doxie/` and `.workspace/` files from
+another workbench into the active one. Adding a custom catalog or choosing a
+source folder when creating a workspace also copies files into the managed
+storage.
+
+Use **Settings → Storage paths → Clean temporary files** to remove eligible
+finished run output and temporary sandboxes. The confirmation explains which
+files are eligible. **Settings** reports the number of removed folders.
 
 ## Upgrade from DoxieOS 1.x
 
-1. Close DoxieOS 1.x before opening the same workbench or database in the desktop app.
-2. Open the original workbench folder. The desktop app reads the existing catalog, workspaces, mounts, and artifacts in place.
-3. The desktop app looks for `Viamus.Doxie.Orchestrator/state.db` in the previous release's user data location. This includes `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or `~/.local/share` on Linux, and `~/Library/Application Support` on macOS. Set `DOXIE_DATABASE_PATH` for a different location or an exported database from an earlier containerized install.
-4. Open **Settings** and verify that the displayed paths, custom catalogs, provider settings, and MCP definitions point to the expected locations.
+1. Close DoxieOS 1.x and launch the desktop app. If the desktop database has yet to be created, DoxieOS copies a snapshot of the previous SQLite database into its user data directory. On Windows, the previous database is normally `%LOCALAPPDATA%\Viamus.Doxie.Orchestrator\state.db`.
+2. Select **File → Import workbench…** and choose the original workbench folder to copy its catalog and workspace files.
+3. Open **Settings** to verify storage paths and sign in to each provider you use.
 
 The desktop app also reads DoxieOS 1.x ZIP archives. Transfer an agent,
 workflow, workspace, or library through its catalog page. Workflow and
@@ -61,10 +68,11 @@ choice when an existing item differs from its archived counterpart.
 
 ## Providers and MCP
 
-Install and sign in to Claude Code or OpenAI Codex on the machine running
-DoxieOS. **Settings** shows the detected executables and lets you select the
-default provider and configure each provider. An agent run or an interactive
-console launches its provider on demand.
+Install Claude Code or OpenAI Codex on the machine running DoxieOS. Under
+**Settings → Agent CLI providers**, select **Authenticate** to sign in with
+the provider profile managed by DoxieOS. You can also select the default
+provider and configure each executable from that section. An agent run or an
+interactive console launches its provider on demand.
 
 MCP configuration lives under **Settings**. DoxieOS reconciles the configured
 servers with the provider files. The providers connect to those MCP servers

@@ -57,7 +57,13 @@ flowchart TD
     Runner --> Runs["Run outputs and history"]
 ```
 
-## Run Locally
+## Launch on Windows
+
+Extract `DoxieOS-win32-x64.zip` and double-click `run.bat` in the extracted
+folder. You can also open `DoxieOS.exe` directly. DoxieOS stores your workbench,
+settings and run history in `%APPDATA%\doxieos`.
+
+## Develop Locally
 
 Install Node.js 22.17 or newer and npm. From the repository root, install the
 locked dependencies, verify them, and launch the workbench.
@@ -72,15 +78,14 @@ node node_modules/electron/install.js
 npm start
 ```
 
-Provider-backed actions use Claude Code or OpenAI Codex installed and signed in
-on the same machine. The workbench itself opens directly in Electron.
+On Windows, `run.bat` at the repository root opens the packaged app when
+available or starts the local development setup after you have installed the
+dependencies. Sign in to your installed Claude Code or OpenAI Codex CLI from
+**Settings** to use provider-backed actions.
 
 Use `npm test` for Node tests, `npm run test:desktop` for Electron integration
 tests, and `npm run package` to create a desktop bundle. See the operations guide
 for setup, data paths, and the upgrade from DoxieOS 1.x. [Operations guide](docs/operations.md)
-
-On Windows x64, extract `release/DoxieOS-win32-x64.zip` and open `DoxieOS.exe`
-from the extracted folder.
 
 ## Repository Shape
 
@@ -91,12 +96,13 @@ from the extracted folder.
 ├── src/desktop/                    # Electron main process and Node runtime
 ├── src/renderer/                   # React workbench
 ├── tests/                          # Node and Electron tests
+├── run.bat                         # Windows launcher
 ├── LICENSE                         # Apache License 2.0
 └── NOTICE                          # Attribution notice for redistributions
 ```
 
-Runtime folders such as `.workspace/`, `.sandbox/`, `.runs/`, local databases,
-and private provider content are intentionally kept out of normal commits.
+The repository's `.doxie/` directory supplies the bundled catalog. Active
+catalogs, workspaces and runtime state live in Electron's user data directory.
 
 ## Bundled Catalog
 

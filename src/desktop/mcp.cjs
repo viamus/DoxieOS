@@ -3,7 +3,8 @@ const { homedir } = require('node:os');
 const { dirname, join } = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const toml = require('@iarna/toml');
-const { readJson, jsonSetting } = require('./providers.cjs');
+const { readJson, jsonSetting, providerEnvironment } = require('./providers.cjs');
+const { safePath } = require('./storage.cjs');
 
 const key = 'provider_mcp_servers';
 const begin = '# BEGIN DOXIE MCP SERVERS';
@@ -80,15 +81,17 @@ function equivalentClaude(config, definition) {
 
 function createMcp(storage) {
   const home = homedir();
-  const codexPath = join(process.env.CODEX_HOME || join(home, '.codex'), 'config.toml');
-  const claudePath = join(storage.root, '.mcp.json');
+  const globalCodexPath = join(process.env.CODEX_HOME || join(home, '.codex'), 'config.toml');
+  const codexPath = join(providerEnvironment(storage).CODEX_HOME, 'config.toml');
+  const claudePath = safePath(storage.root, '.mcp.json');
   const rootKey = createHash('sha256').update(process.platform === 'win32' ? storage.root.toLowerCase() : storage.root).digest('hex');
   const lastManaged = `desktop.mcp.claude-managed.${rootKey}`;
   const list = () => jsonSetting(storage, key, []);
-  const globalClaude = () => [
-    ...readProviderEntries(readJson(join(home, '.claude.json')).mcpServers, 'claude-code'),
-    ...readProviderEntries(readJson(join(home, '.claude', 'mcp.json')).mcpServers, 'claude-code'),
-  ];
+  function globalClaude() {
+    const config = process.env.CLAUDE_CONFIG_DIR || join(home, '.claude');
+    const paths = new Set([join(home, '.claude.json'), join(config, '.claude.json'), join(config, 'mcp.json')]);
+    return [...paths].flatMap(file => readProviderEntries(readJson(file).mcpServers, 'claude-code'));
+  }
 
   function publicList() {
     return list().map(server => {
@@ -112,11 +115,10 @@ function createMcp(storage) {
       && equivalentClaude(claude.mcpServers[item.id], item)).map(item => item.id);
     const managed = new Set(legacyManaged);
     const claudeServers = Object.fromEntries(Object.entries(claude.mcpServers || {}).filter(([id]) => !managed.has(id)));
-    const claudeGlobal = globalClaude();
     const codexText = read(codexPath);
     const unmanagedText = codexText.replace(block, '');
     const unmanaged = toml.parse(unmanagedText).mcp_servers || {};
-    const globalCodex = readProviderEntries(unmanaged, 'codex');
+    const otherCodex = readProviderEntries(unmanaged, 'codex');
     const codexServers = Object.create(null);
     const written = [];
     for (const server of items) {
@@ -127,12 +129,11 @@ function createMcp(storage) {
       const config = server.transport === 'http'
         ? { ...other, url: server.url }
         : { ...other, command: server.command, args: parseArguments(server.arguments), env: parseEnvironment(server.environment) };
-      if (server.providers.includes('claude-code') && !Object.hasOwn(claudeServers, server.id)
-        && !claudeGlobal.some(item => item.id === server.id || fingerprint(item) === fingerprint(server))) {
+      if (server.providers?.includes('claude-code') && !Object.hasOwn(claudeServers, server.id)) {
         claudeServers[server.id] = { ...config, ...(server.transport === 'http' ? { type: 'http', ...(requestHeaders ? { headers: requestHeaders } : {}) } : {}) };
         written.push(server.id);
       }
-      if (server.providers.includes('codex') && !globalCodex.some(item => item.id === server.id || fingerprint(item) === fingerprint(server))) {
+      if (server.providers?.includes('codex') && !otherCodex.some(item => item.id === server.id || fingerprint(item) === fingerprint(server))) {
         codexServers[server.id] = { ...config, ...(server.transport === 'http' && requestHeaders ? { http_headers: requestHeaders } : {}) };
       }
     }
@@ -140,8 +141,9 @@ function createMcp(storage) {
       ? `${unmanagedText.trimEnd()}\n\n${begin}\n${toml.stringify({ mcp_servers: codexServers })}${end}\n`
       : unmanagedText;
     if (codexResult !== codexText) atomicWrite(codexPath, codexResult);
-    if (existingClaudeText || written.length) atomicWrite(claudePath, JSON.stringify({ ...claude, mcpServers: claudeServers }, null, 2) + '\n');
-    storage.setSetting(lastManaged, written);
+    const claudeResult = JSON.stringify({ ...claude, mcpServers: claudeServers }, null, 2) + '\n';
+    if ((existingClaudeText || written.length) && existingClaudeText !== claudeResult) atomicWrite(claudePath, claudeResult);
+    if (JSON.stringify(previousManaged) !== JSON.stringify(written)) storage.setSetting(lastManaged, written);
   }
 
   function save(values) {
@@ -173,7 +175,7 @@ function createMcp(storage) {
   }
 
   function importGlobals() {
-    const codex = toml.parse(read(codexPath).replace(block, ''));
+    const codex = toml.parse(read(globalCodexPath).replace(block, ''));
     const combined = list();
     for (const item of [...globalClaude(), ...readProviderEntries(codex.mcp_servers, 'codex')]) {
       const existing = combined.find(server => server.id === item.id || fingerprint(server) === fingerprint(item));
@@ -183,7 +185,7 @@ function createMcp(storage) {
     return save(combined);
   }
 
-  return { publicList, save, importGlobals };
+  return { publicList, save, importGlobals, refresh: () => sync(list()) };
 }
 
 module.exports = { createMcp };

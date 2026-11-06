@@ -1,7 +1,7 @@
 const { existsSync, readFileSync } = require('node:fs');
-const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { executablePath } = require('./processes.cjs');
+const { safePath } = require('./storage.cjs');
 
 const definitions = {
   'claude-code': { id: 'claude-code', name: 'Claude Code', executable: 'claude', models: [] },
@@ -25,19 +25,25 @@ function jsonSetting(storage, key, fallback) {
   }
 }
 
+function providerEnvironment(storage, environment = process.env) {
+  return {
+    ...environment,
+    CODEX_HOME: safePath(storage.root, '.providers/codex'),
+    CLAUDE_CONFIG_DIR: safePath(storage.root, '.providers/claude'),
+  };
+}
+
 function settingsFor(storage) {
   const saved = jsonSetting(storage, 'desktop.providers', {});
-  const home = homedir();
-  const codexHome = process.env.CODEX_HOME || join(home, '.codex');
   const providers = Object.fromEntries(Object.entries(definitions).map(([id, defaults]) => {
     const provider = { ...defaults, ...saved[id], id };
-    const env = { ...process.env, ...provider.environment };
+    const env = providerEnvironment(storage, { ...process.env, ...provider.environment });
     return [id, {
       ...provider,
       installed: Boolean(executablePath(provider.executable, env)),
       authenticated: id === 'codex'
-        ? Boolean(env.OPENAI_API_KEY || existsSync(join(codexHome, 'auth.json')))
-        : Boolean(env.ANTHROPIC_API_KEY || existsSync(join(home, '.claude.json'))),
+        ? Boolean(env.OPENAI_API_KEY || existsSync(join(env.CODEX_HOME, 'auth.json')))
+        : Boolean(env.ANTHROPIC_API_KEY || env.CLAUDE_CODE_OAUTH_TOKEN || existsSync(join(env.CLAUDE_CONFIG_DIR, '.credentials.json'))),
     }];
   }));
   const requested = storage.getSetting('default_agent_provider');
@@ -55,7 +61,7 @@ function providerFor(storage, id, options = {}) {
   const normalized = id === 'claude' ? 'claude-code' : id || settings.defaultProvider;
   if (!Object.hasOwn(settings.providers, normalized)) throw new Error('Unknown provider.');
   const provider = settings.providers[normalized];
-  const environment = { ...process.env, ...provider.environment, ...options.env };
+  const environment = providerEnvironment(storage, { ...process.env, ...provider.environment, ...options.env });
   delete environment.ELECTRON_RUN_AS_NODE;
   delete environment.CLAUDECODE;
   const executable = executablePath(provider.executable, environment);
@@ -141,4 +147,4 @@ function providerOutput(provider, line) {
   };
 }
 
-module.exports = { definitions, settingsFor, providerFor, headlessArgs, inputMessage, providerOutput, readJson, jsonSetting };
+module.exports = { definitions, settingsFor, providerFor, providerEnvironment, headlessArgs, inputMessage, providerOutput, readJson, jsonSetting };

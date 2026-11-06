@@ -7,6 +7,7 @@ const { parse: parseJsonc } = require('jsonc-parser');
 const YAML = require('yaml');
 const Zip = require('adm-zip');
 const { createShims } = require('./shims.cjs');
+const { createManagedFiles } = require('./managed-files.cjs');
 
 const catalogKinds = ['agents', 'skills', 'workflows', 'libraries'];
 const manifests = { skills: 'manifest.json', workflows: 'workflow.json', libraries: 'library.json', workspaces: 'workspace.json' };
@@ -444,21 +445,23 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
   return { exportItem, importItem, detectLegacy, migrateLegacy };
 }
 
-function createStorage({ root, databasePath, bundledRoot, workspacesRoot, settings = {} }) {
+function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspacesRoot, settings = {}, managed = false, legacyRoot }) {
   root = path.resolve(root);
   const defaultCatalog = { id: 'default', name: 'Default catalog', path: safePath(root, '.doxie'), isDefault: true };
   const roots = Object.fromEntries(catalogKinds.map(kind => [kind, path.join(defaultCatalog.path, kind)]));
-  roots.workspaces = optionsPath(root, workspacesRoot ?? '.workspace');
+  roots.workspaces = managed ? safePath(root, '.workspace') : optionsPath(root, workspacesRoot ?? '.workspace');
   roots.runs = safePath(root, '.runs');
   roots.sandboxes = safePath(root, '.sandbox');
   for (const dir of Object.values(roots)) {
     safePath(dir);
     fs.mkdirSync(dir, { recursive: true });
   }
+  const managedFiles = createManagedFiles({ root, safePath, stat });
   if (bundledRoot) {
     const source = path.basename(bundledRoot) === '.doxie' ? path.resolve(bundledRoot) : path.resolve(bundledRoot, '.doxie');
     const marker = safePath(defaultCatalog.path, '.desktop-catalog-seeded');
-    if (source !== defaultCatalog.path && !stat(marker)) {
+    if (managed) managedFiles.seed(source, bundledFiles);
+    else if (source !== defaultCatalog.path && !stat(marker)) {
       for (const kind of catalogKinds) {
         const bundled = path.join(source, kind);
         for (const entry of children(bundled)) {
@@ -491,7 +494,7 @@ function createStorage({ root, databasePath, bundledRoot, workspacesRoot, settin
   for (const [key, value] of Object.entries(settings)) if (getSetting(key) === null) setSetting(key, value);
   const catalogWatches = new Set();
 
-  function normalizeCatalogs(items) {
+  function normalizeCatalogs(items, base = root) {
     const results = [];
     const ids = new Set(['default']);
     const paths = new Set([process.platform === 'win32' ? defaultCatalog.path.toLowerCase() : defaultCatalog.path]);
@@ -499,7 +502,7 @@ function createStorage({ root, databasePath, bundledRoot, workspacesRoot, settin
       if (!object(item)) continue;
       const suppliedPath = field(item, 'path');
       if (typeof suppliedPath !== 'string' || !suppliedPath.trim() || field(item, 'isDefault')) continue;
-      const catalogPath = optionsPath(root, suppliedPath.trim());
+      const catalogPath = optionsPath(base, suppliedPath.trim());
       const pathKey = process.platform === 'win32' ? catalogPath.toLowerCase() : catalogPath;
       if (paths.has(pathKey)) continue;
       paths.add(pathKey);
@@ -513,26 +516,47 @@ function createStorage({ root, databasePath, bundledRoot, workspacesRoot, settin
     return results;
   }
 
-  function listCatalogs() {
+  function configuredCatalogs(base) {
     let items;
     try { items = JSON.parse(getSetting(catalogSetting)); } catch { items = []; }
-    return [defaultCatalog, ...normalizeCatalogs(items)];
+    return normalizeCatalogs(items, base);
+  }
+
+  function listCatalogs() {
+    const catalogs = configuredCatalogs();
+    return [defaultCatalog, ...catalogs.map(catalog => managed ? { ...catalog, path: managedFiles.catalogRoot(catalog.id) } : catalog)];
+  }
+
+  function prepareCatalog(catalog) {
+    if (!managed) return catalog;
+    const destination = managedFiles.catalogRoot(catalog.id);
+    if (!managedFiles.importCatalog(catalog.path, catalog.id)) return null;
+    return { ...catalog, path: destination };
+  }
+
+  function saveCatalogSetting(catalogs) {
+    setSetting(catalogSetting, catalogs.map(({ id, name, path }) => ({ id, name, path })));
   }
 
   function saveCatalogs(items) {
-    const catalogs = normalizeCatalogs(items);
+    const catalogs = normalizeCatalogs(items).map(catalog => {
+      const destination = prepareCatalog(catalog);
+      if (!destination) throw new Error('Select an existing catalog folder');
+      return destination;
+    });
     for (const catalog of catalogs) {
       for (const kind of catalogKinds) fs.mkdirSync(safePath(catalog.path, kind), { recursive: true });
     }
-    setSetting(catalogSetting, catalogs.map(({ id, name, path }) => ({ id, name, path })));
+    saveCatalogSetting(catalogs);
     regenerate();
     for (const watch of catalogWatches) watch.sync();
     return listCatalogs();
   }
 
   function directory(catalog, kind) {
-    if (kind === 'workspaces' || kind === 'runs' || kind === 'sandboxes') return roots[kind];
+    if (kind === 'workspaces' || kind === 'runs' || kind === 'sandboxes') return managed ? safePath(root, unix(path.relative(root, roots[kind]))) : roots[kind];
     if (!catalogKinds.includes(kind)) throw new Error(`Unknown storage type: ${kind}`);
+    if (managed) return safePath(root, catalog.isDefault ? `.doxie/${kind}` : `.doxie/catalogs/${catalog.id}/${kind}`);
     return catalog.isDefault ? roots[kind] : safePath(catalog.path, kind);
   }
 
@@ -661,7 +685,7 @@ function createStorage({ root, databasePath, bundledRoot, workspacesRoot, settin
     const existingText = readText(manifest);
     const existing = readObject(existingText);
     if (existingText !== null && !existing) throw new Error(`Invalid ${manifests[sourceKind]} for ${id}`);
-    const { path: ignoredPath, catalogId: ignoredCatalog, catalogName, catalogRoot, skillName, agentPath, body,
+    const { path: sourcePath, catalogId: ignoredCatalog, catalogName, catalogRoot, skillName, agentPath, body,
       systemPrompt, tools, model, isolation, memories, files, mountedLibraryIds, mountedAgentIds, ...fields } = data;
     const merged = { ...existing, ...fields, id };
     const moves = [];
@@ -719,10 +743,14 @@ function createStorage({ root, databasePath, bundledRoot, workspacesRoot, settin
       merged.MountedAgents = mountIds(mountedAgentIds ?? field(fields, 'mountedAgents') ?? current?.mountedAgentIds);
       delete merged.id;
       if (!current) {
+        if (managed && typeof sourcePath === 'string' && sourcePath.trim()) managedFiles.copyWorkspace(sourcePath, id);
         const notes = safePath(itemDir, 'WORKSPACE.md');
-        const memory = safePath(itemDir, 'memory/MEMORY.md');
         if (!stat(notes)) atomicWrite(notes, `# Workspace ${merged.Name}\n\n${merged.Description}\n`);
-        if (!stat(memory)) atomicWrite(memory, `# Workspace ${merged.Name} - local memory index\n`);
+        const memoryDirectory = stat(safePath(itemDir, 'memory'));
+        if (!memoryDirectory || memoryDirectory.isDirectory()) {
+          const memory = safePath(itemDir, 'memory/MEMORY.md');
+          if (!stat(memory)) atomicWrite(memory, `# Workspace ${merged.Name} - local memory index\n`);
+        }
       }
     }
     writeItemFile(manifests[sourceKind], json(merged));
@@ -861,7 +889,27 @@ function createStorage({ root, databasePath, bundledRoot, workspacesRoot, settin
 
   const regenerate = createShims({ root, list, safePath, stat, filesUnder, readText, writeIfChanged });
 
-  return { root, roots, db, databasePath, runsRoot: roots.runs, workspacesRoot: roots.workspaces, list, get, save, remove, regenerate, watchCatalog,
+  if (managed && getSetting(catalogSetting) !== null) {
+    const configured = configuredCatalogs(legacyRoot ?? root);
+    const localized = configured.map(catalog => {
+      try { return prepareCatalog(catalog) ?? catalog; }
+      catch (error) {
+        console.error(`Could not migrate DoxieOS catalog '${catalog.id}': ${error.message}`);
+        return catalog;
+      }
+    });
+    if (localized.some((catalog, index) => catalog.path !== configured[index].path)) saveCatalogSetting(localized);
+  }
+
+  function importWorkbench(source) {
+    if (!managed) throw new Error('Workbench imports require managed storage');
+    const counts = managedFiles.importWorkbench(source);
+    regenerate();
+    for (const workspace of list('workspaces')) updateWorkspaceContext(workspace);
+    return counts;
+  }
+
+  return { root, roots, db, databasePath, managed, runsRoot: roots.runs, workspacesRoot: roots.workspaces, list, get, save, remove, regenerate, watchCatalog, importWorkbench,
     listCatalogs, saveCatalogs, getSetting, setSetting, listFiles, readFile, writeFile, deleteFile, resolveFile,
     ...createTransfers({ root, roots, get, directory, selectCatalog, listCatalogs, refreshWorkspaceContexts, updateWorkspaceContext, regenerate }),
     close() {

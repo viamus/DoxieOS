@@ -182,6 +182,60 @@ function ProviderEditor({ provider, config, close, save }) {
   </div><footer className="modal-footer"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" icon={Save}>Save provider</Button></footer></form></Modal>;
 }
 
+const cleanupCopy = {
+  en: {
+    action: 'Clean temporary files', busy: 'Cleaning…', cancel: 'Cancel',
+    detail: 'Permanently remove eligible finished run output and temporary sandboxes. Workspaces, catalogs, the database, resumable builder drafts and active jobs are preserved.',
+    empty: 'No eligible temporary folders were found.', one: 'Removed 1 temporary folder.', many: (count) => `Removed ${count} temporary folders.`,
+  },
+  'pt-BR': {
+    action: 'Limpar arquivos temporários', busy: 'Limpando…', cancel: 'Cancelar',
+    detail: 'Remove permanentemente os arquivos elegíveis de execuções finalizadas e os sandboxes temporários. Áreas de trabalho, catálogos, banco de dados, rascunhos retomáveis dos builders e execuções ativas são preservados.',
+    empty: 'Nenhuma pasta temporária elegível foi encontrada.', one: '1 pasta temporária removida.', many: (count) => `${count} pastas temporárias removidas.`,
+  },
+  es: {
+    action: 'Limpiar archivos temporales', busy: 'Limpiando…', cancel: 'Cancelar',
+    detail: 'Elimina de forma permanente los archivos elegibles de ejecuciones finalizadas y los entornos temporales. Se conservan los espacios de trabajo, los catálogos, la base de datos, los borradores reanudables y las ejecuciones activas.',
+    empty: 'No se encontraron carpetas temporales elegibles.', one: 'Se eliminó 1 carpeta temporal.', many: (count) => `Se eliminaron ${count} carpetas temporales.`,
+  },
+};
+
+function StoragePanel() {
+  const { state, perform } = useApp();
+  const t = useText();
+  const [showCleanup, setShowCleanup] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupError, setCleanupError] = useState('');
+  const [removed, setRemoved] = useState(null);
+  const root = typeof state.root === 'string' ? state.root : state.root?.path;
+  const copy = cleanupCopy[state.settings.language] || cleanupCopy.en;
+  const close = () => { if (!cleaning) setShowCleanup(false); };
+  const clean = async () => {
+    setCleaning(true);
+    setCleanupError('');
+    try {
+      const result = await invoke('storage:cleanup');
+      setRemoved(result.removed);
+      setShowCleanup(false);
+    } catch (error) {
+      setCleanupError(error.message);
+    } finally {
+      setCleaning(false);
+    }
+  };
+  return <Panel title={t('Settings.StoragePaths', 'Storage paths')} icon={FolderKanban} actions={<>
+    <Button icon={Code2} onClick={() => perform('catalog:regenerate', [], 'Provider files regenerated')}>Regenerate provider files</Button>
+    <Button icon={Trash2} onClick={() => { setCleanupError(''); setShowCleanup(true); }}>{copy.action}</Button>
+  </>}>
+    <div className="row-list">{Object.entries(state.storage || (root ? { 'Data directory': root } : {})).map(([label, value]) => <ItemRow key={label} icon={FolderKanban} title={label} detail={<span title={String(value)}>{String(value)}</span>} />)}</div>
+    {removed !== null && <p className="panel-body muted" role="status">{removed === 0 ? copy.empty : removed === 1 ? copy.one : copy.many(removed)}</p>}
+    {showCleanup && <Modal title={copy.action} icon={Trash2} close={close}>
+      <div className="modal-body stack"><p>{copy.detail}</p><ErrorNotice error={cleanupError} /></div>
+      <footer className="modal-footer"><Button disabled={cleaning} onClick={close}>{copy.cancel}</Button><Button variant="danger" icon={Trash2} disabled={cleaning} onClick={clean}>{cleaning ? copy.busy : copy.action}</Button></footer>
+    </Modal>}
+  </Panel>;
+}
+
 export function SettingsPage() {
   const { state, perform } = useApp();
   const t = useText();
@@ -193,7 +247,6 @@ export function SettingsPage() {
   const catalogs = settings.catalogs || state.catalogs || [];
   const servers = settings.mcpServers || [];
   const save = (patch, message = 'Settings saved') => perform('settings:save', [{ ...settings, ...patch }], message);
-  const root = typeof state.root === 'string' ? state.root : state.root?.path;
   const addCatalog = async () => {
     const selected = await perform('workspace:pickDirectory');
     const directory = typeof selected === 'string' ? selected : selected?.path;
@@ -214,12 +267,10 @@ export function SettingsPage() {
     <Panel title={t('Settings.McpServers', 'MCP servers')} icon={Layers3} hint="Configure tools available to your provider CLIs." actions={<><Button icon={Import} onClick={() => perform('settings:importMcp', [], 'Provider MCP configuration imported')}>{t('Settings.ImportFromProviders', 'Import from providers')}</Button><Button variant="primary" icon={Plus} onClick={() => setEditMcp({})}>{t('Settings.AddMcp', 'Add MCP')}</Button></>}>
       {servers.length ? <div className="row-list">{servers.map((server) => <ItemRow key={server.id} icon={Layers3} title={server.name || server.id} detail={[server.transport, ...(server.providers || [])].filter(Boolean).join(' · ')}><Status status={server.enabled ? 'Enabled' : 'Disabled'} /><IconButton icon={Settings2} label="Edit MCP server" onClick={() => setEditMcp(server)} /><IconButton icon={Trash2} label="Remove MCP server" onClick={() => setRemoveMcp(server)} /></ItemRow>)}</div> : <Empty compact title="No MCP servers configured" icon={Layers3} />}
     </Panel>
-    <Panel title={t('Settings.DoxieCatalogs', 'Doxie catalogs')} icon={BookOpen} hint="Catalog roots hold agents, workflows and libraries." actions={<Button icon={Plus} onClick={addCatalog}>{t('Settings.AddCatalog', 'Add catalog')}</Button>}>
+    <Panel title={t('Settings.DoxieCatalogs', 'Doxie catalogs')} icon={BookOpen} hint="Add a folder to copy its catalog into DoxieOS app data." actions={<Button icon={Plus} onClick={addCatalog}>{t('Settings.AddCatalog', 'Add catalog')}</Button>}>
       <div className="row-list">{catalogs.map((catalog) => <ItemRow key={catalog.id} icon={BookOpen} title={nameOf(catalog)} detail={catalog.path || catalog.root}>{catalog.isDefault || catalog.id === 'default' ? <Tag>Default</Tag> : <IconButton icon={Trash2} label="Remove catalog" onClick={() => setRemoveCatalog(catalog)} />}</ItemRow>)}</div>
     </Panel>
-    <Panel title={t('Settings.StoragePaths', 'Storage paths')} icon={FolderKanban} actions={<Button icon={Code2} onClick={() => perform('catalog:regenerate', [], 'Provider files regenerated')}>Regenerate provider files</Button>}>
-      <div className="row-list">{Object.entries(state.storage || (root ? { 'Data directory': root } : {})).map(([label, value]) => <ItemRow key={label} icon={FolderKanban} title={label} detail={typeof value === 'string' ? value : JSON.stringify(value)} />)}</div>
-    </Panel>
+    <StoragePanel />
     {editMcp && <McpEditor server={editMcp.id ? editMcp : null} close={() => setEditMcp(null)} save={async (server) => { const result = await save({ mcpServers: [...servers.filter((item) => item.id !== editMcp.id && item.id !== server.id), server] }); if (result !== false) setEditMcp(null); }} />}
     {editProvider && <ProviderEditor provider={editProvider} config={settings.providers?.[editProvider.id]} close={() => setEditProvider(null)} save={async (provider) => { const result = await save({ providers: { ...settings.providers, [editProvider.id]: provider } }); if (result !== false) setEditProvider(null); }} />}
     {removeMcp && <Confirm title="Remove MCP server" detail={`Remove ${nameOf(removeMcp)} from provider configuration?`} close={() => setRemoveMcp(null)} confirm={async () => { await save({ mcpServers: servers.filter((item) => item.id !== removeMcp.id) }); setRemoveMcp(null); }} />}

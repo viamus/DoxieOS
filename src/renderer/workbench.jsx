@@ -28,7 +28,15 @@ function WorkspaceEditor({ workspace, close }) {
     <div className="modal-body stack">
       <div className="form-grid"><Field label="Name"><input required value={draft.name} onChange={(event) => set('name', event.target.value)} /></Field><Field label="Workspace ID"><input pattern="[a-z0-9]+(-[a-z0-9]+)*" disabled={!!workspace} value={draft.id} placeholder={slug(draft.name) || 'my-workspace'} onChange={(event) => set('id', event.target.value)} /></Field></div>
       <Field label="Description"><textarea rows={2} value={draft.description} onChange={(event) => set('description', event.target.value)} /></Field>
-      {!workspace && <div className="field"><span>Existing folder</span><div className="input-action"><input aria-label="Existing folder" readOnly value={draft.path || ''} placeholder="Create a folder in DoxieOS storage" /><Button icon={Folder} onClick={async () => { const selected = await perform('workspace:pickDirectory'); if (selected) set('path', typeof selected === 'string' ? selected : selected.path); }}>Browse</Button>{draft.path && <IconButton label="Use a new folder" icon={X} onClick={() => set('path', '')} />}</div></div>}
+      {!workspace && <div className="field">
+        <span>Copy files from a folder (optional)</span>
+        <div className="input-action">
+          <input aria-label="Source folder" readOnly value={draft.path || ''} placeholder="Start with an empty workspace" />
+          <Button icon={Folder} onClick={async () => { const selected = await perform('workspace:pickDirectory'); if (selected) set('path', typeof selected === 'string' ? selected : selected.path); }}>Choose folder</Button>
+          {draft.path && <IconButton label="Clear source folder" icon={X} onClick={() => set('path', '')} />}
+        </div>
+        <small>DoxieOS copies the files into the new workspace in its application data folder.</small>
+      </div>}
       <details open={!!workspace}><summary>{t('Workspaces.MountedLibraries', 'Mounted libraries')}</summary><div className="check-grid">{state.libraries.length ? state.libraries.map((library) => <label key={entityKey(library)} className="check"><input type="checkbox" checked={draft.mountedLibraryIds?.includes(library.id) || false} onChange={(event) => toggle('mountedLibraryIds', library.id, event.target.checked)} />{nameOf(library)}</label>) : <small>No libraries in the catalog.</small>}</div></details>
       <details><summary>Mounted agents</summary><div className="check-grid">{state.agents.map((agent) => <label key={entityKey(agent)} className="check"><input type="checkbox" checked={draft.mountedAgentIds?.includes(agent.id) || false} onChange={(event) => toggle('mountedAgentIds', agent.id, event.target.checked)} />{nameOf(agent)}</label>)}</div></details>
     </div><footer className="modal-footer"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" disabled={pending}>{workspace ? 'Save workspace' : 'Create workspace'}</Button></footer>

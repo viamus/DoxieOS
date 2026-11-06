@@ -3,6 +3,7 @@ const { basename, extname, isAbsolute, join, relative, sep } = require('node:pat
 const { randomUUID } = require('node:crypto');
 const { nextCron } = require('./workflows.cjs');
 const { safePath } = require('./storage.cjs');
+const { sweepScratch } = require('./housekeeping.cjs');
 const { definitions, settingsFor, jsonSetting } = require('./providers.cjs');
 const { executablePath, launch } = require('./processes.cjs');
 
@@ -134,7 +135,10 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       });
       const configuration = settings();
       return {
-        ...catalog, root: storage.root, storage: { 'Data directory': storage.root, 'State database': storage.databasePath, ...storage.roots },
+        ...catalog, root: storage.root, storage: {
+          'App data': app.getPath('userData'), 'Data directory': storage.root, 'State database': storage.databasePath,
+          'Provider profiles': safePath(storage.root, '.providers'), ...storage.roots,
+        },
         settings: configuration, providers: Object.values(configuration.providers), agentRuns: agents.listRuns(),
         workflowRuns: workflows.listRuns(), notifications: notifications.list(), consoles: consoles.list(),
         version: app.getVersion(),
@@ -153,7 +157,10 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       emit({ type: 'catalog:changed', kind });
       return removed;
     },
-    'catalog:regenerate': () => storage.regenerate(),
+    'catalog:regenerate': () => {
+      mcp.refresh();
+      return storage.regenerate();
+    },
     'catalog:detectLegacy': () => storage.detectLegacy(),
     'catalog:migrateLegacy': () => {
       const result = storage.migrateLegacy();
@@ -225,7 +232,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'run-files:open': (id, path = '') => openPath(shell, runPath(id, path)),
     'run-files:download': (id, path) => copyToDialog(runPath(id, path)),
     'workspace:pickDirectory': async () => {
-      const selection = await dialog.showOpenDialog(window(), { properties: ['openDirectory', 'createDirectory'] });
+      const selection = await dialog.showOpenDialog(window(), { properties: ['openDirectory'] });
       return selection.canceled ? null : selection.filePaths[0];
     },
     'workspace:open': (id, target) => {
@@ -267,6 +274,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'settings:save': saveSettings,
     'settings:auth': (providerId) => consoles.start({ providerId, auth: true }),
     'settings:importMcp': () => mcp.importGlobals(),
+    'storage:cleanup': async () => ({ removed: await sweepScratch({ storage, builders, retentionMs: 0 }) }),
     'notifications:read': (id) => notifications.read(id),
     'notifications:openSource': (id) => {
       const item = notifications.list().find(notification => notification.id === id);

@@ -50,6 +50,8 @@ try {
       console.log(target);
       continue;
     }
+    const launcher = run('git', ['show', 'HEAD:run.bat']).toString('utf8').replace(/\r?\n/g, '\r\n');
+    await writeFile(join(target, 'run.bat'), launcher);
     const folder = basename(target);
     const archive = join(output, `${folder}.zip`);
     run('tar.exe', ['-a', '-cf', archive, folder], output);

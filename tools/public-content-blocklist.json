@@ -107,6 +107,7 @@
     ".mjs",
     ".jsx",
     ".npmrc",
+    ".bat",
     ".json",
     ".md",
     ".yml",

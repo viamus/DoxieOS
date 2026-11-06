@@ -157,3 +157,103 @@ test('rejects malformed ZIP paths and oversized declared entries before extracti
   assert.throws(() => storage.importItem('libraries', oversized), /extraction limits/);
   assert.deepEqual(storage.list('libraries'), []);
 });
+
+test('imports a workbench into managed storage without writing to it or copying private configuration', t => {
+  const { home, open } = setup(t);
+  const source = path.join(home, 'checkout');
+  const workspaceSource = path.join(source, '.workspace', 'release');
+  write(path.join(source, '.doxie', 'skills', 'review', 'manifest.json'), '{"id":"review","displayName":"Review"}');
+  write(path.join(source, '.doxie', 'skills', 'review', 'body.md'), 'Review this change.');
+  write(path.join(workspaceSource, 'workspace.json'), '{"Name":"Release"}');
+  write(path.join(workspaceSource, 'notes', 'summary.md'), 'Existing notes');
+  write(path.join(workspaceSource, '.git', 'config'), 'repository settings');
+  write(path.join(workspaceSource, '.env.local'), 'private configuration');
+  const outside = path.join(home, 'other');
+  write(path.join(outside, 'private.txt'), 'private outside file');
+  fs.symlinkSync(outside, path.join(workspaceSource, 'junction'), process.platform === 'win32' ? 'junction' : 'dir');
+  const storage = open({ managed: true, workspacesRoot: path.join(source, '.workspace') });
+  const imported = storage.importWorkbench(source);
+  assert.equal(imported.skills, 1);
+  assert.equal(imported.workspaces, 1);
+  assert.equal(imported.files, 4);
+  assert.equal(storage.get('skills', 'review').body, 'Review this change.');
+  assert.equal(storage.get('workspaces', 'release').path, path.join(storage.root, '.workspace', 'release'));
+  assert.deepEqual(storage.listFiles('workspaces', 'release').map(item => item.name).sort(), ['notes', 'workspace.json']);
+  storage.writeFile('workspaces', 'release', 'notes/summary.md', 'Local changes');
+  storage.save('skills', { id: 'review', body: 'Local review instructions' });
+  assert.equal(storage.importWorkbench(source).workspaces, 0);
+  write(path.join(source, '.doxie', 'skills', 'review', 'memories', 'review.md'), 'Run the tests.');
+  write(path.join(workspaceSource, 'notes', 'extra.md'), 'New notes');
+  const repaired = storage.importWorkbench(source);
+  assert.equal(repaired.skills, 1);
+  assert.equal(repaired.workspaces, 1);
+  assert.equal(storage.get('skills', 'review').body, 'Local review instructions');
+  assert.equal(storage.get('skills', 'review').memories[0].content, 'Run the tests.');
+  assert.equal(storage.readFile('workspaces', 'release', 'notes/extra.md').content, 'New notes');
+  assert.equal(storage.readFile('workspaces', 'release', 'notes/summary.md').content, 'Local changes');
+  assert.equal(fs.readFileSync(path.join(workspaceSource, 'notes', 'summary.md'), 'utf8'), 'Existing notes');
+  assert.throws(() => storage.importWorkbench(home), /outside the destination workbench/);
+  assert.equal(fs.existsSync(path.join(source, '.claude')), false);
+});
+
+test('localizes legacy and newly selected catalog roots before permitting writes', t => {
+  const { home, open } = setup(t);
+  const legacyRoot = path.join(home, 'previous');
+  const oldCatalog = path.join(legacyRoot, 'team');
+  const external = path.join(home, 'other');
+  write(path.join(oldCatalog, 'libraries', 'policy', 'library.json'), '{"name":"Team policy"}');
+  write(path.join(external, 'skills', 'review', 'manifest.json'), '{"id":"review"}');
+  write(path.join(external, 'skills', 'review', 'body.md'), 'Review this change.');
+  const storage = open({ managed: true, legacyRoot, settings: { 'doxie.catalog.customRoots': [{ id: 'team', name: 'Team', path: 'team' }] } });
+  const team = storage.listCatalogs().find(catalog => catalog.id === 'team');
+  assert.equal(team.path, path.join(storage.root, '.doxie', 'catalogs', 'team'));
+  assert.equal(storage.get('libraries', 'policy', 'team').name, 'Team policy');
+  storage.saveCatalogs([...storage.listCatalogs(), { id: 'other', name: 'Other', path: external }]);
+  assert.equal(storage.get('skills', 'review', 'other').path, path.join(storage.root, '.doxie', 'catalogs', 'other', 'skills', 'review'));
+  storage.save('skills', { id: 'review', catalogId: 'other', body: 'New local body' });
+  assert.equal(fs.readFileSync(path.join(external, 'skills', 'review', 'body.md'), 'utf8'), 'Review this change.');
+  assert.equal(fs.existsSync(path.join(external, 'workflows')), false);
+  assert.equal(fs.existsSync(path.join(oldCatalog, 'agents')), false);
+});
+
+test('repairs missing bundled files on startup while retaining managed edits', t => {
+  const { home, open } = setup(t);
+  const bundle = path.join(home, 'bundle', '.doxie', 'skills', 'review');
+  write(path.join(bundle, 'manifest.json'), '{"id":"review","displayName":"Review"}');
+  write(path.join(bundle, 'body.md'), 'Bundled body');
+  const first = open({ managed: true, bundledRoot: path.join(home, 'bundle') });
+  first.save('skills', { id: 'review', body: 'Local body' });
+  write(path.join(bundle, 'guide.md'), 'New bundled guide');
+  write(path.join(bundle, '.env'), 'private configuration');
+  write(path.join(bundle, 'local-notes.md'), 'Untracked instructions');
+  const restarted = open({ managed: true, bundledRoot: path.join(home, 'bundle'), bundledFiles: [
+    '.doxie/skills/review/body.md', '.doxie/skills/review/guide.md', '.doxie/skills/review/.env',
+  ] });
+  assert.equal(restarted.get('skills', 'review').body, 'Local body');
+  assert.equal(restarted.readFile('skills', 'review', 'guide.md').content, 'New bundled guide');
+  assert.equal(fs.existsSync(path.join(restarted.get('skills', 'review').path, '.env')), false);
+  assert.equal(fs.existsSync(path.join(restarted.get('skills', 'review').path, 'local-notes.md')), false);
+});
+
+test('creates a managed workspace from a selected folder without using its metadata or altering its files', t => {
+  const { home, open } = setup(t);
+  const source = path.join(home, 'external-project');
+  write(path.join(source, 'workspace.json'), '{"Name":"Source title","MountedLibraries":["unwanted"]}');
+  write(path.join(source, 'WORKSPACE.md'), 'Existing notes');
+  write(path.join(source, 'docs', 'overview.md'), 'Project overview');
+  write(path.join(source, '.env'), 'private configuration');
+  const storage = open({ managed: true });
+  const workspace = storage.save('workspaces', { id: 'project-copy', name: 'Managed copy', path: source });
+  assert.equal(workspace.path, path.join(storage.root, '.workspace', 'project-copy'));
+  assert.equal(workspace.name, 'Managed copy');
+  assert.deepEqual(workspace.mountedLibraryIds, []);
+  assert.equal(storage.readFile('workspaces', workspace.id, 'WORKSPACE.md').content, 'Existing notes');
+  assert.equal(storage.readFile('workspaces', workspace.id, 'docs/overview.md').content, 'Project overview');
+  assert.equal(fs.existsSync(path.join(workspace.path, '.env')), false);
+  assert.equal(fs.readFileSync(path.join(source, 'workspace.json'), 'utf8'), '{"Name":"Source title","MountedLibraries":["unwanted"]}');
+  assert.equal(fs.existsSync(path.join(source, 'memory')), false);
+  assert.equal(storage.save('workspaces', { id: workspace.id, name: 'Renamed', path: workspace.path }).name, 'Renamed');
+  write(path.join(source, 'memory'), 'Project file');
+  storage.save('workspaces', { id: 'copy-with-memory-file', name: 'Another copy', path: source });
+  assert.equal(storage.readFile('workspaces', 'copy-with-memory-file', 'memory').content, 'Project file');
+});

@@ -163,7 +163,7 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
     const augmentedPrompt = `${prompt}\n\nIf new operator guidance is available, read it from the file identified by DOXIE_OPERATOR_HINTS_FILE before the next work cycle.`;
     const options = headlessArgs(provider, params.sessionId);
     const mcpConfig = join(storage.root, '.mcp.json');
-    if (provider.id === 'claude-code' && cwd !== storage.root && existsSync(mcpConfig)) options.push('--mcp-config', mcpConfig);
+    if (provider.id === 'claude-code' && existsSync(mcpConfig)) options.push('--mcp-config', mcpConfig);
     const child = launch(provider.executable, options, {
       cwd, stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...provider.environment, DOXIE_AGENT_OUTPUT_DIR: outputDir, DOXIE_OPERATOR_HINTS_FILE: hintsFile },

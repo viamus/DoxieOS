@@ -3,7 +3,7 @@ const { existsSync } = require('node:fs');
 const { join } = require('node:path');
 const pty = require('node-pty');
 const { executablePath, invocation } = require('./processes.cjs');
-const { providerFor } = require('./providers.cjs');
+const { providerFor, providerEnvironment } = require('./providers.cjs');
 
 function size(value, fallback) {
   return Number.isInteger(value) ? Math.max(2, Math.min(500, value)) : fallback;
@@ -21,7 +21,7 @@ function createConsoles({ storage, emit }) {
     const cwd = workspace?.path || storage.root;
     const requestedProvider = options.providerId || (['codex', 'claude-code'].includes(options.kind) ? options.kind : null);
     const provider = requestedProvider ? providerFor(storage, requestedProvider) : null;
-    const env = { ...(provider?.environment || process.env), TERM: 'xterm-256color', DOXIE_PROJECT_ROOT: storage.root, DOXIE_ROOT: storage.root };
+    const env = { ...(provider?.environment || providerEnvironment(storage)), TERM: 'xterm-256color', DOXIE_PROJECT_ROOT: storage.root, DOXIE_ROOT: storage.root };
     delete env.ELECTRON_RUN_AS_NODE;
     const executable = provider?.executable || (windows
       ? executablePath('pwsh', env) || executablePath('powershell', env) || env.ComSpec
@@ -31,7 +31,7 @@ function createConsoles({ storage, emit }) {
     if (provider?.id === 'codex') args = login ? ['login'] : ['--dangerously-bypass-approvals-and-sandbox'];
     if (provider?.id === 'claude-code') args = login ? ['auth', 'login'] : ['--dangerously-skip-permissions'];
     const mcpConfig = join(storage.root, '.mcp.json');
-    if (provider?.id === 'claude-code' && !login && cwd !== storage.root && existsSync(mcpConfig)) args.push('--mcp-config', mcpConfig);
+    if (provider?.id === 'claude-code' && !login && existsSync(mcpConfig)) args.push('--mcp-config', mcpConfig);
     if (!executable) throw new Error('No shell executable was found.');
     const command = invocation(executable, args);
     const argv = command.verbatim ? command.args.join(' ') : command.args;

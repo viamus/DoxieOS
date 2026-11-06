@@ -15,7 +15,7 @@ flowchart TD
     Main --> Notifications["Notifications Bus"]
     Main --> Consoles["PTY Console Store"]
     Catalog --> Doxie[".doxie/"]
-    Catalog --> CustomCatalogs["Custom Catalog Roots"]
+    Catalog --> CustomCatalogs["Managed custom catalog copies"]
     Runner --> ProviderResolver["Provider Resolver"]
     ProviderResolver --> ClaudeCLI["Claude Code CLI"]
     ProviderResolver --> CodexCLI["OpenAI Codex CLI"]
@@ -79,22 +79,28 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    App["DoxieOS"] --> DB["SQLite state"]
-    App --> DoxieRoot[".doxie/ catalog"]
-    App --> WorkspaceRoot[".workspace/"]
-    App --> RunsRoot[".runs/"]
-    App --> SandboxRoot[".sandbox/"]
-    App --> PrivateRoot[".private/"]
+    App["DoxieOS"] --> Profile["Electron user data"]
+    Profile --> DB["state.db"]
+    Profile --> Providers["Provider profiles"]
+    Profile --> Workbench["workbench/"]
+    Workbench --> DoxieRoot[".doxie/ catalog"]
+    Workbench --> WorkspaceRoot[".workspace/"]
+    Workbench --> RunsRoot[".runs/"]
+    Workbench --> SandboxRoot[".sandbox/"]
+    Workbench --> PrivateRoot[".private/"]
 ```
 
-The canonical catalog should be versioned when assets are part of the product or
-team workflow. Runtime output folders and private provider state should stay
-local unless there is a deliberate reason to share them.
+Development and packaged launches use the same storage layout. The main
+process copies imported catalogs and workspace files into the workbench.
+Version the source catalog when assets are part of a product or team workflow.
+The runtime profile also contains local output and provider state.
 
 ## Provider Compatibility
 
 DoxieOS emits provider compatibility files from the canonical `.doxie/` catalog.
 Claude Code and Codex consume the files and the context assembled at dispatch.
+Each provider runs with a profile managed inside Electron user data. Sign-in
+from Settings uses the same profile as agent runs and consoles.
 
 ```mermaid
 flowchart TD

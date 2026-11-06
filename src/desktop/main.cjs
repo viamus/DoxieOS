@@ -1,7 +1,7 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, session, shell } = require('electron');
-const { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } = require('node:fs');
+const { existsSync, readFileSync, readdirSync } = require('node:fs');
 const { homedir } = require('node:os');
-const { dirname, join, resolve, sep } = require('node:path');
+const { join, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createStorage, safePath } = require('./storage.cjs');
 const { createAgents } = require('./agents.cjs');
@@ -11,6 +11,7 @@ const { createBuilders } = require('./builders.cjs');
 const { createMcp } = require('./mcp.cjs');
 const { createActions, createNotifications } = require('./ipc.cjs');
 const { startHousekeeping } = require('./housekeeping.cjs');
+const { prepareProfile } = require('./profile.cjs');
 
 const startPage = 'doxie://app/index.html';
 const appRoot = resolve(__dirname, '../..');
@@ -22,7 +23,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'doxie', privileges: {
 } }]);
 app.enableSandbox();
 app.setAppUserModelId('org.doxieos.desktop');
-if (process.env.DOXIE_USER_DATA) app.setPath('userData', resolve(process.env.DOXIE_USER_DATA));
+const testProfile = process.env.DOXIE_TEST === '1' && process.env.DOXIE_USER_DATA;
+if (testProfile) app.setPath('userData', resolve(testProfile));
 
 let window;
 let storage;
@@ -30,7 +32,6 @@ let agents;
 let workflows;
 let consoles;
 let stopHousekeeping;
-let pendingRoot;
 let quitting = false;
 let closed = false;
 
@@ -45,18 +46,6 @@ function selectedRoot() {
     if (saved.root && existsSync(saved.root)) return saved.root;
   } catch {}
   return null;
-}
-
-function repoRoot(start) {
-  for (let directory = resolve(start); ; directory = dirname(directory)) {
-    if (existsSync(join(directory, '.doxie'))) return directory;
-    if (dirname(directory) === directory) return null;
-  }
-}
-
-function expandPath(value, root) {
-  const expanded = value.replace(/%([^%]+)%/g, (token, name) => process.env[name] || token);
-  return resolve(root, expanded.startsWith(`~${sep}`) || expanded.startsWith('~/') ? join(homedir(), expanded.slice(2)) : expanded);
 }
 
 function releaseNotes() {
@@ -74,15 +63,14 @@ function releaseNotes() {
   return notes;
 }
 
-function initialize() {
-  const root = resolve(process.env.DOXIE_ROOT || selectedRoot() || (!app.isPackaged && (repoRoot(process.cwd()) || appRoot)) || join(app.getPath('userData'), 'workbench'));
+async function initialize() {
   const legacyLocations = [process.env.LOCALAPPDATA, process.env.XDG_DATA_HOME, join(homedir(), '.local', 'share'), join(homedir(), 'Library', 'Application Support')].filter(Boolean);
-  const previous = legacyLocations.map(directory => join(directory, 'Viamus.Doxie.Orchestrator', 'state.db')).find(existsSync);
-  const configured = process.env.DOXIE_DATABASE_PATH || process.env.Storage__DatabasePath;
-  const databasePath = configured ? expandPath(configured, root)
-    : previous || join(app.getPath('userData'), 'state.db');
+  const legacyDatabases = testProfile ? [] : legacyLocations.map(directory => join(directory, 'Viamus.Doxie.Orchestrator', 'state.db'));
+  const { root, databasePath } = await prepareProfile(app.getPath('userData'), legacyDatabases);
   const bundledRoot = app.isPackaged ? process.resourcesPath : appRoot;
-  storage = createStorage({ root, databasePath, bundledRoot, workspacesRoot: process.env.Storage__WorkspacesDirectory });
+  const seedManifest = join(renderer, 'doxie-catalog.json');
+  const bundledFiles = app.isPackaged ? undefined : existsSync(seedManifest) ? JSON.parse(readFileSync(seedManifest, 'utf8')) : [];
+  storage = createStorage({ root, databasePath, bundledRoot, bundledFiles, managed: true, legacyRoot: selectedRoot() || appRoot });
   storage.regenerate();
   storage.watchCatalog?.(() => emit({ type: 'catalog:changed' }), error => console.error(error.message));
   const notifications = createNotifications(storage, emit);
@@ -91,6 +79,8 @@ function initialize() {
   consoles = createConsoles({ storage, emit });
   const builders = createBuilders({ storage, agents, emit });
   const mcp = createMcp(storage);
+  try { mcp.refresh(); }
+  catch (error) { console.error('Could not regenerate DoxieOS provider configuration:', error.message); }
   const actions = createActions({ app, dialog, shell, window: () => window, storage, agents, workflows, consoles, builders, notifications, mcp, emit, releaseNotes: releaseNotes() });
   ipcMain.handle('doxie:invoke', (event, action, args) => {
     if (quitting || event.sender !== window?.webContents || event.senderFrame !== event.sender.mainFrame
@@ -123,18 +113,20 @@ function createMenu() {
   const menu = [];
   if (process.platform === 'darwin') menu.push({ role: 'appMenu' });
   menu.push({ label: 'File', submenu: [
-    { label: 'Open Doxie folder…', accelerator: 'CmdOrCtrl+Shift+O', enabled: !process.env.DOXIE_ROOT, click: async () => {
+    { label: 'Import workbench…', accelerator: 'CmdOrCtrl+Shift+O', click: async () => {
       if (!window) return;
-      const pick = await dialog.showOpenDialog(window, { title: 'Open Doxie folder', defaultPath: storage.root, properties: ['openDirectory', 'createDirectory'] });
+      const pick = await dialog.showOpenDialog(window, { title: 'Import Doxie workbench', defaultPath: selectedRoot() || storage.root, properties: ['openDirectory'] });
       if (pick.canceled || !pick.filePaths[0] || pick.filePaths[0] === storage.root) return;
-      const answer = await dialog.showMessageBox(window, {
-        type: 'question', message: 'Restart with this Doxie folder?',
-        detail: 'The app will stop active runs and terminals before restarting.',
-        buttons: ['Cancel', 'Restart'], cancelId: 0, defaultId: 0,
-      });
-      if (answer.response !== 1) return;
-      pendingRoot = pick.filePaths[0];
-      app.quit();
+      try {
+        const result = storage.importWorkbench(pick.filePaths[0]);
+        emit({ type: 'catalog:changed' });
+        await dialog.showMessageBox(window, {
+          type: 'info', message: 'Workbench import complete',
+          detail: `${result.files} file(s) copied into the DoxieOS profile.`,
+        });
+      } catch (error) {
+        await dialog.showMessageBox(window, { type: 'error', message: 'Could not import the workbench', detail: error.message });
+      }
     } },
     { type: 'separator' },
     { role: process.platform === 'darwin' ? 'close' : 'quit' },
@@ -174,7 +166,7 @@ if (!app.requestSingleInstanceLock()) {
         return new Response(null, { status: 404 });
       }
     });
-    initialize();
+    await initialize();
     createMenu();
     await createWindow();
     app.on('activate', () => { if (!window && !quitting) void createWindow(); });
@@ -194,12 +186,6 @@ if (!app.requestSingleInstanceLock()) {
     Promise.allSettled([workflows?.close(), consoles?.close(), stopHousekeeping?.()]).then(async () => {
       await agents?.close();
       storage.close();
-      if (pendingRoot) {
-        const directory = app.getPath('userData');
-        mkdirSync(directory, { recursive: true });
-        writeFileSync(join(directory, 'workbench-root.json'), JSON.stringify({ root: pendingRoot }), { mode: 0o600 });
-        app.relaunch();
-      }
     }).catch(error => console.error(error)).finally(() => {
       closed = true;
       app.quit();
