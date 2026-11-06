@@ -83,8 +83,10 @@ interactive console launches its provider on demand.
 
 Model selectors can refresh the installed providers' inventory and show its
 source. Codex and Claude Code use model metadata from the DoxieOS or installed
-CLI profiles when available. A cached or advertised model can still require
-account access. You can enter a model ID directly for a custom provider setup.
+CLI profiles when available. In provider settings, **Default model** lists
+those models. Choose **CLI default** to let the provider select its model or
+enter a custom ID for a gateway. A cached or advertised model can still
+require account access.
 
 The reasoning effort control shows the levels the model advertises when
 available. A run can override the effort for one execution, and an agent,

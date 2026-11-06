@@ -6,10 +6,10 @@ const { reasoningEfforts, normalizeEffort, resolveExecution } = require('./execu
 const { localProviderBaseUrl } = require('./model-catalog.cjs');
 
 const definitions = {
-  'claude-code': { id: 'claude-code', name: 'Claude Code', executable: 'claude', models: [] },
-  codex: { id: 'codex', name: 'OpenAI Codex', executable: 'codex', models: [], model: 'gpt-5.5' },
-  ollama: { id: 'ollama', name: 'Ollama', executable: 'codex', models: [], requiresAuth: false, localBaseUrl: localProviderBaseUrl('ollama') },
-  lmstudio: { id: 'lmstudio', name: 'LM Studio', executable: 'codex', models: [], requiresAuth: false, localBaseUrl: localProviderBaseUrl('lmstudio') },
+  'claude-code': { id: 'claude-code', name: 'Claude Code', executable: 'claude' },
+  codex: { id: 'codex', name: 'OpenAI Codex', executable: 'codex' },
+  ollama: { id: 'ollama', name: 'Ollama', executable: 'codex', requiresAuth: false, localBaseUrl: localProviderBaseUrl('ollama') },
+  lmstudio: { id: 'lmstudio', name: 'LM Studio', executable: 'codex', requiresAuth: false, localBaseUrl: localProviderBaseUrl('lmstudio') },
 };
 
 function readJson(path, fallback = {}) {
@@ -41,7 +41,10 @@ function settingsFor(storage) {
   const saved = jsonSetting(storage, 'desktop.providers', {});
   const providers = Object.fromEntries(Object.entries(definitions).map(([id, defaults]) => {
     const executable = saved[id]?.executable || (defaults.localBaseUrl && saved.codex?.executable) || defaults.executable;
-    const provider = { ...defaults, ...saved[id], id, executable, localBaseUrl: defaults.localBaseUrl, requiresAuth: defaults.requiresAuth !== false };
+    const provider = {
+      ...defaults, executable, model: saved[id]?.model ?? null, effort: saved[id]?.effort ?? null,
+      environment: saved[id]?.environment, requiresAuth: defaults.requiresAuth !== false,
+    };
     const env = providerEnvironment(storage, { ...process.env, ...provider.environment });
     return [id, {
       ...provider, reasoningEfforts: reasoningEfforts[id] || [],

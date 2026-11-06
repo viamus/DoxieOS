@@ -89,8 +89,9 @@ const modelSources = {
   'claude-workbench-settings': 'DoxieOS Claude settings', 'claude-workbench-cache': 'DoxieOS Claude cache',
   'codex-host-catalog': 'Installed Codex catalog', 'codex-host-cache': 'Installed Codex cache', 'codex-host-settings': 'Installed Codex settings',
   'codex-workbench-catalog': 'DoxieOS Codex catalog', 'codex-workbench-cache': 'DoxieOS Codex cache', 'codex-workbench-settings': 'DoxieOS Codex settings',
-  'ollama-loopback': 'Local Ollama server', 'lmstudio-loopback': 'Local LM Studio server', configured: 'DoxieOS settings',
+  'ollama-loopback': 'Local Ollama server', 'lmstudio-loopback': 'Local LM Studio server',
 };
+const customModelOption = '@custom-model-id';
 
 const effortLevels = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', ultra: 'Ultra' };
 const effortScale = Object.keys(effortLevels);
@@ -123,12 +124,13 @@ function ReasoningEffortField({ levels, value, inherited, onChange }) {
   </fieldset>;
 }
 
-export function ModelField({ providerId, value, onChange, suggestions, placeholder, defaultModel, disabled, required, hint, label = 'Model', effort }) {
-  const { state } = useApp();
+export function ModelField({ providerId, value, onChange, placeholder, defaultModel, disabled, required, hint, label = 'Model', effort, select = false }) {
+  const t = useText();
   const modelsId = useId();
   const statusId = useId();
   const force = useRef(null);
   const [revision, setRevision] = useState(0);
+  const [useCustomModel, setUseCustomModel] = useState(false);
   const canDiscover = Boolean(providerId && (!disabled || effort));
   const inventory = useAsync(() => {
     if (!canDiscover) return null;
@@ -137,31 +139,40 @@ export function ModelField({ providerId, value, onChange, suggestions, placehold
     return invoke('models:list', providerId, { refresh }).then((result) => ({ ...result, providerId }));
   }, [providerId, canDiscover, revision]);
   const current = inventory.value?.providerId === providerId ? inventory.value : null;
-  const configured = suggestions || state.settings.providers?.[providerId]?.models || [];
-  const detected = current?.models || [];
-  const models = new Map();
-  for (const model of [...detected, ...(Array.isArray(configured) ? configured : [])]) {
-    const id = typeof model === 'string' ? model : model.id;
-    if (id && !models.has(id)) models.set(id, typeof model === 'string' ? { id } : model);
-  }
+  const models = new Map(current?.models.map((model) => [model.id, model]));
   const source = modelSources[current?.source] || current?.source;
-  const status = current?.status === 'ready' ? `${detected.length} ${detected.length === 1 ? 'model' : 'models'}` : current?.status === 'empty' ? 'No models reported' : 'Inventory unavailable';
-  const summary = inventory.loading ? 'Checking model inventory…' : [status, source, current?.status !== 'ready' && models.size ? `${models.size} configured` : null].filter(Boolean).join(' · ');
+  const status = current?.status === 'ready' ? `${models.size} ${models.size === 1 ? 'model' : 'models'}` : current?.status === 'empty' ? 'No models reported' : 'Inventory unavailable';
+  const summary = inventory.loading ? 'Checking model inventory…' : [status, source].filter(Boolean).join(' · ');
   const availableEfforts = (model) => models.get(model.trim() || defaultModel || (providerId === 'claude-code' ? 'default' : undefined))?.reasoningEfforts ?? effort?.levels ?? [];
+  const updateModel = (model) => onChange(model, availableEfforts(model).includes(effort?.value) ? effort.value : null);
+  const fieldProps = { 'aria-label': label, 'aria-describedby': canDiscover ? statusId : undefined, disabled, required };
+  const customLabel = t('Models.CustomId', 'Custom model ID');
+  const selectedModel = value || '';
   return <><div className="model-field">
     <Field label={label} hint={hint}>
-      <input aria-label={label} aria-describedby={canDiscover ? statusId : undefined} list={modelsId} value={value || ''} disabled={disabled} required={required} maxLength={200} onChange={(event) => {
+      {select ? <select {...fieldProps} value={useCustomModel ? customModelOption : selectedModel} onChange={(event) => {
         const model = event.target.value;
-        onChange(model, availableEfforts(model).includes(effort?.value) ? effort.value : null);
-      }} placeholder={placeholder || 'Provider default'} />
-      <datalist id={modelsId}>{[...models.values()].map((model) => <option key={model.id} value={model.id} label={[model.label !== model.id && model.label, modelSources[model.source]].filter(Boolean).join(' · ') || undefined} />)}</datalist>
+        setUseCustomModel(model === customModelOption);
+        if (model !== customModelOption) updateModel(model);
+      }}>
+        <option value="">{t('Models.CliDefault', 'CLI default')}</option>
+        {selectedModel && !models.has(selectedModel) && <option value={selectedModel}>{selectedModel} ({t('Models.NotInInventory', 'not in inventory')})</option>}
+        {[...models.values()].map((model) => <option key={model.id} value={model.id}>{model.label || model.id}</option>)}
+        <option value={customModelOption}>{customLabel}…</option>
+      </select> : <>
+        <input {...fieldProps} list={modelsId} value={selectedModel} maxLength={200} onChange={(event) => updateModel(event.target.value)} placeholder={placeholder || 'Provider default'} />
+        <datalist id={modelsId}>{[...models.values()].map((model) => <option key={model.id} value={model.id} label={[model.label !== model.id && model.label, modelSources[model.source]].filter(Boolean).join(' · ') || undefined} />)}</datalist>
+      </>}
     </Field>
     {canDiscover && <div className="model-inventory">
       <small id={statusId} role="status" title={current?.message || inventory.error || undefined}>{summary}</small>
       <IconButton type="button" icon={RotateCw} label="Refresh models" disabled={inventory.loading} onClick={() => { force.current = providerId; setRevision((current) => current + 1); }} />
     </div>}
   </div>
-  {effort && <ReasoningEffortField {...effort} levels={availableEfforts(value || '')} />}</>;
+  {select && useCustomModel && <Field label={customLabel}>
+    <input aria-label={customLabel} value={selectedModel} disabled={disabled} required maxLength={200} onChange={(event) => updateModel(event.target.value)} />
+  </Field>}
+  {effort && <ReasoningEffortField {...effort} levels={availableEfforts(selectedModel)} />}</>;
 }
 
 export function ExecutionFields({ value, onChange, inherited, inheritedLabel = 'Application default', requireProvider = false }) {
@@ -185,7 +196,7 @@ export function ExecutionFields({ value, onChange, inherited, inheritedLabel = '
       {providerId && !state.providers.some(({ id }) => id === providerId) && <option value={providerId}>{providerId}</option>}
       {state.providers.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}
     </select></Field>
-    <ModelField providerId={effectiveId} value={value?.model} suggestions={provider?.models} disabled={modelDisabled} required={modelRequired} placeholder={defaultModel} defaultModel={defaultModel} hint={modelHint}
+    <ModelField providerId={effectiveId} value={value?.model} disabled={modelDisabled} required={modelRequired} placeholder={defaultModel} defaultModel={defaultModel} hint={modelHint}
       onChange={(model, effort) => onChange({ providerId, model, effort })}
       effort={{ levels: provider?.reasoningEfforts, value: value?.effort, inherited: inheritedEffort,
         onChange: (effort) => onChange({ providerId: requireProvider && effort ? effectiveId : providerId, model: value?.model, effort }) }} />

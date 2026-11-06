@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleDollarSign, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2 } from 'lucide-react';
-import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, split, useApp, useEffortLabel, useText } from './ui.jsx';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, useApp, useEffortLabel, useText } from './ui.jsx';
 
 const categories = [
   { key: 'workflows', label: 'Workflows', icon: GitBranch, tone: 'copper' },
@@ -161,14 +161,15 @@ function McpEditor({ server, close, save }) {
 }
 
 function ProviderEditor({ provider, config, close, save }) {
-  const [draft, setDraft] = useState({ ...config, executable: config?.executable || provider.executable || '', models: (Array.isArray(config?.models) ? config.models : []).join(', ') });
+  const t = useText();
+  const [draft, setDraft] = useState({ executable: config?.executable || provider.executable || '', model: config?.model, effort: config?.effort });
   const [environment, setEnvironment] = useState('');
   const [replaceEnvironment, setReplaceEnvironment] = useState(false);
   const [error, setError] = useState('');
   return <Modal title={`Configure ${provider.displayName || provider.name || provider.id}`} icon={Cpu} close={close}><form onSubmit={async (event) => {
     event.preventDefault();
     try {
-      const next = { ...draft, models: split(draft.models) };
+      const next = { ...draft };
       if (replaceEnvironment) {
         const parsed = JSON.parse(environment || '{}');
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.values(parsed).some((value) => typeof value !== 'string')) throw new Error('Environment must be a JSON object with string values.');
@@ -178,10 +179,9 @@ function ProviderEditor({ provider, config, close, save }) {
     } catch (problem) { setError(problem.message); }
   }}><div className="modal-body stack">
     <Field label="CLI executable"><input value={draft.executable} onChange={(event) => setDraft({ ...draft, executable: event.target.value })} /></Field>
-    <ModelField label="Default model" providerId={provider.id} value={draft.model} suggestions={split(draft.models)} hint="Used when a run inherits this provider’s model." placeholder="CLI default"
+    <ModelField select label={t('Models.Default', 'Default model')} providerId={provider.id} value={draft.model} hint="Used when a run inherits this provider’s model."
       onChange={(model, effort) => setDraft({ ...draft, model, effort })}
       effort={{ levels: provider.reasoningEfforts, value: draft.effort, onChange: (effort) => setDraft({ ...draft, effort }) }} />
-    <Field label="Model names" hint="Separate models with commas."><input value={draft.models} onChange={(event) => setDraft({ ...draft, models: event.target.value })} /></Field>
     {replaceEnvironment ? <Field label="Environment variables" hint="Enter a JSON object with string values."><JsonInput value={environment} onChange={setEnvironment} /></Field> : <Button onClick={() => setReplaceEnvironment(true)}>Set environment variables</Button>}
     <ErrorNotice error={error} />
   </div><footer className="modal-footer"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" icon={Save}>Save provider</Button></footer></form></Modal>;

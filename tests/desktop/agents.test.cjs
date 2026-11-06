@@ -5,7 +5,7 @@ const { join } = require('node:path');
 const { test } = require('node:test');
 const { createAgents, matches } = require('../../src/desktop/agents.cjs');
 const { createStorage } = require('../../src/desktop/storage.cjs');
-const { headlessArgs, inputMessage, providerOutput, providerFor } = require('../../src/desktop/providers.cjs');
+const { headlessArgs, inputMessage, providerOutput, providerFor, settingsFor } = require('../../src/desktop/providers.cjs');
 const { normalizeExecution, resolveExecution } = require('../../src/desktop/execution.cjs');
 const { invocation } = require('../../src/desktop/processes.cjs');
 
@@ -123,6 +123,18 @@ test('scopes inherited reasoning effort to its provider and model', () => {
   const args = headlessArgs({ id: 'codex', effort: 'ultra' });
   assert.deepEqual(args.slice(args.indexOf('-c'), args.indexOf('-c') + 2), ['-c', "model_reasoning_effort='ultra'"]);
   assert.doesNotThrow(() => invocation('codex.cmd', args));
+});
+
+test('uses the CLI default for new Codex profiles and keeps only the chosen model from old settings', () => {
+  const store = getSetting => ({ root: tmpdir(), getSetting });
+  const fresh = settingsFor(store(() => null)).providers.codex;
+  assert.equal(fresh.model, null);
+  assert.equal(headlessArgs(fresh).includes('--model'), false);
+  const old = { codex: { model: 'gateway/codex', models: ['old-suggestion'], effort: 'high' } };
+  const saved = settingsFor(store(key => key === 'desktop.providers' ? old : null)).providers.codex;
+  assert.equal(saved.model, 'gateway/codex');
+  assert.equal(saved.effort, 'high');
+  assert.equal(Object.hasOwn(saved, 'models'), false);
 });
 
 test('routes explicitly selected local models through the Codex Responses client', () => {

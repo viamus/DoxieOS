@@ -37,10 +37,10 @@ test-results/
 .doxie/libraries/*
 .doxie/workflows/*
 .doxie/skills/*
+.doxie/.retired/
 .doxie/agents/*
 !.doxie/agents/agent-builder/
 !.doxie/agents/workflow-builder/
-!.doxie/agents/workflow-output-contract-designer/
 .doxie/agents/*/*
 !.doxie/agents/*/body.md
 !.doxie/agents/*/manifest.json

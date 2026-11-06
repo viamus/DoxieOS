@@ -267,6 +267,31 @@ test('updates shipped connector definitions in an existing profile and preserves
   }
 });
 
+test('archives both installed copies of the retired bundled agent and preserves workflow definitions', t => {
+  const { home, open } = setup(t);
+  const root = path.join(home, 'project');
+  const id = 'workflow-output-contract-designer';
+  const folder = path.join(root, '.doxie');
+  for (const kind of ['agents', 'skills']) {
+    write(path.join(folder, kind, id, 'manifest.json'), JSON.stringify({ id }));
+    write(path.join(folder, kind, id, 'body.md'), `Local ${kind} notes`);
+  }
+  write(path.join(folder, 'agents', 'my-agent', 'manifest.json'), '{"id":"my-agent"}');
+  write(path.join(folder, 'agents', 'my-agent', 'body.md'), 'Keep this agent.');
+  const workflow = { id: 'existing', nodes: [{ id: 'review', kind: 'Agent', agentId: id }] };
+  write(path.join(folder, 'workflows', workflow.id, 'workflow.json'), JSON.stringify(workflow));
+
+  const storage = open({ managed: true });
+  assert.deepEqual(storage.list('agents').map(agent => agent.id), ['my-agent']);
+  assert.equal(storage.getDispatchAgent(id), null);
+  assert.deepEqual(storage.get('workflows', workflow.id).nodes, workflow.nodes);
+  for (const kind of ['agents', 'skills']) {
+    assert.equal(fs.existsSync(path.join(folder, kind, id)), false);
+    assert.equal(fs.readFileSync(path.join(folder, '.retired', id, kind, 'body.md'), 'utf8'), `Local ${kind} notes`);
+  }
+  assert.deepEqual(open({ managed: true }).list('agents').map(agent => agent.id), ['my-agent']);
+});
+
 test('creates a managed workspace from a selected folder without using its metadata or altering its files', t => {
   const { home, open } = setup(t);
   const source = path.join(home, 'external-project');

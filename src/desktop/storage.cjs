@@ -28,6 +28,8 @@ const json = data => `${JSON.stringify(data, null, 2)}\n`;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const isAgentKind = kind => kind === 'agents' || kind === 'skills';
 const internalAgents = new Set(['agent-builder', 'workflow-builder']);
+const retiredAgentId = 'workflow-output-contract-designer';
+const retiredDefaultAgent = (catalog, id) => catalog.isDefault && id.toLowerCase() === retiredAgentId;
 
 function stat(file) {
   return fs.lstatSync(file, { throwIfNoEntry: false });
@@ -345,6 +347,7 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
     if (matches.length && !overwrite) throw new Error(`Agent ${id} already exists with different contents`);
     const destination = matches.find(match => match.catalogId === catalog.id) ?? matches[0];
     const selected = destination ? selectCatalog(destination.catalogId) : catalog;
+    if (retiredDefaultAgent(selected, id)) throw new Error('This bundled agent has been retired from the default catalog');
     const nextFiles = new Map(files);
     if (agent) nextFiles.set('agent.md', agent);
     else if (!withSubagent && destination?.agentPath) nextFiles.set('agent.md', fs.readFileSync(destination.agentPath));
@@ -393,7 +396,7 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
         const imported = parseAgentZip(readZip(entries.get(file), budget));
         if (agentId !== imported.id) throw new Error('Bundled agent identifier does not match its manifest');
         recognized.add(file);
-        if (!connectorIds.has(agentId)) {
+        if (!connectorIds.has(agentId) && !retiredDefaultAgent(catalog, agentId)) {
           included.push(agentId);
           changes.push(...decideAgent(imported, catalog, overwrite));
         }
@@ -430,7 +433,7 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
       const source = safePath(root, relative);
       for (const entry of children(source)) {
         const id = kind === 'agents' && entry.isFile() && entry.name.endsWith('.md') ? entry.name.slice(0, -3) : entry.name;
-        if (!idPattern.test(id) || (isAgentKind(kind) && connectorIds.has(id))) continue;
+        if (!idPattern.test(id) || (isAgentKind(kind) && (connectorIds.has(id) || id === retiredAgentId))) continue;
         const from = safePath(source, entry.name);
         const target = safePath(roots[kind], isAgentKind(kind) ? id : entry.name);
         if (kind === 'agents') {
@@ -489,6 +492,11 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     const source = path.basename(bundledRoot) === '.doxie' ? path.resolve(bundledRoot) : path.resolve(bundledRoot, '.doxie');
     managedFiles.seed(source, bundledFiles);
   }
+  function retireBundledAgent() {
+    try { managedFiles.retireBundledAgent(retiredAgentId); }
+    catch (error) { console.error('Could not archive the retired DoxieOS agent:', error.message); }
+  }
+  if (managed) retireBundledAgent();
 
   databasePath = databasePath ?? path.join(root, 'state.db');
   if (databasePath !== ':memory:') fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -581,6 +589,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   function load(kind, id, catalog, allowLegacyPrompt = false) {
     oneSegment(id);
     if (isAgentKind(kind)) {
+      if (retiredDefaultAgent(catalog, id)) return null;
       if (connectorIds.has(id.toLowerCase()) && !(allowLegacyPrompt && id.toLowerCase() === 'prompt')) return null;
       const canonical = safePath(directory(catalog, 'agents'), id);
       const legacy = safePath(directory(catalog, 'legacySkills'), id);
@@ -733,6 +742,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     if (isAgentKind(kind) && connectorIds.has(id)) throw new Error(`${id} is a built-in connector identifier`);
     const previous = get(kind, id);
     const catalog = kind === 'workspaces' ? defaultCatalog : selectCatalog(data.catalogId ?? previous?.catalogId);
+    if (isAgentKind(kind) && retiredDefaultAgent(catalog, id)) throw new Error('This bundled agent has been retired from the default catalog');
     const current = get(kind, id, catalog.id) ?? previous;
     const moving = Boolean(current && current.catalogId !== catalog.id);
     const sourceCatalog = moving ? selectCatalog(current.catalogId) : catalog;
@@ -1005,6 +1015,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   function importWorkbench(source) {
     if (!managed) throw new Error('Workbench imports require managed storage');
     const counts = managedFiles.importWorkbench(source);
+    retireBundledAgent();
     regenerate();
     for (const workspace of list('workspaces')) updateWorkspaceContext(workspace);
     return counts;

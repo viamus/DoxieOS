@@ -74,12 +74,6 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     entry.promise = discoverModels({
       providerId: id, environment, hostEnvironment: process.env, workspaceRoot: storage.root,
       executable: executablePath(provider.executable, environment), useHostProfiles: process.env.DOXIE_TEST !== '1',
-    }).then(inventory => {
-      const models = new Map(inventory.models.map(model => [model.id, model]));
-      for (const id of [...(Array.isArray(provider.models) ? provider.models : []), provider.model]) {
-        if (id && !models.has(id)) models.set(id, { id, label: id, source: 'configured' });
-      }
-      return { ...inventory, models: [...models.values()] };
     }).finally(() => { entry.expires = Date.now() + 60_000; });
     inventories.set(id, entry);
     return entry.promise;
@@ -104,12 +98,11 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       const configured = {};
       for (const [id, defaults] of Object.entries(definitions)) {
         const value = { ...defaults, ...old[id], ...patch.providers[id] };
-        const models = Array.isArray(value.models) ? value.models.map(normalizeModel).filter(Boolean) : defaults.models;
         const environment = validatedEnvironment(value.environment ?? old[id]?.environment);
         const executable = String(value.executable || defaults.executable).trim();
         configured[id] = {
           ...(defaults.localBaseUrl && executable === defaults.executable ? {} : { executable }),
-          model: normalizeModel(value.model), effort: normalizeEffort(value.effort, id), models, environment,
+          model: normalizeModel(value.model), effort: normalizeEffort(value.effort, id), environment,
         };
       }
       storage.setSetting('desktop.providers', configured);

@@ -201,7 +201,18 @@ function createManagedFiles({ root, safePath, stat }) {
     }
   }
 
-  return { importWorkbench, importCatalog, seed, catalogRoot, copyWorkspace };
+  function retireBundledAgent(id) {
+    for (const kind of ['agents', 'skills']) {
+      const source = target(`.doxie/${kind}/${id}`);
+      if (!stat(source)?.isDirectory()) continue;
+      const archive = target(`.doxie/.retired/${id}`);
+      fs.mkdirSync(archive, { recursive: true });
+      const destination = safePath(archive, kind);
+      fs.renameSync(source, stat(destination) ? safePath(archive, `${kind}-${randomUUID()}`) : destination);
+    }
+  }
+
+  return { importWorkbench, importCatalog, seed, retireBundledAgent, catalogRoot, copyWorkspace };
 }
 
 module.exports = { createManagedFiles, connectorIds };

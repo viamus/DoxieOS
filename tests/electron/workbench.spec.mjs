@@ -18,6 +18,13 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     slug: 'doxie/consumer-v2', display_name: 'Fixture consumer', visibility: 'list',
     supported_reasoning_levels: [{ effort: 'low', description: 'Quick effort' }],
   };
+  const configuredModel = { slug: 'doxie/configured-v3', display_name: 'Fixture settings default', visibility: 'list' };
+  const retiredAgent = join(root, '.doxie', 'agents', 'workflow-output-contract-designer');
+  await mkdir(retiredAgent, { recursive: true });
+  await writeFile(join(retiredAgent, 'manifest.json'), JSON.stringify({
+    id: 'workflow-output-contract-designer', displayName: 'Workflow Output Contract Designer', category: 'Builder',
+  }));
+  await writeFile(join(retiredAgent, 'body.md'), 'Legacy bundled agent.');
   await mkdir(codexProfile, { recursive: true });
   await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [producerModel] }));
   const executablePath = process.env.DOXIE_TEST_EXECUTABLE;
@@ -42,15 +49,20 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     expect(paths['App data']).toBe(profile);
     expect(paths['State database']).toBe(join(profile, 'state.db'));
     expect(paths.workspaces).toBe(join(root, '.workspace'));
-    expect(agents.map(agent => agent.id)).toEqual(['workflow-output-contract-designer']);
+    expect(agents).toEqual([]);
     expect(connectors.map(connector => connector.id).sort()).toEqual(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'prompt', 'sandbox', 'write-to-workspace']);
     expect(paths.agents).toBe(join(root, '.doxie', 'agents'));
+    await expect(stat(retiredAgent)).rejects.toThrow(/ENOENT/);
     await expect(stat(outside)).rejects.toThrow(/ENOENT/);
     const security = await application.evaluate(({ BrowserWindow }) => {
       const options = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();
       return { contextIsolation: options.contextIsolation, nodeIntegration: options.nodeIntegration, sandbox: options.sandbox };
     });
     expect(security).toEqual({ contextIsolation: true, nodeIntegration: false, sandbox: true });
+
+    await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
+    await expect(page.getByText('Workflow Output Contract Designer', { exact: true })).toHaveCount(0);
 
     await page.getByRole('link', { name: 'Workspaces', exact: true }).first().click();
     await page.getByRole('button', { name: 'New workspace', exact: true }).first().click();
@@ -179,6 +191,21 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     expect(await readFile(join(root, '.runs', contextualRun.id, 'consumer', 'result.json'), 'utf8'))
       .toBe('{ "buildId": 9007199254740993, "note": "Preserve this context" }\n');
     await expect(stat(join(root, '.runs', contextualRun.id, '.doxie-transient'))).rejects.toThrow(/ENOENT/);
+
+    await page.getByRole('link', { name: 'Settings', exact: true }).first().click();
+    const codexSettings = page.locator('.item-row').filter({ has: page.getByText('OpenAI Codex', { exact: true }) });
+    await codexSettings.getByRole('button', { name: 'Configure provider' }).click();
+    const providerDialog = page.getByRole('dialog');
+    await expect(providerDialog.getByRole('heading', { name: 'Configure OpenAI Codex' })).toBeVisible();
+    await expect(providerDialog.getByLabel('Model names', { exact: true })).toHaveCount(0);
+    const modelDropdown = providerDialog.getByRole('combobox', { name: 'Default model', exact: true });
+    await expect(modelDropdown.getByRole('option', { name: 'Fixture producer', exact: true })).toHaveCount(1);
+    await expect(modelDropdown.getByRole('option', { name: 'Fixture settings default', exact: true })).toHaveCount(0);
+    await writeFile(join(codexProfile, 'models_cache.json'), JSON.stringify({ models: [producerModel, consumerModel, configuredModel] }));
+    await providerDialog.getByRole('button', { name: 'Refresh models' }).click();
+    await modelDropdown.selectOption({ label: 'Fixture settings default' });
+    await providerDialog.getByRole('button', { name: 'Save provider' }).click();
+    await expect(providerDialog).toHaveCount(0);
     expect(pageErrors).toEqual([]);
 
     await application.close();
@@ -191,6 +218,8 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     expect(restoredContext.nodeRuns.consumer.effort).toBe('low');
     const restoredStandalone = await restarted.evaluate(id => window.doxie.invoke('agent:run', id), standaloneId);
     expect(restoredStandalone.effort).toBe('medium');
+    const restoredSettings = await restarted.evaluate(async () => (await window.doxie.invoke('bootstrap')).settings);
+    expect(restoredSettings.providers.codex.model).toBe(configuredModel.slug);
   } finally {
     await application?.close().catch(() => {});
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
