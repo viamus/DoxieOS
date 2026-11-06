@@ -3,7 +3,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const catalogKinds = ['agents', 'skills', 'workflows', 'libraries'];
-const excludedNames = new Set(['.git', '.private', '.mcp.json', '.claude', '.codex', '.agents', 'node_modules']);
+const excludedNames = new Set(['.git', '.private', '.mcp.json', '.claude', '.claude.json', '.codex', '.agents', '.providers', 'node_modules']);
 const emptyCounts = () => ({ agents: 0, skills: 0, workflows: 0, libraries: 0, workspaces: 0, files: 0, skipped: 0 });
 
 function contains(parent, child) {

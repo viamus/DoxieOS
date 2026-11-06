@@ -242,6 +242,7 @@ test('creates a managed workspace from a selected folder without using its metad
   write(path.join(source, 'WORKSPACE.md'), 'Existing notes');
   write(path.join(source, 'docs', 'overview.md'), 'Project overview');
   write(path.join(source, '.env'), 'private configuration');
+  write(path.join(source, '.providers', 'codex', 'auth.json'), 'Provider profile fixture');
   const storage = open({ managed: true });
   const workspace = storage.save('workspaces', { id: 'project-copy', name: 'Managed copy', path: source });
   assert.equal(workspace.path, path.join(storage.root, '.workspace', 'project-copy'));
@@ -250,6 +251,7 @@ test('creates a managed workspace from a selected folder without using its metad
   assert.equal(storage.readFile('workspaces', workspace.id, 'WORKSPACE.md').content, 'Existing notes');
   assert.equal(storage.readFile('workspaces', workspace.id, 'docs/overview.md').content, 'Project overview');
   assert.equal(fs.existsSync(path.join(workspace.path, '.env')), false);
+  assert.equal(fs.existsSync(path.join(workspace.path, '.providers')), false);
   assert.equal(fs.readFileSync(path.join(source, 'workspace.json'), 'utf8'), '{"Name":"Source title","MountedLibraries":["unwanted"]}');
   assert.equal(fs.existsSync(path.join(source, 'memory')), false);
   assert.equal(storage.save('workspaces', { id: workspace.id, name: 'Renamed', path: workspace.path }).name, 'Renamed');

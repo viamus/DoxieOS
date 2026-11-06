@@ -49,7 +49,8 @@ SQLite stores run history, streamed output, and application settings. The
 Import workbench…** to copy missing `.doxie/` and `.workspace/` files from
 another workbench into the active one. Adding a custom catalog or choosing a
 source folder when creating a workspace also copies files into the managed
-storage.
+storage. Folder copies skip symbolic links, Git metadata, environment files,
+and provider profiles.
 
 Use **Settings → Storage paths → Clean temporary files** to remove eligible
 finished run output and temporary sandboxes. The confirmation explains which
