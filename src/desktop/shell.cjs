@@ -1,23 +1,12 @@
-const { spawn } = require('node:child_process');
-const { stat } = require('node:fs/promises');
-const { join } = require('node:path');
+const { realpath } = require('node:fs/promises');
 
-async function openPath(shell, path, { platform = process.platform, launch = spawn } = {}) {
-  const error = await shell.openPath(path);
-  if (!error) return true;
-
-  const windowsDirectory = process.env.SystemRoot || process.env.WINDIR;
-  if (platform !== 'win32' || !windowsDirectory || !(await stat(path).catch(() => null))?.isDirectory()) {
-    throw new Error(error);
-  }
-
-  // Some Windows shell configurations reject Electron's folder verb. Ask
-  // Explorer directly, keeping the validated directory as one argument.
-  const child = launch(join(windowsDirectory, 'explorer.exe'), [path], { cwd: path, stdio: 'ignore', windowsHide: false });
-  return new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('spawn', () => { child.unref(); resolve(true); });
-  });
+async function openPath(shell, path) {
+  // Packaged Windows processes can see a virtualized AppData location that
+  // Explorer cannot access. Pass the physical path across that boundary.
+  const physicalPath = await realpath(path);
+  const error = await shell.openPath(physicalPath);
+  if (error) throw new Error(error);
+  return true;
 }
 
 module.exports = { openPath };
