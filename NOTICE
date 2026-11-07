@@ -8,3 +8,7 @@ and first-party Doxie catalog patterns developed by Viamus and contributors.
 If you redistribute DoxieOS or a derivative work, keep this NOTICE file or an
 equivalent readable attribution notice with the redistributed source,
 documentation, package, or generated third-party notices surface.
+
+Local dictation uses OpenAI Whisper Tiny (MIT), with ONNX model exports from
+the Hugging Face ONNX Community and the Apache-2.0 Transformers.js runtime.
+Model revision and file digests are recorded in src/desktop/dictation-model.json.

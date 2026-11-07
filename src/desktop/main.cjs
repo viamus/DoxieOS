@@ -12,6 +12,7 @@ const { createMcp } = require('./mcp.cjs');
 const { createActions, createNotifications } = require('./ipc.cjs');
 const { startHousekeeping } = require('./housekeeping.cjs');
 const { prepareProfile } = require('./profile.cjs');
+const { createDictation } = require('./dictation.cjs');
 
 const startPage = 'doxie://app/index.html';
 const appRoot = resolve(__dirname, '../..');
@@ -31,6 +32,7 @@ let storage;
 let agents;
 let workflows;
 let consoles;
+let speech;
 let stopHousekeeping;
 let quitting = false;
 let closed = false;
@@ -78,10 +80,11 @@ async function initialize() {
   workflows = createWorkflows({ storage, agents, emit, notify: notifications.add });
   consoles = createConsoles({ storage, emit });
   const builders = createBuilders({ storage, agents, emit });
+  speech = createDictation({ root: storage.root, emit });
   const mcp = createMcp(storage);
   try { mcp.refresh(); }
   catch (error) { console.error('Could not regenerate DoxieOS provider configuration:', error.message); }
-  const actions = createActions({ app, dialog, shell, window: () => window, storage, agents, workflows, consoles, builders, notifications, mcp, emit, releaseNotes: releaseNotes() });
+  const actions = createActions({ app, dialog, shell, window: () => window, storage, agents, workflows, consoles, builders, speech, notifications, mcp, emit, releaseNotes: releaseNotes() });
   ipcMain.handle('doxie:invoke', (event, action, args) => {
     if (quitting || event.sender !== window?.webContents || event.senderFrame !== event.sender.mainFrame
       || event.senderFrame.url.split('#')[0] !== startPage || !Object.hasOwn(actions, action) || !Array.isArray(args)) {
@@ -183,7 +186,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
-    Promise.allSettled([workflows?.close(), consoles?.close(), stopHousekeeping?.()]).then(async () => {
+    Promise.allSettled([workflows?.close(), consoles?.close(), speech?.close(), stopHousekeeping?.()]).then(async () => {
       await agents?.close();
       storage.close();
     }).catch(error => console.error(error)).finally(() => {

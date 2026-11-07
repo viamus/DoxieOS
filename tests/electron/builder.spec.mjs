@@ -17,7 +17,8 @@ test('opens the builder automatically, sends with Enter, and recovers a failed t
     await writeFile(mock, windows ? `@"${process.execPath}" "${fixture}" %*\r\n`
       : `#!/bin/sh\nexec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
     application = await electron.launch({
-      ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }),
+      ...(executablePath ? { executablePath } : {}),
+      args: [...(executablePath ? [] : ['.']), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
       env: {
         ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1', CODEX_HOME: localCodex,
         OPENAI_API_KEY: 'test', OPENAI_BASE_URL: 'http://127.0.0.1:1',
@@ -28,19 +29,45 @@ test('opens the builder automatically, sends with Enter, and recovers a failed t
     await page.evaluate(executable => window.doxie.invoke('settings:save', {
       defaultProvider: 'codex', providers: { codex: { executable, model: 'doxie/builder-fixture' } },
     }), mock);
+    await application.evaluate(({ BrowserWindow, ipcMain }) => {
+      const original = ipcMain._invokeHandlers.get('doxie:invoke');
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const totalBytes = 45 * 1024 * 1024;
+      const status = { state: 'missing', receivedBytes: 0, totalBytes };
+      globalThis.speechFixture = { installs: 0, requests: [] };
+      const changed = () => contents.send('doxie:event', { type: 'speech:changed', status: { ...status } });
+      ipcMain.removeHandler('doxie:invoke');
+      ipcMain.handle('doxie:invoke', async (event, action, args) => {
+        if (!['speech:status', 'speech:install', 'speech:transcribe'].includes(action)) return original(event, action, args);
+        if (action === 'speech:status') return { ...status };
+        if (action === 'speech:install') {
+          globalThis.speechFixture.installs++;
+          status.state = 'downloading';
+          status.receivedBytes = totalBytes / 2;
+          changed();
+          await new Promise(resolve => setTimeout(resolve, 400));
+          status.state = 'ready';
+          status.receivedBytes = totalBytes;
+          changed();
+          return { ...status };
+        }
+        const { samples, language } = args[0];
+        if (!(samples instanceof Float32Array) || !samples.length || samples.length > 16_000 * 60
+          || samples.some(sample => !Number.isFinite(sample))) throw new Error('Invalid captured PCM samples');
+        globalThis.speechFixture.requests.push({ length: samples.length, language });
+        await new Promise(resolve => setTimeout(resolve, 400));
+        return { text: 'Texto ditado para o builder.' };
+      });
+    });
     await page.evaluate(() => {
       Object.defineProperty(navigator, 'language', { configurable: true, value: 'pt-BR' });
-      window.speechCapabilityProbe = { queries: [], starts: 0, instances: 0 };
-      class LocalSpeechFixture {
-        constructor() { window.speechCapabilityProbe.instances++; }
-        static async available(options) {
-          window.speechCapabilityProbe.queries.push(options);
-          return 'unavailable';
-        }
-        start() { window.speechCapabilityProbe.starts++; }
-      }
-      LocalSpeechFixture.prototype.processLocally = false;
-      window.SpeechRecognition = LocalSpeechFixture;
+      const capture = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      window.speechCaptureTracks = [];
+      navigator.mediaDevices.getUserMedia = async constraints => {
+        const stream = await capture(constraints);
+        window.speechCaptureTracks.push(...stream.getTracks());
+        return stream;
+      };
     });
 
     await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
@@ -58,12 +85,27 @@ test('opens the builder automatically, sends with Enter, and recovers a failed t
     expect(initial.draft).toBeNull();
     expect(initial.messages.map(turn => turn.role)).toEqual(['assistant']);
     expect(await page.evaluate(() => window.doxie.invoke('builder:list', 'agent'))).toHaveLength(1);
-    await page.getByRole('button', { name: 'Start local dictation', exact: true }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'Local dictation is unavailable for pt-BR on this installation.' })).toBeVisible();
-    expect(await page.evaluate(() => window.speechCapabilityProbe)).toEqual({
-      queries: [{ langs: ['pt-BR'], processLocally: true }], starts: 0, instances: 0,
-    });
     const composer = page.getByRole('textbox', { name: 'Message to builder' });
+    await page.getByRole('button', { name: 'Start local dictation', exact: true }).click();
+    const downloadModel = page.getByRole('button', { name: 'Download voice model', exact: true });
+    await expect(downloadModel).toBeVisible();
+    expect(await application.evaluate(() => globalThis.speechFixture.installs)).toBe(0);
+    await downloadModel.click();
+    await expect(page.getByRole('status').filter({ hasText: /Downloading voice model/ })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: 'Voice model is ready. Click the microphone to dictate.' })).toBeVisible();
+    expect(await application.evaluate(() => globalThis.speechFixture.installs)).toBe(1);
+    await page.getByRole('button', { name: 'Start local dictation', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Listening… Click the microphone again to finish.' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.querySelector('.voice-input')?.dataset.phase)).toBe('listening');
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await page.getByRole('button', { name: 'Stop dictation', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Transcribing locally…' })).toBeVisible();
+    await expect(composer).toHaveValue('Texto ditado para o builder.');
+    expect(await page.evaluate(() => window.speechCaptureTracks.map(track => track.readyState))).toEqual(['ended']);
+    expect((await application.evaluate(() => globalThis.speechFixture.requests))).toEqual([
+      { length: expect.any(Number), language: 'pt' },
+    ]);
+    expect((await page.evaluate(id => window.doxie.invoke('builder:get', id), sessionId)).messages).toEqual(initial.messages);
     const message = 'Build an agent\nthat triages release notes.';
     await composer.fill('Build an agent');
     await composer.press('Shift+Enter');

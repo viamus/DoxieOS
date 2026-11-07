@@ -43,7 +43,7 @@ try {
   const targets = await packager({
     dir: root, name: 'DoxieOS', out: output, overwrite: true, prune: true,
     electronVersion, download: { checksums }, extraResource: extras,
-    asar: { unpackDir: 'node_modules/node-pty' },
+    asar: { unpackDir: 'node_modules/{node-pty,onnxruntime-node,@img}' },
     icon: process.platform === 'win32' ? join(root, 'src', 'desktop', 'assets', 'icon.ico') : undefined,
     ignore: file => Boolean(file) && !allowed.test(file) && !desktop.has(file),
   });

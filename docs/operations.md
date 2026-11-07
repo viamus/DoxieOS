@@ -110,6 +110,12 @@ servers with the provider files. The providers connect to those MCP servers
 when invoked. The configured URLs and commands must resolve on the host where
 DoxieOS and the providers run.
 
+Local voice dictation uses Whisper Tiny on the CPU inside Electron. Its first
+download is about 44 MB and is stored under the AppData workbench's
+`.models/dictation/` directory. Each file is checked against a pinned SHA-256
+digest before use. The microphone records up to 60 seconds, then inserts the
+transcript into the current text field for review. Recordings are kept in memory.
+
 ## Workflow triggers
 
 | Trigger | Desktop behavior |

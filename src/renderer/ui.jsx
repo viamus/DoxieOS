@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
 import { AlertCircle, ArrowLeft, ChevronRight, CircleHelp, Inbox, LoaderCircle, Mic, MicOff, RotateCw, Search, X } from 'lucide-react';
 import { messages } from './messages.js';
+import { dictationSeconds, startDictationCapture } from './dictation-audio.js';
 
 export const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
@@ -273,109 +274,139 @@ export function selectModes(agent) {
 }
 
 export function VoiceInput({ append }) {
-  const { state } = useApp();
+  const { state, lastEvent } = useApp();
   const t = useText();
-  const Engine = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const recognition = useRef(null);
+  const recording = useRef(null);
+  const controller = useRef(null);
   const request = useRef(0);
   const timer = useRef(null);
+  const phaseRef = useRef('idle');
+  const appendRef = useRef(append);
   const [phase, setPhase] = useState('idle');
   const [message, setMessage] = useState('');
+  const [model, setModel] = useState(null);
   const statusId = useId();
   const requestedLanguage = navigator.language || state.settings.language || 'en-US';
-  const locale = { en: 'en-US', es: 'es-ES', pt: 'pt-BR' }[requestedLanguage] || requestedLanguage;
+  const language = requestedLanguage.toLowerCase().split('-')[0];
+  const dictationLanguage = ['pt', 'es', 'en'].includes(language) ? language : 'en';
   const listening = phase === 'listening';
-  const busy = ['checking', 'starting', 'stopping'].includes(phase);
-  const unavailable = t('Voice.Unavailable', 'Local dictation is unavailable for {language} on this installation.').replace('{language}', locale);
-  useEffect(() => () => {
-    request.current++;
-    clearTimeout(timer.current);
-    recognition.current?.abort();
-  }, []);
+  const busy = ['checking', 'downloading', 'starting', 'transcribing'].includes(phase);
+  appendRef.current = append;
 
-  async function toggle() {
-    if (recognition.current) {
-      setPhase('stopping');
-      setMessage(t('Voice.Stopping', 'Finishing dictation…'));
-      try { recognition.current.stop(); }
-      catch { recognition.current.abort(); }
-      return;
-    }
-    const currentRequest = ++request.current;
-    setPhase('checking');
-    setMessage(t('Voice.Checking', 'Checking local dictation…'));
-    if (!Engine || !('processLocally' in Engine.prototype) || typeof Engine.available !== 'function') {
-      setPhase('idle');
-      setMessage(unavailable);
-      return;
-    }
-    try {
-      const availability = await Promise.race([
-        Engine.available({ langs: [locale], processLocally: true }),
-        new Promise(resolve => { timer.current = setTimeout(() => resolve('unavailable'), 6000); }),
-      ]);
-      clearTimeout(timer.current);
-      if (currentRequest !== request.current) return;
-      if (availability !== 'available') {
-        const status = availability === 'downloading' ? t('Voice.Downloading', 'The local speech language is still downloading. Try dictation again when it finishes.')
-          : availability === 'downloadable' ? t('Voice.NotInstalled', 'The local speech language is not installed on this application.') : unavailable;
-        setPhase('idle');
-        setMessage(status);
-        return;
-      }
-      const speech = new Engine();
-      recognition.current = speech;
-      speech.lang = locale;
-      speech.processLocally = true;
-      speech.continuous = true;
-      const finish = () => {
-        if (recognition.current !== speech) return false;
-        clearTimeout(timer.current);
-        recognition.current = null;
-        setPhase('idle');
-        return true;
-      };
-      speech.onstart = () => {
-        if (recognition.current !== speech) return;
-        clearTimeout(timer.current);
-        setPhase('listening');
-        setMessage(t('Voice.Listening', 'Listening… Click the microphone again to finish.'));
-      };
-      speech.onresult = (event) => {
-        if (recognition.current !== speech) return;
-        const text = Array.from(event.results).slice(event.resultIndex).filter((result) => result.isFinal).map((result) => result[0].transcript).join(' ');
-        if (text) append(text);
-      };
-      speech.onerror = (event) => {
-        if (!finish()) return;
-        const errors = {
-          'language-not-supported': unavailable,
-          'not-allowed': t('Voice.Permission', 'Allow microphone access in your system settings, then try dictation again.'),
-          'service-not-allowed': t('Voice.Permission', 'Allow microphone access in your system settings, then try dictation again.'),
-          'audio-capture': t('Voice.Microphone', 'Connect a microphone and check that the system can hear it.'),
-          'no-speech': t('Voice.NoSpeech', 'No speech was detected. Try dictation again.'),
-        };
-        setMessage(event.error === 'aborted' ? '' : errors[event.error] || t('Voice.Failed', 'Local dictation could not finish. Try again.'));
-      };
-      speech.onend = () => { if (finish()) setMessage(''); };
-      setPhase('starting');
-      setMessage(t('Voice.Starting', 'Starting the microphone…'));
-      timer.current = setTimeout(() => {
-        if (!finish()) return;
-        speech.abort();
-        setMessage(t('Voice.Failed', 'Local dictation could not finish. Try again.'));
-      }, 10000);
-      speech.start();
-    } catch {
-      clearTimeout(timer.current);
-      if (currentRequest !== request.current) return;
-      recognition.current = null;
-      setPhase('idle');
-      setMessage(t('Voice.Failed', 'Local dictation could not finish. Try again.'));
+  function show(next, text) {
+    phaseRef.current = next;
+    setPhase(next);
+    setMessage(text);
+  }
+
+  function showModel(status) {
+    setModel(status);
+    if (status.state === 'ready') show('idle', t('Voice.Ready', 'Voice model is ready. Click the microphone to dictate.'));
+    else if (status.state === 'downloading') {
+      const percent = status.totalBytes ? Math.min(100, Math.round((status.receivedBytes || 0) * 100 / status.totalBytes)) : 0;
+      show('downloading', `${t('Voice.ModelDownloading', 'Downloading voice model…')} ${percent}%`);
+    } else {
+      const size = status.totalBytes > 0 ? t('Voice.ModelSize', 'The download is about {size} MB.').replace('{size}', Math.ceil(status.totalBytes / 1024 / 1024)) : '';
+      show('missing', [t('Voice.ModelMissing', 'Download the voice model once to transcribe on this device.'), size].filter(Boolean).join(' '));
     }
   }
+
+  function showError(error) {
+    const errors = {
+      NotAllowedError: t('Voice.Permission', 'Allow microphone access in your system settings, then try dictation again.'),
+      NotFoundError: t('Voice.Microphone', 'Connect a microphone and check that the system can hear it.'),
+      NotReadableError: t('Voice.MicrophoneBusy', 'The microphone is in use or unavailable. Check it and try again.'),
+      TimeoutError: t('Voice.StartTimeout', 'The microphone took too long to start. Try dictation again.'),
+    };
+    const detail = error?.message?.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+    show('error', errors[error?.name] || detail || t('Voice.Failed', 'Local dictation could not finish. Try again.'));
+  }
+
+  useEffect(() => {
+    if (lastEvent?.type !== 'speech:changed' || !lastEvent.status) return;
+    setModel(lastEvent.status);
+    if (['checking', 'missing', 'downloading'].includes(phaseRef.current)) showModel(lastEvent.status);
+  }, [lastEvent]);
+
+  useEffect(() => () => {
+    request.current++;
+    clearInterval(timer.current);
+    controller.current?.abort();
+    const capture = recording.current;
+    recording.current = null;
+    void capture?.cancel();
+  }, []);
+
+  async function install() {
+    if (['checking', 'downloading', 'starting', 'listening', 'transcribing'].includes(phaseRef.current)) return;
+    const currentRequest = ++request.current;
+    show('downloading', t('Voice.ModelDownloading', 'Downloading voice model…'));
+    try {
+      const status = await invoke('speech:install');
+      if (currentRequest === request.current) showModel(status);
+    } catch (error) {
+      if (currentRequest === request.current) {
+        setModel(current => ({ ...current, state: 'missing' }));
+        showError(error);
+      }
+    }
+  }
+
+  async function finish() {
+    const capture = recording.current;
+    if (!capture) return;
+    recording.current = null;
+    clearInterval(timer.current);
+    const currentRequest = request.current;
+    show('transcribing', t('Voice.Transcribing', 'Transcribing locally…'));
+    try {
+      const samples = await capture.stop();
+      if (currentRequest !== request.current) return;
+      if (samples.length < 1600) {
+        show('idle', t('Voice.NoSpeech', 'No speech was detected. Try dictation again.'));
+        return;
+      }
+      const result = await invoke('speech:transcribe', { samples, language: dictationLanguage });
+      if (currentRequest !== request.current) return;
+      const text = result.text?.trim();
+      if (text) appendRef.current(text);
+      show('idle', text ? t('Voice.Added', 'Dictation added to your message.') : t('Voice.NoSpeech', 'No speech was detected. Try dictation again.'));
+    } catch (error) {
+      if (currentRequest === request.current) showError(error);
+    }
+  }
+
+  async function toggle() {
+    if (recording.current) { void finish(); return; }
+    if (['checking', 'downloading', 'starting', 'transcribing'].includes(phaseRef.current)) return;
+    const currentRequest = ++request.current;
+    show('checking', t('Voice.Checking', 'Checking local dictation…'));
+    try {
+      const status = await invoke('speech:status');
+      if (currentRequest !== request.current) return;
+      setModel(status);
+      if (status.state !== 'ready') { showModel(status); return; }
+      if (status.busy) { show('idle', t('Voice.Busy', 'Another transcription is running. Try dictation again when it finishes.')); return; }
+      show('starting', t('Voice.Starting', 'Starting the microphone…'));
+      const abort = new AbortController();
+      controller.current = abort;
+      const capture = await startDictationCapture(() => { void finish(); }, abort.signal);
+      if (currentRequest !== request.current) { await capture.cancel(); return; }
+      recording.current = capture;
+      const started = performance.now();
+      const listeningMessage = () => `${t('Voice.Listening', 'Listening… Click the microphone again to finish.')} ${Math.min(dictationSeconds, Math.floor((performance.now() - started) / 1000))}/${dictationSeconds}s`;
+      show('listening', listeningMessage());
+      timer.current = setInterval(() => setMessage(listeningMessage()), 1000);
+    } catch (error) {
+      if (currentRequest === request.current && error?.name !== 'AbortError') showError(error);
+    }
+  }
+
   return <span className="voice-input" data-phase={phase}>
     <IconButton icon={listening ? MicOff : busy ? LoaderCircle : Mic} label={listening ? 'Stop dictation' : 'Start local dictation'} aria-pressed={listening} aria-describedby={message ? statusId : undefined} disabled={busy} onClick={toggle} />
-    {message && <small className="voice-feedback" id={statusId} role="status">{message}</small>}
+    {message && <span className="voice-feedback" id={statusId} role="status">{message}
+      {phase === 'downloading' && model?.totalBytes > 0 && <progress aria-label={t('Voice.ModelProgress', 'Voice model download')} value={model.receivedBytes || 0} max={model.totalBytes} />}
+      {model?.state === 'missing' && !busy && <Button onClick={install}>{t('Voice.DownloadModel', 'Download voice model')}</Button>}
+    </span>}
   </span>;
 }

@@ -56,7 +56,7 @@ async function preview(path, metadata = {}) {
   return result;
 }
 
-function createActions({ app, dialog, shell, window, storage, agents, workflows, consoles, builders, notifications, mcp, emit, releaseNotes }) {
+function createActions({ app, dialog, shell, window, storage, agents, workflows, consoles, builders, speech, notifications, mcp, emit, releaseNotes }) {
   const inventories = new Map();
 
   function modelsFor(id, options) {
@@ -164,6 +164,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
         ...catalog, connectors: catalog.tools, root: storage.root, storage: {
           'App data': app.getPath('userData'), 'Data directory': storage.root, 'State database': storage.databasePath,
           'Provider profiles': safePath(storage.root, '.providers'), ...publicRoots,
+          'Voice models': safePath(storage.root, '.models/dictation'),
         },
         settings: configuration, providers: Object.values(configuration.providers), agentRuns: agents.listRuns(),
         workflowRuns: workflows.listRuns(), notifications: notifications.list(), consoles: consoles.list(),
@@ -333,6 +334,9 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'builder:retry': (id) => builders.retry(id),
     'builder:updateExecution': (id, params) => builders.updateExecution(id, params),
     'builder:promote': (id, options) => builders.promote(id, options),
+    'speech:status': () => speech.status(),
+    'speech:install': () => speech.install(),
+    'speech:transcribe': (recording) => speech.transcribe(recording),
     'settings:save': saveSettings,
     'models:list': modelsFor,
     'settings:auth': (providerId, options) => consoles.start({ providerId, auth: true, localCodex: options?.localCodex }),
