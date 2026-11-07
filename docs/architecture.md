@@ -1,37 +1,39 @@
 # Architecture
 
-DoxieOS is a .NET / Blazor Server application with a canonical Doxie catalog,
-provider-specific compatibility generation, local SQLite state, and CLI-backed
-agent execution.
+DoxieOS is an Electron application. React renders the workbench and the
+Electron main process runs the Node.js catalog, workflow engine, SQLite state,
+PTY consoles, and provider adapters.
 
 ## System Overview
 
 ```mermaid
 flowchart TD
-    Browser["Browser UI"] --> Blazor["Blazor Server App"]
-    Blazor --> Catalog["Doxie Catalog Store"]
-    Blazor --> SQLite["SQLite State"]
-    Blazor --> Runner["Agent / Workflow Runner"]
-    Blazor --> Notifications["Notifications Bus"]
-    Blazor --> Consoles["PTY Console Store"]
+    Renderer["React workbench"] <-->|Preload IPC bridge| Main["Electron main process"]
+    Main --> Catalog["Doxie Catalog Store"]
+    Main --> SQLite["SQLite State"]
+    Main --> Runner["Agent / Workflow Runner"]
+    Main --> Notifications["Notifications Bus"]
+    Main --> Consoles["PTY Console Store"]
     Catalog --> Doxie[".doxie/"]
-    Catalog --> CustomCatalogs["Custom Catalog Roots"]
+    Catalog --> CustomCatalogs["Managed custom catalog copies"]
     Runner --> ProviderResolver["Provider Resolver"]
     ProviderResolver --> ClaudeCLI["Claude Code CLI"]
     ProviderResolver --> CodexCLI["OpenAI Codex CLI"]
     Runner --> RunOutputs[".runs/"]
     Runner --> Workspace[".workspace/"]
-    Notifications --> Browser
+    Notifications --> Main
 ```
 
 ## Runtime Boundaries
 
 | Boundary | Responsibility |
 | --- | --- |
-| UI | Pages, settings, builders, history, notifications, graph editing, release notes. |
+| Renderer | Pages, settings, builders, history, notifications, and graph editing. |
+| Preload | Named IPC operations and runtime events exposed to the renderer. |
+| Main | Validates operations and owns filesystem access, SQLite, processes, and dialogs. |
 | Agents | Catalog parsing, provider prompt assembly, run persistence, process lifecycle. |
-| Workflows | Graph execution, node dispatch, trigger handling, output contracts. |
-| Context | PTY/process abstractions and platform-specific child process control. |
+| Workflows | Graph execution, selected-edge handoffs, transient context, native tools and durable artifact contracts. |
+| Consoles | PTY sessions and streaming output. |
 | Storage | SQLite state, catalog roots, workspaces, sandboxes, run outputs. |
 
 ## Execution Flow
@@ -47,14 +49,20 @@ sequenceDiagram
     participant H as History
 
     U->>UI: Start agent or workflow
-    UI->>R: Dispatch request
+    UI->>R: Dispatch through Electron IPC
     R->>C: Load agent/workflow definition
     R->>W: Load workspace context and mounted memories
-    R->>P: Start provider process with assembled prompt
+    R->>P: Start a fresh provider session with the typed request
     P-->>R: Stream output and result metadata
-    R->>H: Persist run state, usage, logs, outputs
+    P-->>R: Publish transient context and durable artifacts
+    R->>H: Persist run state, selected model, usage, logs, durable outputs
     H-->>UI: Render history/detail/notifications
 ```
+
+The handoff lives for the active workflow. It carries context JSON as the
+exact text published by the producer and indexes isolated artifact copies for
+the consumer. The engine drops the transport at workflow end. Native tools run
+inside the engine, with no model selection or provider process.
 
 ## Workflow Run States
 
@@ -62,13 +70,13 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> Queued
     Queued --> Running
-    Running --> WaitingForApproval
-    WaitingForApproval --> Running: Approved
-    WaitingForApproval --> Cancelled: Rejected
-    Running --> Completed
+    Running --> AwaitingApproval
+    AwaitingApproval --> Running: Approved
+    AwaitingApproval --> Cancelled: Rejected or previous session ended
+    Running --> Succeeded
     Running --> Failed
     Running --> Cancelled
-    Completed --> [*]
+    Succeeded --> [*]
     Failed --> [*]
     Cancelled --> [*]
 ```
@@ -77,34 +85,42 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    App["DoxieOS"] --> DB["SQLite state"]
-    App --> DoxieRoot[".doxie/ catalog"]
-    App --> WorkspaceRoot[".workspace/"]
-    App --> RunsRoot[".runs/"]
-    App --> SandboxRoot[".sandbox/"]
-    App --> PrivateRoot[".private/"]
+    App["DoxieOS"] --> Profile["Electron user data"]
+    Profile --> DB["state.db"]
+    Profile --> Providers["Provider profiles"]
+    Profile --> Workbench["workbench/"]
+    Workbench --> DoxieRoot[".doxie/ catalog"]
+    Workbench --> WorkspaceRoot[".workspace/"]
+    Workbench --> RunsRoot[".runs/"]
+    Workbench --> SandboxRoot[".sandbox/"]
+    Workbench --> PrivateRoot[".private/"]
 ```
 
-The canonical catalog should be versioned when assets are part of the product or
-team workflow. Runtime output folders and private provider state should stay
-local unless there is a deliberate reason to share them.
+Development and packaged launches use the same storage layout. The main
+process copies imported catalogs and workspace files into the workbench.
+Version the source catalog when assets are part of a product or team workflow.
+The runtime profile also contains local output and provider state.
 
 ## Provider Compatibility
 
-DoxieOS does not make Claude Code or Codex the source of truth. Instead, it emits
-compatibility files from `.doxie/` so providers can run against the same catalog.
+DoxieOS emits provider compatibility files from the canonical `.doxie/` catalog.
+Claude Code and Codex consume the files and the context assembled at dispatch.
+Claude Code and local/API adapters use profiles managed inside Electron user
+data. Cloud Codex shares the installed CLI's ChatGPT credentials by default,
+while headless invocations ignore installed user configuration and receive
+DoxieOS's MCP registry explicitly. Sign-in from Settings uses the same
+authentication profile as agent runs and consoles.
 
 ```mermaid
 flowchart TD
-    Skill[".doxie/skills/<id>"] --> Normalize["Doxie model"]
+    Agent[".doxie/agents/<id>"] --> Normalize["Doxie agent definition"]
     Normalize --> ClaudeSkill[".claude/skills/<id>/SKILL.md"]
     Normalize --> CodexIndex[".codex/AGENTS.md"]
+    Normalize --> CodexSkills[".agents/skills/<id>/SKILL.md"]
     Normalize --> UI["DoxieOS pages"]
     Normalize --> Runner["Provider dispatch"]
 ```
 
 ## Release Notes
 
-App release notes are stored under
-`src/Viamus.Doxie.Orchestrator/docs/release-notes/` because they are embedded in
-the application assembly and shown in the release notes modal.
+Previous release notes and illustrations are available in the [release history](release-notes/README.md).

@@ -1,0 +1,6 @@
+{
+  "id": "workflow-builder",
+  "description": "Co-author a workflow that connects Doxie agents and native tools in a reviewable draft.",
+  "displayName": "Workflow Builder",
+  "category": "Doxie"
+}

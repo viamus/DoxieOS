@@ -1,0 +1,34 @@
+{
+  "id": "loop",
+  "displayName": "Loop",
+  "description": "Run a workflow subgraph once per item from an upstream JSON array.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "iterate": {
+      "description": "Read an upstream array and run its body with bounded concurrency.",
+      "fields": [
+        {
+          "id": "array_source",
+          "label": "Array source filename",
+          "placeholder": "result.json"
+        },
+        {
+          "id": "array_path",
+          "label": "JSON path to the array",
+          "placeholder": "data.items"
+        },
+        {
+          "id": "concurrency",
+          "label": "Maximum parallel iterations",
+          "placeholder": "4"
+        },
+        {
+          "id": "on_failure",
+          "label": "Failure policy",
+          "placeholder": "fail-fast"
+        }
+      ]
+    }
+  }
+}

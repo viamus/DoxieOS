@@ -1,0 +1,13 @@
+{
+  "id": "aggregate",
+  "displayName": "Aggregate",
+  "description": "Merge text artifacts from direct upstream workflow nodes into one Markdown handoff.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "merge": {
+      "description": "Combine upstream text artifacts into merged.md.",
+      "fields": []
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "sandbox",
+  "displayName": "Sandbox",
+  "description": "Create, list, or schedule cleanup for temporary folders scoped to a workflow run.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "new": {
+      "description": "Allocate a temporary sandbox for this workflow run.",
+      "fields": [
+        {
+          "id": "tag",
+          "label": "Sandbox tag",
+          "placeholder": "research"
+        }
+      ]
+    },
+    "list": {
+      "description": "List temporary sandboxes owned by this workflow run.",
+      "fields": []
+    },
+    "clean": {
+      "description": "Schedule cleanup of a run-owned sandbox.",
+      "fields": [
+        {
+          "id": "tag",
+          "label": "Sandbox tag",
+          "placeholder": "research"
+        }
+      ]
+    }
+  }
+}

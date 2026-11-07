@@ -1,107 +1,91 @@
-# Authoring Agents And Workflows
+# Authoring agents and workflows
 
-DoxieOS treats agents and workflows as product assets, not loose prompts. The
-goal is to make them inspectable, reusable, and easy to review.
+## Agents
 
-## Agent Shape
+Create one directory per agent under `.doxie/agents/<id>/`. Use a kebab-case ID. Put metadata and modes in `manifest.json`, operating instructions in `body.md`, and optional reusable agent context under `memories/`. An optional `agent.md` defines a provider-specific Claude subagent adapter.
 
-A Doxie agent lives under `.doxie/skills/<id>/` and normally contains:
-
-```text
-.doxie/skills/<id>/
-├── manifest.json
-├── body.md
-└── memories/
-    └── *.md
+```json
+{
+  "id": "review-report",
+  "displayName": "Review Report",
+  "description": "Extracts release blockers from a review report.",
+  "modes": {
+    "inspect": {
+      "description": "Extract release blockers.",
+      "fields": [{ "id": "report", "label": "Report path", "required": true }]
+    }
+  }
+}
 ```
 
-The manifest defines metadata, category, icon, inputs, requirements, modes, and
-execution behavior. The body defines the operating instructions.
+Describe the agent's responsibility, explicit inputs, and output contract. Declare real tool, environment, or MCP prerequisites. Use `execution` to set an explicit provider and optionally a model. The generated provider skills consume the same agent definition.
 
-```mermaid
-flowchart TD
-    Manifest["manifest.json"] --> Agent["Agent"]
-    Body["body.md"] --> Agent
-    Memories["memories/*.md"] --> Agent
-    Agent --> UI["Agent page"]
-    Agent --> Runner["Dispatch prompt"]
-    Agent --> Provider["Provider CLI"]
+DoxieOS reads legacy `.doxie/skills/<id>/` definitions and accepts existing catalog archives. New or edited agents use the current `.doxie/agents/<id>/` layout.
+
+## Workflow graphs
+
+Store a definition in `.doxie/workflows/<id>/workflow.json`. Use `Agent` nodes to invoke a Doxie agent and `Tool` nodes for workflow connectors. An edge makes the producer's handoff available to the direct consumer.
+
+```json
+{
+  "id": "release-brief",
+  "name": "Release Brief",
+  "trigger": { "kind": "manual", "inputs": [{ "id": "notes", "label": "Notes", "required": true }] },
+  "nodes": [
+    {
+      "id": "summarize", "kind": "Tool", "toolId": "prompt", "toolMode": "run",
+      "inputs": { "prompt": "Prepare a release brief.", "input_text": "{{trigger.notes}}", "output_format": "md" }
+    },
+    {
+      "id": "deliver", "kind": "Tool", "toolId": "write-to-workspace", "toolMode": "deliver",
+      "inputs": { "workspace": "release", "filename": "release-brief.md" }
+    }
+  ],
+  "edges": [{ "fromNodeId": "summarize", "toNodeId": "deliver" }]
+}
 ```
 
-## Agent Authoring Guidelines
+Set a model-backed node's `execution` to override the provider selection for that step. A model belongs to an explicitly selected provider.
 
-- Use kebab-case ids.
-- Describe the job boundary before describing tools.
-- Define what a successful output looks like.
-- Include handoff expectations when another workflow node will consume the result.
-- Keep provider-specific assumptions out of the core body unless the agent truly depends on them.
-- Prefer workspace or library memories for reusable project context.
+| Connector | Purpose |
+| --- | --- |
+| `aggregate` | Merge text artifacts from direct upstream nodes. |
+| `approval-gate` | Pause for an operator decision. |
+| `if-else` | Evaluate upstream JSON and select the `true` or `false` edge. |
+| `library` | Create a library from selected material or mount an existing library into a workspace. |
+| `loop` | Run a subgraph for each item of an upstream JSON array. |
+| `prompt` | Invoke a model for a focused transformation on declared inputs. |
+| `sandbox` | Allocate and list temporary run-owned folders. |
+| `write-to-workspace` | Deliver an explicit Markdown artifact to a selected workspace. |
 
-## Workflow Shape
+Older workflows that use a connector's ID as an `agentId` still resolve to that connector. Use `toolId` and `toolMode` in new workflows.
 
-A Doxie workflow lives under `.doxie/workflows/<id>/workflow.json`.
+## Context and artifacts
 
-Workflows should describe:
+Each model-backed step starts a fresh provider request. DoxieOS supplies a `doxie.agent-request.v1` object through the provider's stdin request. It includes the step's mode, its explicit `inputs`, and an optional `handoff` object for the workflow. Use native Loop or Cron for repetition.
 
-- trigger type and enabled state;
-- nodes and edges;
-- agent ids or primitive connector ids;
-- static inputs;
-- output expectations;
-- human approval points where needed.
+The `doxie.workflow-handoff.v1` handoff identifies the workflow, run, and node. For a loop it identifies the iteration. Its `sources` list describes direct upstream nodes and the current loop item, with each source's artifact directory, relative paths, media types, sizes, and optional `contextJson` text. A native tool that forwards context includes `forwardedContexts` with the original producer's node, iteration, and JSON text. Artifact directories are scoped snapshots and last only for the consumer's step.
+
+- Write an explicit output file under `DOXIE_WORKFLOW_OUTPUT_DIR` or `DOXIE_AGENT_OUTPUT_DIR` for a file deliverable. The workflow reads declared files from the node output. An optional `.doxie-artifact.json` can specify the intended files.
+- Write a JSON object of at most 64 KiB to `DOXIE_WORKFLOW_CONTEXT_OUT` when the next step only needs structured context. The runtime supplies that value as `contextJson` to direct consumers for this execution. The total context budget is 512 KiB per run.
+- Add a Write to Workspace node when a result should be delivered to a workspace. Its input edge identifies the files to deliver.
 
 ```mermaid
 flowchart LR
-    Start["Trigger"] --> A["Agent Node"]
-    A --> B["Prompt / Transform"]
-    B --> Gate["Approval Gate"]
-    Gate --> C["Implementation Agent"]
-    C --> D["Review Agent"]
-    D --> End["Write To Workspace"]
+    Producer["Agent or connector"] -->|"Explicit files or transient JSON"| Consumer["Direct downstream step"]
+    Consumer -->|"Explicit files"| Delivery["Write to Workspace"]
 ```
 
-## Built-In Workflow Primitives
+Transient context is available while the run is active. A rerun that needs it may need to restart at its producing step. The run history records execution and artifact metadata.
 
-| Primitive | Purpose |
-| --- | --- |
-| `prompt` | Transform, summarize, extract, or map data between nodes. |
-| `aggregate` | Wait for multiple upstream nodes and merge their outputs. |
-| `loop` | Iterate over array-shaped input with controlled concurrency. |
-| `if-else` | Evaluate upstream JSON and route only the selected `true` or `false` edge. |
-| `approval-gate` | Pause until a human approves or rejects. |
-| `write-to-workspace` | Deliver final markdown output into a workspace. |
+## Builders
 
-Conditional workflow edges use the optional `condition` property. Edges leaving
-an `if-else` node normally set `"condition": "true"` or `"condition": "false"`;
-unconditioned edges still behave as regular dependencies.
+Agent Builder and Workflow Builder co-author drafts with the user in an isolated builder sandbox. The workbench previews `.draft/manifest.json`. Selecting **Save** validates and promotes the draft into the chosen catalog. The workflow builder can place draft agent dependencies under `.draft/new-agents/`.
 
-## Output Contracts
+The workbench keeps the builder transcript with its draft and supplies recent turns explicitly to each fresh model request. The draft keeps older turns available when the active request omits them.
 
-Workflow nodes should leave durable output. Terminal text is useful for live
-inspection, but downstream nodes need files or structured payloads.
+**Build agent** opens the session setup screen. Choose the builder execution settings, optional workspace, and destination catalog, then select **Start session**. Opening the screen does not create a session. Use **Sessions** beside the Agents filters to return to an existing conversation, including after restarting DoxieOS. Sessions show the draft's name when available, or the first request while the draft is still unnamed.
 
-```mermaid
-sequenceDiagram
-    participant A as Node A
-    participant O as Output Folder
-    participant B as Node B
+Use **Remove session** on a session row or **Clear sessions** to remove inactive conversations and their drafts after confirmation. Saved catalog agents remain available. Sessions with an active builder response cannot be removed.
 
-    A->>O: Write output.md and artifacts
-    O-->>B: Provide upstream payload
-    B->>O: Write transformed output
-```
-
-## Builder Flow
-
-The agent and workflow builders create drafts in sandboxes, render live previews,
-and promote valid definitions into the selected catalog.
-
-```mermaid
-flowchart TD
-    Idea["Plain-language idea"] --> Builder["Doxie builder"]
-    Builder --> Draft["Draft manifest"]
-    Draft --> Preview["UI preview"]
-    Preview --> Validate["Validation"]
-    Validate --> Promote["Promote into catalog"]
-    Promote --> Regenerate["Regenerate provider shims"]
-```
+The agent draft has its own **Agent execution defaults**. Use **Change agent execution**, beside **Save to catalog**, to choose the provider, model, and supported reasoning effort that the saved agent will use. Apply the changes before saving to the catalog. These defaults stay with the draft when you resume it; the builder's execution settings control the conversation separately. Choose the application default to let future runs inherit the application settings. Ordinary agent runs show these settings as read-only; change them through **Execution defaults** on the agent page. Connectors and workflow nodes retain their execution overrides.
