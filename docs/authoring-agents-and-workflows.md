@@ -83,3 +83,7 @@ Transient context is available while the run is active. A rerun that needs it ma
 Agent Builder and Workflow Builder co-author drafts with the user in an isolated builder sandbox. The workbench previews `.draft/manifest.json`. Selecting **Save** validates and promotes the draft into the chosen catalog. The workflow builder can place draft agent dependencies under `.draft/new-agents/`.
 
 The workbench keeps the builder transcript with its draft and supplies recent turns explicitly to each fresh model request. The draft keeps older turns available when the active request omits them.
+
+**Build agent** opens the session setup screen. Choose the builder execution settings, optional workspace, and destination catalog, then select **Start session**. Opening the screen does not create a session. Use **Sessions** beside the Agents filters to return to an existing conversation, including after restarting DoxieOS. Sessions show the draft's name when available, or the first request while the draft is still unnamed.
+
+The agent draft has its own **Agent execution defaults**. Use **Change agent execution** to choose the provider, model, and supported reasoning effort that the saved agent will use. Apply the changes before saving to the catalog. These defaults stay with the draft when you resume it; the builder's execution settings control the conversation separately. Choose the application default to let future runs inherit the application settings.

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-test('opens the builder automatically, sends with Enter, and recovers a failed turn before saving the agent', async () => {
+test('starts explicitly, resumes builder sessions after restart, and saves independent agent execution defaults', async ({}, testInfo) => {
   const directory = await mkdtemp(join(tmpdir(), 'doxie-builder-e2e-'));
   const profile = join(directory, 'app-data');
   const localCodex = join(profile, 'local-codex');
@@ -16,15 +16,16 @@ test('opens the builder automatically, sends with Enter, and recovers a failed t
   try {
     await writeFile(mock, windows ? `@"${process.execPath}" "${fixture}" %*\r\n`
       : `#!/bin/sh\nexec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
-    application = await electron.launch({
+    const launchOptions = {
       ...(executablePath ? { executablePath } : {}),
       args: [...(executablePath ? [] : ['.']), '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
       env: {
         ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1', CODEX_HOME: localCodex,
         OPENAI_API_KEY: 'test', OPENAI_BASE_URL: 'http://127.0.0.1:1',
       },
-    });
-    const page = await application.firstWindow();
+    };
+    application = await electron.launch(launchOptions);
+    let page = await application.firstWindow();
     await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
     await page.evaluate(executable => window.doxie.invoke('settings:save', {
       defaultProvider: 'codex', providers: { codex: { executable, model: 'doxie/builder-fixture' } },
@@ -72,8 +73,16 @@ test('opens the builder automatically, sends with Enter, and recovers a failed t
 
     await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
     await expect(page.getByText('No agents yet', { exact: true })).toBeVisible();
+    await page.locator('.toolbar').getByRole('link', { name: 'Sessions', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Start a builder session', exact: true })).toBeVisible();
+    await expect(page.getByText('No previous sessions', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.doxie.invoke('builder:list', 'agent'))).toHaveLength(0);
+    await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
     await page.getByRole('link', { name: 'New agent', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Build an agent' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Start session', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.doxie.invoke('builder:list', 'agent'))).toHaveLength(0);
+    await page.getByRole('button', { name: 'Start session', exact: true }).click();
     await expect(page).toHaveURL(/#\/agents\/new\?.*session=/);
     await expect(page.getByRole('button', { name: 'Start session' })).toHaveCount(0);
     await expect(page.getByRole('status').filter({ hasText: /preparing|working|starting|thinking/i }).first()).toBeVisible();
@@ -136,17 +145,64 @@ test('opens the builder automatically, sends with Enter, and recovers a failed t
     await expect(page).toHaveURL(/#\/agents\/new\?.*session=/);
     await page.getByRole('button', { name: 'Retry last message' }).click();
     await expect(page.getByText('The release note triage draft is ready.', { exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Release Note Triage' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Release Note Triage' }).last()).toBeVisible();
     await expect(page.locator('.chat-message.user')).toHaveCount(1);
     const recovered = await page.evaluate(id => window.doxie.invoke('builder:get', id), sessionId);
     expect(recovered.messages.slice(0, -1)).toEqual([...initial.messages, { role: 'user', text: message }]);
     expect(recovered.messages.at(-1).role).toBe('assistant');
     expect(recovered.failure).toBeFalsy();
+
+    await page.getByRole('button', { name: 'Change agent execution', exact: true }).click();
+    const executionDialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: 'Agent execution defaults', exact: true }) });
+    await executionDialog.getByLabel('Provider', { exact: true }).selectOption('codex');
+    await executionDialog.getByLabel('Model', { exact: true }).fill('doxie/saved-agent');
+    await executionDialog.getByRole('radio', { name: 'High', exact: true }).check();
+    await page.screenshot({ path: testInfo.outputPath('agent-execution.png') });
+    await executionDialog.getByRole('button', { name: 'Apply agent execution', exact: true }).click();
+    await expect(executionDialog).toHaveCount(0);
+    const configured = await page.evaluate(id => window.doxie.invoke('builder:get', id), sessionId);
+    expect(configured).toMatchObject({ providerId: 'codex', model: 'doxie/builder-fixture',
+      draft: { execution: { providerId: 'codex', model: 'doxie/saved-agent', effort: 'high' } } });
+
+    await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
+    await page.locator('.toolbar').getByRole('link', { name: 'Sessions', exact: true }).click();
+    const sessions = page.locator('.panel').filter({ has: page.getByRole('heading', { name: 'Resume a session', exact: true }) });
+    await expect(sessions.getByText('Release Note Triage', { exact: true })).toBeVisible();
+    await expect(sessions).not.toContainText(sessionId);
+    await page.screenshot({ path: testInfo.outputPath('builder-sessions.png') });
+    await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
+    await page.getByRole('link', { name: 'Build agent', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Start a builder session', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.doxie.invoke('builder:list', 'agent'))).toHaveLength(1);
+    await sessions.getByText('Release Note Triage', { exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`session=${sessionId}`));
+    await expect(page.locator('.chat-message.user')).toHaveCount(1);
+    expect((await page.evaluate(id => window.doxie.invoke('builder:get', id), sessionId)).messages).toEqual(configured.messages);
+
+    // A new main process must find the same persisted session without a provider call.
+    await application.close();
+    application = await electron.launch(launchOptions);
+    page = await application.firstWindow();
+    await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
+    await page.locator('.toolbar').getByRole('link', { name: 'Sessions', exact: true }).click();
+    await page.locator('.panel').filter({ has: page.getByRole('heading', { name: 'Resume a session', exact: true }) })
+      .getByText('Release Note Triage', { exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`session=${sessionId}`));
+    await expect(page.locator('.chat-message.user')).toHaveCount(1);
+    const resumed = await page.evaluate(id => window.doxie.invoke('builder:get', id), sessionId);
+    expect(resumed.messages).toEqual(configured.messages);
+    expect(resumed.draft).toEqual(configured.draft);
+    expect(await page.evaluate(() => window.doxie.invoke('builder:list', 'agent'))).toHaveLength(1);
+    await page.getByRole('button', { name: 'Change agent execution', exact: true }).click();
+    await expect(page.getByRole('dialog').getByLabel('Model', { exact: true })).toHaveValue('doxie/saved-agent');
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
     await page.getByRole('button', { name: 'Save to catalog' }).click();
     await expect(page).toHaveURL(/#\/agents\/release-note-triage/);
     await expect(page.getByRole('heading', { name: 'Release Note Triage' })).toBeVisible();
     expect(await page.evaluate(() => window.doxie.invoke('catalog:get', 'agents', 'release-note-triage')))
-      .toMatchObject({ body: 'Read supplied release notes and report each entry with its impact.' });
+      .toMatchObject({ body: 'Read supplied release notes and report each entry with its impact.',
+        execution: { providerId: 'codex', model: 'doxie/saved-agent', effort: 'high' } });
   } finally {
     await application?.close().catch(() => {});
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });

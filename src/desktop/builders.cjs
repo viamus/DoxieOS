@@ -167,6 +167,17 @@ function createBuilders({ storage, agents, emit }) {
     return persist({ ...session, effort: null, ...execution });
   }
 
+  function updateDraftExecution(id, execution = null) {
+    const session = idleSession(id);
+    if (session.kind !== 'agent') throw new Error('Select execution on the workflow nodes.');
+    if (!session.draft || typeof session.draft !== 'object' || Array.isArray(session.draft)) {
+      throw new Error('There is no agent draft to configure.');
+    }
+    const { draft } = paths(id);
+    write(safePath(draft, 'manifest.json'), { ...session.draft, execution: normalizeExecution(execution) });
+    return persist(session);
+  }
+
   function message(id, text) {
     if (typeof text !== 'string' || !text.trim()) throw new Error('Enter a message.');
     return respond(idleSession(id), text, false);
@@ -271,7 +282,7 @@ function createBuilders({ storage, agents, emit }) {
     return result;
   }
 
-  return { start, get, list, message, retry, updateExecution, promote };
+  return { start, get, list, message, retry, updateExecution, updateDraftExecution, promote };
 }
 
 module.exports = { createBuilders };

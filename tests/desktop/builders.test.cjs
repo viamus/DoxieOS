@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, rm, writeFile } = require('node:fs/promises');
+const { mkdtemp, readFile, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { test } = require('node:test');
@@ -168,6 +168,145 @@ test('resumes a legacy failed builder turn with updated execution settings', asy
     assert.equal(request.message, message);
     assert.equal(retried.messages.length, 4);
     assert(!JSON.stringify(retried.messages).includes('401'));
+  } finally {
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('reopens a builder transcript and configures the agent draft independently from the builder model', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-reopen-'));
+  const databasePath = join(root, 'state.db');
+  let storage = createStorage({ root, databasePath });
+  try {
+    storage.save('agents', { id: 'agent-builder', name: 'Agent Builder', body: 'Author an agent.' });
+    const calls = [];
+    const draft = { id: 'release-review', name: 'Release Review', description: 'Review a release.',
+      body: 'Identify release blockers.', modes: { review: { description: 'Review a release report.' } },
+      execution: { providerId: 'codex', model: 'generated-model' }, customField: { preserved: true } };
+    const agents = {
+      runBuilder(_kind, params) { calls.push(params); return { id: calls.length }; },
+      async wait(id) {
+        if (id === 1) await writeFile(join(calls[0].cwd, '.draft', 'manifest.json'), JSON.stringify(draft));
+        return { status: 'Completed', output: [{ source: 'Stdout', text: id === 1 ? 'The draft is ready.' : 'I kept the draft.' }] };
+      },
+    };
+    let builders = createBuilders({ storage, agents, emit: () => {} });
+    const session = builders.start('agent', { providerId: 'codex', model: 'builder-model', effort: 'ultra' });
+    const ready = await builders.message(session.id, 'Create a release reviewer.');
+    const selected = builders.updateDraftExecution(session.id, { providerId: 'claude', model: 'agent-model', effort: 'high' });
+    const execution = { providerId: 'claude-code', model: 'agent-model', effort: 'high' };
+    assert.deepEqual(selected.draft, { ...draft, execution });
+    assert.deepEqual(selected.messages, ready.messages);
+    assert.equal(selected.providerId, 'codex');
+    assert.equal(selected.model, 'builder-model');
+    assert.equal(selected.effort, 'ultra');
+
+    storage.close();
+    storage = createStorage({ root, databasePath });
+    builders = createBuilders({ storage, agents, emit: () => {} });
+    const reopened = builders.list('agent').find(item => item.id === session.id);
+    assert.deepEqual(reopened.messages, ready.messages);
+    assert.deepEqual(reopened.draft, { ...draft, execution });
+    await builders.message(session.id, 'Keep this agent and explain how to use it.');
+    const request = JSON.parse(calls[1].prompt.split('\n\n').at(-1));
+    assert.deepEqual(request.previousTurns, ready.messages);
+    assert.equal(calls[1].providerId, 'codex');
+    assert.equal(calls[1].model, 'builder-model');
+    assert.equal(calls[1].effort, 'ultra');
+    assert.deepEqual(builders.promote(session.id).execution, execution);
+    assert.deepEqual(storage.get('agents', draft.id).execution, execution);
+  } finally {
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('clears draft execution to app defaults and rejects invalid or active draft updates', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-draft-execution-'));
+  const storage = createStorage({ root, databasePath: ':memory:' });
+  let finish;
+  let response;
+  try {
+    for (const kind of ['agent', 'workflow']) storage.save('agents', { id: `${kind}-builder`, body: 'Author a draft.' });
+    const events = [];
+    const builders = createBuilders({ storage, emit: event => events.push(event), agents: {
+      runBuilder() { return { id: 'working' }; },
+      wait() { return new Promise(resolve => { finish = resolve; }); },
+    } });
+    const session = builders.start('agent', { providerId: 'codex', model: 'builder-model' });
+    assert.throws(() => builders.updateDraftExecution(session.id, null), /no agent draft/);
+    const manifest = join(root, '.sandbox', session.id, '.draft', 'manifest.json');
+    const draft = { id: 'default-agent', name: 'Default Agent', body: 'Use the app defaults.',
+      execution: { providerId: 'codex', model: 'old-model', effort: 'high' }, custom: ['keep'] };
+    await writeFile(manifest, JSON.stringify(draft));
+    const cleared = builders.updateDraftExecution(session.id, { providerId: '', model: '', effort: '' });
+    assert.deepEqual(cleared.draft, { ...draft, execution: null });
+    assert.equal(cleared.model, 'builder-model');
+    assert.equal(events.at(-1).type, 'builder:changed');
+    assert.deepEqual(events.at(-1).session.draft, cleared.draft);
+    const unchanged = await readFile(manifest, 'utf8');
+    for (const invalid of [[], { providerId: 'unknown' }, { model: 'missing-provider' },
+      { providerId: 'codex', model: 'unsafe & model' }, { providerId: 'ollama', effort: 'high' }]) {
+      assert.throws(() => builders.updateDraftExecution(session.id, invalid));
+      assert.equal(await readFile(manifest, 'utf8'), unchanged);
+    }
+    response = builders.message(session.id, 'Explain the draft.');
+    assert.throws(() => builders.updateDraftExecution(session.id, { providerId: 'codex', model: 'new-model' }), /already responding/);
+    assert.equal(await readFile(manifest, 'utf8'), unchanged);
+    finish({ status: 'Completed', output: [{ source: 'Stdout', text: 'The app chooses the provider.' }] });
+    await response;
+    assert.equal(builders.promote(session.id).execution, null);
+    const workflow = builders.start('workflow');
+    assert.throws(() => builders.updateDraftExecution(workflow.id, null), /workflow nodes/);
+  } finally {
+    if (finish) finish({ status: 'Cancelled', output: [] });
+    await response;
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('recovers interrupted builder messages and initialization from the persisted transcript', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-interrupted-'));
+  const storage = createStorage({ root, databasePath: ':memory:' });
+  try {
+    storage.save('agents', { id: 'agent-builder', body: 'Author an agent.' });
+    const calls = [];
+    const agents = {
+      runBuilder(_kind, params) { calls.push(params); return { id: calls.length }; },
+      async wait() { return { status: 'Completed', output: [{ source: 'Stdout', text: 'Recovered response.' }] }; },
+    };
+    const builders = createBuilders({ storage, agents, emit: () => {} });
+    const previousTurns = [{ role: 'user', text: 'Create a reviewer.' }, { role: 'assistant', text: 'What should it review?' }];
+    const userTurn = { role: 'user', text: 'Release blockers.' };
+    const interrupted = builders.start('agent', { providerId: 'codex', model: 'saved-model' });
+    await writeFile(join(root, '.sandbox', interrupted.id, '.draft', 'desktop-session.json'), JSON.stringify({
+      ...interrupted, status: 'Running', messages: [...previousTurns, userTurn],
+    }));
+    const reopened = createBuilders({ storage, agents, emit: () => {} });
+    assert.equal(reopened.get(interrupted.id).status, 'Failed');
+    assert.equal(reopened.get(interrupted.id).failure.kind, 'cancelled');
+    const recovered = await reopened.retry(interrupted.id);
+    assert.equal(recovered.status, 'Ready');
+    assert.deepEqual(recovered.messages, [...previousTurns, userTurn, { role: 'assistant', text: 'Recovered response.' }]);
+    assert.deepEqual(JSON.parse(calls[0].prompt.split('\n\n').at(-1)), {
+      schema: 'doxie.builder-request.v1', stage: 'message', previousTurns, omittedTurns: 0, message: userTurn.text,
+    });
+
+    const initializing = builders.start('agent', { providerId: 'codex' });
+    const initialPrompt = 'Ask what the new agent should do.';
+    await writeFile(join(root, '.sandbox', initializing.id, '.draft', 'desktop-session.json'), JSON.stringify({
+      ...initializing, status: 'Running', initializing: true, initialPrompt,
+    }));
+    const greeting = await reopened.retry(initializing.id);
+    assert.equal(greeting.status, 'Ready');
+    assert.equal(greeting.initializing, false);
+    assert.deepEqual(greeting.messages, [{ role: 'assistant', text: 'Recovered response.' }]);
+    const request = JSON.parse(calls[1].prompt.split('\n\n').at(-1));
+    assert.equal(request.stage, 'initialize');
+    assert.equal(request.message, initialPrompt);
+    assert.deepEqual(request.previousTurns, []);
   } finally {
     storage.close();
     await rm(root, { recursive: true, force: true });

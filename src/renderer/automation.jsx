@@ -18,6 +18,20 @@ const categoryOf = (item) => {
 const iconOptions = { SmartToy: Bot, AutoAwesome: Sparkles, Code: Code2, Terminal, AccountTree: GitBranch, MenuBook: BookOpen, Shield: ShieldCheck, Search };
 const indexedText = (item) => [item.id, nameOf(item), item.description, categoryOf(item), ...(item.nodes || []).flatMap((node) => [node.label, node.agentId, node.toolId])].filter(Boolean).join(' ').toLowerCase();
 
+function builderSessionName(session, items) {
+  const draft = session.draft?.manifest || session.draft?.definition || session.draft;
+  const named = [draft?.displayName, draft?.name, session.label].find((value) => typeof value === 'string' && value.trim());
+  if (named) return named.trim();
+  const editing = items.find((item) => item.id === session.editingId && (item.catalogId || 'default') === (session.catalogId || 'default'));
+  if (editing) return `Edit ${nameOf(editing)}`;
+  const request = session.messages?.find((message) => message.role === 'user')?.text;
+  if (request?.trim()) {
+    const title = request.trim().replace(/\s+/g, ' ');
+    return title.length > 80 ? `${title.slice(0, 77)}…` : title;
+  }
+  return `New ${session.kind === 'workflow' ? 'workflow' : 'agent'} session`;
+}
+
 function Recommendations({ items, kind }) {
   const [context, setContext] = useState('');
   const [submitted, setSubmitted] = useState('');
@@ -52,6 +66,7 @@ function CatalogPage({ kind }) {
   <div className="toolbar"><SearchBox value={search} setValue={setSearch} placeholder={t(`${scope}.SearchPlaceholder`, `Search ${kind}…`)} />
     <select aria-label="Catalog" value={catalog} onChange={(event) => setCatalog(event.target.value)}><option value="">All catalogs</option>{catalogs.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}</select>
     <select aria-label="Category" value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+    {agent && <Button to="/agents/new?sessions=1" icon={MessageSquare}>Sessions</Button>}
   </div>
   {items.length > 0 && <Recommendations items={items} kind={kind} />}
   {visible.length ? <div className="cards catalog-cards">{visible.map((item) => <Panel key={recordKey(item)} title={<a className="panel-title-link" href={href(recordRoute(kind, item))}>{nameOf(item)}</a>} icon={iconOptions[item.icon] || Icon} hint={item.catalogName || item.id} actions={<><IconButton icon={Download} label={`Export ${singular}`} onClick={() => perform('catalog:export', [kind, item.id, item.catalogId])} />{!item.categorySealed && !item.builtIn && <IconButton icon={Trash2} label={`Delete ${singular}`} onClick={() => setRemove(item)} />}</>}>
@@ -245,17 +260,16 @@ export function BuilderPage({ kind, query }) {
   const [workspaceId, setWorkspaceId] = useState(() => query.get('workspace') || '');
   const [execution, setExecution] = useState(() => ({ providerId: query.get('provider') || '', model: query.get('model') || '', effort: query.get('effort') || '' }));
   const sessionId = query.get('session') || '';
-  const sessionsView = query.get('sessions') === '1';
   const [sessionResult, setSessionResult] = useState(null);
   const [executionDraft, setExecutionDraft] = useState(null);
+  const [draftExecution, setDraftExecution] = useState(null);
   const [draftText, setDraftText] = useState('');
   const [pending, setPending] = useState('');
   const [error, setError] = useState('');
   const [draftTab, setDraftTab] = useState('preview');
   const [chosenIcon, setChosenIcon] = useState('');
   const chat = useRef(null);
-  const automaticStart = useRef(null);
-  const list = useAsync(() => invoke('builder:list', kind), [kind, sessionId]);
+  const list = useAsync(() => invoke('builder:list', kind), [kind, sessionId, lastEvent?.type === 'builder:changed' && lastEvent.session?.kind === kind ? lastEvent : null]);
   const catalogOptions = state.catalogs || state.settings.catalogs || [];
   const editing = state[section].find((item) => item.id === editorId && (!initialCatalogId || (item.catalogId || 'default') === initialCatalogId));
   const session = sessionResult?.id === sessionId ? sessionResult.value : null;
@@ -281,9 +295,17 @@ export function BuilderPage({ kind, query }) {
     setError('');
     setDraftText('');
     setExecutionDraft(null);
+    setDraftExecution(null);
     setChosenIcon('');
     const params = new URLSearchParams(query);
-    if (!value && kind === 'agent') params.set('sessions', '1');
+    if (value) {
+      for (const [key, setting] of Object.entries({ edit: value.editingId, catalog: value.catalogId, workspace: value.workspaceId })) {
+        if (setting) params.set(key, setting);
+        else params.delete(key);
+      }
+      setCatalogId(value.catalogId || 'default');
+      setWorkspaceId(value.workspaceId || '');
+    } else params.set('sessions', '1');
     go(routeTo(value?.id, params));
   }
 
@@ -304,31 +326,6 @@ export function BuilderPage({ kind, query }) {
     const result = await runAction('Starting session…', 'builder:start', [kind, { workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, effort: execution.effort || undefined, catalogId, editingId: editorId, initialize: kind === 'agent' }]);
     if (result?.id) showSession(result);
   }
-
-  useEffect(() => {
-    if (kind !== 'agent' || sessionId || sessionsView) {
-      automaticStart.current = null;
-      return;
-    }
-    let open = true;
-    setPending('Starting session…');
-    setError('');
-    // React replays effects in development. Both observations share one request.
-    automaticStart.current ??= invoke('builder:start', kind, {
-      workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined,
-      model: execution.model || undefined, effort: execution.effort || undefined,
-      catalogId, editingId: editorId, initialize: true,
-    });
-    automaticStart.current.then((result) => {
-      if (open && result?.id) {
-        setPending('');
-        showSession(result);
-      }
-    }).catch((problem) => {
-      if (open) setError(problem.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''));
-    }).finally(() => { if (open) setPending(''); });
-    return () => { open = false; };
-  }, [kind, sessionId, sessionsView]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -390,6 +387,18 @@ export function BuilderPage({ kind, query }) {
     go(result.id ? recordRoute(section, result) : `/${section}`);
   }
 
+  async function updateDraftExecution(event) {
+    event.preventDefault();
+    if (busy || !draftExecution) return;
+    const { providerId, model, effort } = draftExecution;
+    const next = providerId ? { providerId, ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : null;
+    const result = await runAction('Updating agent execution…', 'builder:updateDraftExecution', [sessionId, next]);
+    if (result?.id) {
+      setSessionResult({ id: result.id, value: result });
+      setDraftExecution(null);
+    }
+  }
+
   const draft = session?.draft;
   const resume = Array.isArray(list.value) ? list.value : list.value?.sessions || [];
   const loginAction = canAuthenticate && <Button onClick={authenticate} disabled={busy}>Authenticate</Button>;
@@ -398,10 +407,7 @@ export function BuilderPage({ kind, query }) {
   const progress = pending || (active(session?.status) ? session.initializing ? 'Preparing the first response…' : 'Builder is working…' : '');
   const progressIndicator = progress && <div className="actions start" role="status" aria-live="polite"><LoaderCircle size={16} className="spinner" aria-hidden="true" /><span>{progress}</span></div>;
   return <div className="page"><PageHeading title={editing ? `Edit ${nameOf(editing)} with AI` : `Build a${kind === 'agent' ? 'n agent' : ' workflow'}`} icon={Sparkles} subtitle="Describe what you need, inspect the draft and save it to a catalog when ready." back={{ to: `/${section}`, label: kind === 'agent' ? 'Agents' : 'Workflows' }} actions={kind === 'workflow' && !editing && <Button to="/workflows/new" icon={Pencil}>Create manually</Button>} />
-    {!sessionId && kind === 'agent' && !sessionsView ? <Panel title="Preparing your agent builder" icon={Sparkles}><div className="panel-body stack">
-      <ErrorNotice error={error} />
-      {error ? <div className="actions start"><Button variant="primary" onClick={begin}>Try again</Button><Button onClick={() => showSession(null)}>Configure session</Button></div> : <>{progressIndicator || <Loading />}<p className="muted">The builder is starting and preparing its first response.</p></>}
-    </div></Panel> : !sessionId ? <div className="dashboard-grid"><Panel title="Start a builder session" icon={Sparkles}><form className="panel-body stack" onSubmit={begin}>
+    {!sessionId ? <div className="dashboard-grid"><Panel title="Start a builder session" icon={Sparkles}><form className="panel-body stack" onSubmit={begin}>
       <div className="form-grid"><ExecutionFields value={execution} onChange={setExecution} /></div>
       {providerHint}
       <Field label="Attach workspace"><select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="">No workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>
@@ -409,8 +415,8 @@ export function BuilderPage({ kind, query }) {
       <ErrorNotice error={error} />
       {progressIndicator}
       <Button variant="primary" icon={Sparkles} disabled={busy} type="submit">Start session</Button>
-    </form></Panel><Panel title="Resume a session" icon={MessageSquare}>{list.loading ? <Loading /> : list.error ? <div className="panel-body"><ErrorNotice error={list.error} /></div> : resume.length ? <div className="row-list">{resume.map((item) => <ItemRow key={item.id} icon={MessageSquare} title={item.label || item.id} detail={<DateTime value={item.updatedAt || item.createdAt} />} onClick={() => { if (!busy) showSession(item); }}><Status status={item.status} /></ItemRow>)}</div> : <Empty title="No previous sessions" icon={MessageSquare} />}</Panel></div> :
-      <div className="dashboard-grid detail-grid"><Panel title={session?.label || 'Builder chat'} icon={MessageSquare} actions={<>{session && <Status status={session.status} />}<Button onClick={() => showSession(null)} disabled={Boolean(pending)}>Sessions</Button></>}>
+    </form></Panel><Panel title="Resume a session" icon={MessageSquare}>{list.loading ? <Loading /> : list.error ? <div className="panel-body"><ErrorNotice error={list.error} /></div> : resume.length ? <div className="row-list">{resume.map((item) => <ItemRow key={item.id} icon={MessageSquare} title={builderSessionName(item, state[section])} detail={<DateTime value={item.updatedAt || item.createdAt} />} onClick={() => { if (!busy) showSession(item); }}><Status status={item.status} /></ItemRow>)}</div> : <Empty title="No previous sessions" detail="Your builder conversations and drafts appear here after you start a session." icon={MessageSquare} />}</Panel></div> :
+      <div className="dashboard-grid detail-grid"><Panel title={session ? builderSessionName(session, state[section]) : 'Builder chat'} icon={MessageSquare} actions={<>{session && <Status status={session.status} />}<Button onClick={() => showSession(null)} disabled={Boolean(pending)}>Sessions</Button></>}>
         {!session ? sessionError ? <div className="panel-body"><ErrorNotice error={sessionError} /></div> : <Loading /> : <>
         <div className="panel-body stack">
           <div className="actions start"><Tag>{[nameOf(provider) || providerId, session.model, session.effort && effortLabel(session.effort)].filter(Boolean).join(' · ')}</Tag><Button onClick={() => setExecutionDraft({ providerId: session.providerId, model: session.model, effort: session.effort })} disabled={busy || !!executionDraft}>Change execution</Button></div>
@@ -422,10 +428,12 @@ export function BuilderPage({ kind, query }) {
         <div className="chat" ref={chat} aria-busy={busy}>{session?.messages?.length ? session.messages.map((message, index) => <article className={`chat-message ${message.role || 'assistant'}`} key={message.id || index}><small>{message.role === 'user' ? 'You' : 'Builder'}</small><Markdown>{message.text || message.content}</Markdown></article>) : !busy && !session.failure && <Empty title="Start the conversation" detail="Tell the builder what the finished result should do." icon={MessageSquare} />}{progressIndicator && <article className="chat-message assistant"><small>Builder</small>{progressIndicator}</article>}</div>
         {!busy && !session.failure && <p className="panel-body muted" role="status" aria-live="polite">Waiting for your message.</p>}
         <form className="panel-body input-action chat-composer" onSubmit={submitMessage}><textarea aria-label="Message to builder" aria-describedby="builder-message-shortcut" rows={2} placeholder="Describe a goal or ask for a change…" value={draftText} onChange={(event) => setDraftText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draftText.trim()) event.currentTarget.form.requestSubmit(); } }} /><VoiceInput append={(text) => setDraftText((old) => `${old}${old ? ' ' : ''}${text}`)} /><Button type="submit" icon={Send} variant="primary" disabled={busy || !draftText.trim()}>Send</Button></form><small className="panel-body muted" id="builder-message-shortcut">Enter to send · Shift+Enter for a new line</small></>}
-      </Panel><Panel title={kind === 'agent' ? 'Draft manifest' : 'Draft workflow'} icon={FileText} actions={draft && <Button variant="primary" onClick={promote} disabled={busy}>Save to catalog</Button>}>
+      </Panel><Panel title={kind === 'agent' ? 'Draft manifest' : 'Draft workflow'} icon={FileText} actions={draft && <Button variant="primary" onClick={promote} disabled={busy || !!draftExecution}>Save to catalog</Button>}>
         {draft ? <div className="panel-body stack"><div className="segmented"><Button variant={draftTab === 'preview' ? 'secondary' : 'ghost'} onClick={() => setDraftTab('preview')}>Preview</Button><Button variant={draftTab === 'source' ? 'secondary' : 'ghost'} onClick={() => setDraftTab('source')}>Source</Button></div>
+          {kind === 'agent' && <section className="stack" aria-label="Agent execution defaults"><strong>Agent execution defaults</strong><p className="muted">Choose the provider and model this agent will use after saving to the catalog.</p><div className="actions start"><Tag>{draft.execution?.providerId ? [nameOf(state.providers.find((item) => item.id === draft.execution.providerId)) || draft.execution.providerId, draft.execution.model || 'Provider default model', draft.execution.effort && effortLabel(draft.execution.effort)].filter(Boolean).join(' · ') : 'Application default'}</Tag><Button icon={Cpu} disabled={busy} onClick={() => { setError(''); setDraftExecution(draft.execution || {}); }}>Change agent execution</Button></div></section>}
           {draftTab === 'source' ? <pre>{typeof draft === 'string' ? draft : JSON.stringify(draft, null, 2)}</pre> : <><h3>{nameOf(draft.manifest || draft.definition || draft) || 'Draft'}</h3><Markdown>{draft.description || draft.manifest?.description || draft.definition?.description || draft.body || (typeof draft === 'string' ? draft : '')}</Markdown>{(draft.nodes || draft.definition?.nodes)?.map((node) => <ItemRow key={node.id} icon={GitBranch} title={node.label || node.id} detail={node.kind} />)}{kind === 'agent' && <div className="stack"><strong>Agent icon</strong><div className="actions start">{Object.entries(iconOptions).map(([key, icon]) => <Button key={key} className="icon-button" variant={(chosenIcon || draft.icon || 'SmartToy') === key ? 'primary' : 'secondary'} icon={icon} title={key} aria-label={key} aria-pressed={(chosenIcon || draft.icon || 'SmartToy') === key} onClick={() => setChosenIcon(key)} />)}</div></div>}</>}
         </div> : <Empty title="Waiting for a draft" detail="The builder’s proposed files and manifest will appear here." icon={FileText} />}
       </Panel></div>}
+    {draftExecution && <Modal title="Agent execution defaults" icon={Cpu} close={() => { if (!busy) setDraftExecution(null); }}><form onSubmit={updateDraftExecution}><div className="modal-body stack"><p>These settings are saved in the agent manifest and used for future runs.</p><div className="form-grid"><ExecutionFields value={draftExecution} onChange={setDraftExecution} requireProvider /></div><ErrorNotice error={error} /></div><footer className="modal-footer"><Button disabled={busy} onClick={() => setDraftExecution(null)}>Cancel</Button><Button variant="primary" type="submit" disabled={busy}>Apply agent execution</Button></footer></form></Modal>}
   </div>;
 }
