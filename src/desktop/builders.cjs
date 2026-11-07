@@ -1,6 +1,6 @@
 const { randomUUID } = require('node:crypto');
-const { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } = require('node:fs');
-const { join } = require('node:path');
+const { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } = require('node:fs');
+const { join, relative, resolve } = require('node:path');
 const { parse } = require('jsonc-parser');
 const { settingsFor } = require('./providers.cjs');
 const { normalizeExecution, resolveExecution } = require('./execution.cjs');
@@ -160,6 +160,15 @@ function createBuilders({ storage, agents, emit }) {
     return session;
   }
 
+  function remove(id) {
+    const session = idleSession(id);
+    const directory = resolve(paths(id).directory);
+    if (relative(resolve(base), directory) !== id) throw new Error('Invalid builder session path.');
+    rmSync(directory, { recursive: true });
+    emit({ type: 'builder:removed', id, kind: session.kind });
+    return true;
+  }
+
   function updateExecution(id, params = {}) {
     const session = idleSession(id);
     const builder = storage.get('agents', `${session.kind}-builder`, 'default');
@@ -282,7 +291,7 @@ function createBuilders({ storage, agents, emit }) {
     return result;
   }
 
-  return { start, get, list, message, retry, updateExecution, updateDraftExecution, promote };
+  return { start, get, list, remove, message, retry, updateExecution, updateDraftExecution, promote };
 }
 
 module.exports = { createBuilders };

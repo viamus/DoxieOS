@@ -17,8 +17,20 @@ if (args[0] === 'login') {
   assert.ok(args.includes('--ignore-user-config'));
   assert.ok(!process.env.OPENAI_API_KEY);
   assert.ok(!process.env.OPENAI_BASE_URL);
+  const input = readFileSync(0, 'utf8');
+  if (input.includes('## Doxie request\n\n')) {
+    const request = JSON.parse(input.split('## Doxie request\n\n')[1].split('\n').slice(1).join('\n').split('\n```')[0]);
+    assert.equal(request.schema, 'doxie.agent-request.v1');
+    assert.equal(request.agentId, 'release-note-triage');
+    assert.equal(args[args.indexOf('--model') + 1], 'doxie/saved-agent');
+    assert.ok(args.includes("forced_login_method='chatgpt'"));
+    assert.ok(args.includes("model_reasoning_effort='high'"));
+    assert.ok(existsSync(auth));
+    console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Saved agent completed using the installed sign-in and saved model.' } }));
+    process.exit(0);
+  }
   assert.equal(args[args.indexOf('--model') + 1], 'doxie/builder-fixture');
-  const request = readFileSync(0, 'utf8').split('\n\n')
+  const request = input.split('\n\n')
     .find(section => section.startsWith('{\n  "schema": "doxie.builder-request.v1"'));
   const parsed = JSON.parse(request);
   assert.equal(parsed.schema, 'doxie.builder-request.v1');

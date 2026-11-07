@@ -3,7 +3,7 @@ const { existsSync } = require('node:fs');
 const { join } = require('node:path');
 const pty = require('node-pty');
 const { executablePath, invocation } = require('./processes.cjs');
-const { definitions, providerFor, providerEnvironment, usesCodex, localProviderArgs } = require('./providers.cjs');
+const { definitions, providerFor, providerEnvironment, usesCodex, localProviderArgs, interactiveCodexArgs } = require('./providers.cjs');
 
 function size(value, fallback) {
   return Number.isInteger(value) ? Math.max(2, Math.min(500, value)) : fallback;
@@ -30,8 +30,8 @@ function createConsoles({ storage, emit }) {
     if (login && provider?.requiresAuth === false) throw new Error(`${provider.name} uses a local endpoint.`);
     let args = windows && executable && !/cmd\.exe$/i.test(executable) ? ['-NoLogo'] : [];
     if (provider && usesCodex(provider)) args = login ? ['login'] : [
-      '--dangerously-bypass-approvals-and-sandbox', ...localProviderArgs(provider),
-      ...(provider.localBaseUrl ? ['--model', provider.model] : []),
+      '--dangerously-bypass-approvals-and-sandbox', ...interactiveCodexArgs(provider), ...localProviderArgs(provider),
+      ...(provider.model ? ['--model', provider.model] : []),
     ];
     if (provider?.id === 'claude-code') args = login ? ['auth', 'login'] : ['--dangerously-skip-permissions'];
     const mcpConfig = join(storage.root, '.mcp.json');

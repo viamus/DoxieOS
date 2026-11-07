@@ -179,6 +179,10 @@ svg { flex: 0 0 auto; }
 .item-row { color: var(--text); display: flex; align-items: center; gap: 9px; min-height: 53px; min-width: 0; text-align: left; border: 0; background: transparent; border-bottom: 1px solid var(--line-soft); padding: 8px 13px; width: 100%; }
 .item-row:last-child { border-bottom-color: transparent; }
 .item-row.interactive:hover { background: #262720; }
+.builder-session-row { display: flex; align-items: center; min-width: 0; border-bottom: 1px solid var(--line-soft); padding-right: 8px; }
+.builder-session-row:last-child { border-bottom: 0; }
+.builder-session-row > .item-row { flex: 1; width: auto; border-bottom: 0; }
+.builder-session-row > .button { flex: none; }
 .item-copy { display: grid; flex: 1; min-width: 0; }
 .item-copy strong { font-size: 13px; font-weight: 620; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-copy small { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

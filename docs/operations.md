@@ -77,14 +77,25 @@ choice when an existing item differs from its archived counterpart.
 
 Install Claude Code or OpenAI Codex on the machine running DoxieOS. Under
 **Settings → Agent CLI providers**, select **Authenticate** to sign in with
-the provider profile managed by DoxieOS. You can also select the default
+the provider's runtime profile. Claude Code uses a profile managed by DoxieOS;
+cloud Codex shares the installed CLI's sign-in. You can also select the default
 provider and configure each executable from that section. An agent run or an
 interactive console launches its provider on demand.
 
-Codex builder sessions run the installed `codex exec` with the machine's
-existing ChatGPT sign-in. The CLI opens a fresh ephemeral turn while DoxieOS
-keeps the draft and conversation in AppData. If the CLI requires sign-in,
-open **Authenticate** from the builder and retry the last message after login.
+Codex agents, workflow steps and builder sessions use the installed CLI's
+ChatGPT sign-in by default. **Authenticate** in Settings and in the builder
+targets that same login. Headless runs ignore the installed user configuration;
+ordinary runs receive DoxieOS's configured MCP servers explicitly. Builder
+conversations remain separate from those tools. On Windows, DoxieOS uses the
+native binary behind a recognized npm Codex shim to pass configuration without
+shell interpolation. Explicit API credentials or endpoint settings supplied in
+the provider/run environment retain the separate API profile. Ollama and LM
+Studio keep their local endpoints.
+
+The CLI opens a fresh ephemeral turn while DoxieOS keeps the builder draft and
+conversation in AppData. If sign-in is required, open **Authenticate** and retry
+after login. Tool connection warnings refer to the MCP URLs and commands
+configured in DoxieOS; verify those services separately from model authentication.
 
 Model selectors can refresh the installed providers' inventory and show its
 source. Codex and Claude Code use model metadata from the DoxieOS or installed

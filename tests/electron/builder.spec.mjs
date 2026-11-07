@@ -152,7 +152,9 @@ test('starts explicitly, resumes builder sessions after restart, and saves indep
     expect(recovered.messages.at(-1).role).toBe('assistant');
     expect(recovered.failure).toBeFalsy();
 
-    await page.getByRole('button', { name: 'Change agent execution', exact: true }).click();
+    const draftHeader = page.locator('.panel-header').filter({ has: page.getByRole('heading', { name: 'Draft manifest', exact: true }) });
+    await expect(draftHeader.getByRole('button', { name: 'Save to catalog', exact: true })).toBeVisible();
+    await draftHeader.getByRole('button', { name: 'Change agent execution', exact: true }).click();
     const executionDialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: 'Agent execution defaults', exact: true }) });
     await executionDialog.getByLabel('Provider', { exact: true }).selectOption('codex');
     await executionDialog.getByLabel('Model', { exact: true }).fill('doxie/saved-agent');
@@ -203,6 +205,34 @@ test('starts explicitly, resumes builder sessions after restart, and saves indep
     expect(await page.evaluate(() => window.doxie.invoke('catalog:get', 'agents', 'release-note-triage')))
       .toMatchObject({ body: 'Read supplied release notes and report each entry with its impact.',
         execution: { providerId: 'codex', model: 'doxie/saved-agent', effort: 'high' } });
+    await expect(page.getByLabel('Provider', { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Model', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Reasoning effort' })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Agent execution', exact: true })).toContainText('doxie/saved-agent');
+    await page.getByRole('button', { name: 'Run agent', exact: true }).click();
+    await expect(page).toHaveURL(/#\/agents\/release-note-triage.*run=/);
+    const runId = new URLSearchParams(new URL(page.url()).hash.split('?')[1]).get('run');
+    await expect.poll(() => page.evaluate(id => window.doxie.invoke('agent:run', id), runId))
+      .toMatchObject({ status: 'Completed', model: 'doxie/saved-agent', effort: 'high' });
+    await expect(page.getByText('Saved agent completed using the installed sign-in and saved model.', { exact: true })).toBeVisible();
+
+    await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
+    await page.locator('.toolbar').getByRole('link', { name: 'Sessions', exact: true }).click();
+    await page.getByRole('button', { name: 'Remove session', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect(await page.evaluate(() => window.doxie.invoke('builder:list', 'agent'))).toHaveLength(1);
+    await page.getByRole('button', { name: 'Remove session', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Remove session', exact: true }).click();
+    await expect(page.getByText('No previous sessions', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.doxie.invoke('catalog:get', 'agents', 'release-note-triage'))).toBeTruthy();
+    await page.evaluate(async () => {
+      for (let index = 0; index < 2; index++) await window.doxie.invoke('builder:start', 'agent', { editingId: 'release-note-triage' });
+    });
+    await expect(page.getByRole('button', { name: 'Remove session', exact: true })).toHaveCount(2);
+    await page.getByRole('button', { name: 'Clear sessions', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Clear sessions', exact: true }).click();
+    await expect(page.getByText('No previous sessions', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.doxie.invoke('builder:list', 'agent'))).toHaveLength(0);
   } finally {
     await application?.close().catch(() => {});
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });

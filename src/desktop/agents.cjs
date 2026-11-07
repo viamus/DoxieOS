@@ -308,7 +308,7 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
 
   function runBuilder(kind, params) {
     const provider = providerFor(storage, params.providerId, {
-      model: params.model, effort: params.effort, localCodex: true, preference: storage.get('agents', `${kind}-builder`)?.execution,
+      model: params.model, effort: params.effort, localCodex: true, mcp: false, preference: storage.get('agents', `${kind}-builder`)?.execution,
       env: { DOXIE_ROOT: storage.root, DOXIE_PROJECT_ROOT: storage.root },
     });
     return execute({ id: `${kind}-builder` }, { ...params, builder: true }, params.cwd, provider, params.prompt, params.cwd);

@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, readFile, rm, writeFile } = require('node:fs/promises');
+const { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { test } = require('node:test');
@@ -308,6 +308,98 @@ test('recovers interrupted builder messages and initialization from the persiste
     assert.equal(request.message, initialPrompt);
     assert.deepEqual(request.previousTurns, []);
   } finally {
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('removes a saved builder session durably while preserving other sessions and the catalog agent', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-remove-'));
+  const databasePath = join(root, 'state.db');
+  let storage = createStorage({ root, databasePath });
+  try {
+    for (const kind of ['agent', 'workflow']) storage.save('agents', { id: `${kind}-builder`, body: 'Author a draft.' });
+    storage.save('agents', { id: 'retained-agent', name: 'Retained Agent', body: 'Keep this catalog item.' });
+    const events = [];
+    const agents = {
+      runBuilder() { return { id: 'response' }; },
+      async wait() { return { status: 'Completed', output: [{ source: 'Stdout', text: 'The draft is ready.' }] }; },
+    };
+    const builders = createBuilders({ storage, agents, emit: event => events.push(event) });
+    const removed = builders.start('agent', { editingId: 'retained-agent' });
+    await builders.message(removed.id, 'Keep the existing instructions.');
+    builders.promote(removed.id);
+    const retained = builders.start('workflow');
+    await builders.message(retained.id, 'Describe a workflow.');
+    const retainedSession = builders.get(retained.id);
+    const directory = join(storage.roots.sandboxes, removed.id);
+    await writeFile(join(directory, '.draft', 'new-agents', 'temporary.json'), '{}');
+    assert.equal(builders.remove(removed.id), true);
+    await assert.rejects(stat(directory), { code: 'ENOENT' });
+    assert.equal(builders.get(removed.id), null);
+    assert.deepEqual(builders.list().map(session => session.id), [retained.id]);
+    assert.deepEqual(builders.get(retained.id), retainedSession);
+    assert.equal(storage.get('agents', 'retained-agent').body, 'Keep this catalog item.');
+    assert.deepEqual(events.filter(event => event.type === 'builder:removed'), [
+      { type: 'builder:removed', id: removed.id, kind: 'agent' },
+    ]);
+
+    storage.close();
+    storage = createStorage({ root, databasePath });
+    const reopened = createBuilders({ storage, agents, emit: () => {} });
+    assert.equal(reopened.get(removed.id), null);
+    assert.deepEqual(reopened.list().map(session => session.id), [retained.id]);
+    assert.deepEqual(reopened.get(retained.id), retainedSession);
+    assert.equal(storage.get('agents', 'retained-agent').body, 'Keep this catalog item.');
+  } finally {
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('refuses active, missing and unsafe session removal while allowing interrupted session cleanup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-remove-guards-'));
+  const storage = createStorage({ root, databasePath: ':memory:' });
+  let finish;
+  let response;
+  try {
+    storage.save('agents', { id: 'agent-builder', body: 'Author an agent.' });
+    const events = [];
+    const agents = {
+      runBuilder() { return { id: 'working' }; },
+      wait() { return new Promise(resolve => { finish = resolve; }); },
+    };
+    const builders = createBuilders({ storage, agents, emit: event => events.push(event) });
+    const session = builders.start('agent');
+    const transcript = join(storage.roots.sandboxes, session.id, '.draft', 'desktop-session.json');
+    response = builders.message(session.id, 'Create a reviewer.');
+    assert.throws(() => builders.remove(session.id), /already responding/);
+    assert.deepEqual(builders.get(session.id).messages, [{ role: 'user', text: 'Create a reviewer.' }]);
+    for (const id of ['', null, '../outside', `${session.id}/..`, join(root, 'outside')]) {
+      assert.throws(() => builders.remove(id), /Invalid builder session/);
+    }
+    assert.throws(() => builders.remove('builder-agent-missing'), /not found/);
+    const outside = join(root, 'outside');
+    await mkdir(join(outside, '.draft'), { recursive: true });
+    const marker = join(outside, '.draft', 'desktop-session.json');
+    await writeFile(marker, '{"messages":[]}');
+    await symlink(outside, join(storage.roots.sandboxes, 'builder-agent-linked'), 'junction');
+    assert.throws(() => builders.remove('builder-agent-linked'), /symbolic link/i);
+    assert.equal(await readFile(marker, 'utf8'), '{"messages":[]}');
+    assert.deepEqual(events.filter(event => event.type === 'builder:removed'), []);
+
+    finish({ status: 'Completed', output: [{ source: 'Stdout', text: 'Ready.' }] });
+    await response;
+    const persisted = JSON.parse(await readFile(transcript, 'utf8'));
+    await writeFile(transcript, JSON.stringify({ ...persisted, status: 'Running' }));
+    const reopened = createBuilders({ storage, agents, emit: event => events.push(event) });
+    assert.equal(reopened.get(session.id).failure.kind, 'cancelled');
+    assert.equal(reopened.remove(session.id), true);
+    assert.equal(reopened.get(session.id), null);
+    assert.equal(await readFile(marker, 'utf8'), '{"messages":[]}');
+  } finally {
+    if (finish) finish({ status: 'Cancelled', output: [] });
+    await response;
     storage.close();
     await rm(root, { recursive: true, force: true });
   }

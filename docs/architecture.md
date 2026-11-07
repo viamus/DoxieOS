@@ -105,8 +105,11 @@ The runtime profile also contains local output and provider state.
 
 DoxieOS emits provider compatibility files from the canonical `.doxie/` catalog.
 Claude Code and Codex consume the files and the context assembled at dispatch.
-Each provider runs with a profile managed inside Electron user data. Sign-in
-from Settings uses the same profile as agent runs and consoles.
+Claude Code and local/API adapters use profiles managed inside Electron user
+data. Cloud Codex shares the installed CLI's ChatGPT credentials by default,
+while headless invocations ignore installed user configuration and receive
+DoxieOS's MCP registry explicitly. Sign-in from Settings uses the same
+authentication profile as agent runs and consoles.
 
 ```mermaid
 flowchart TD

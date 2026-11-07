@@ -1,8 +1,38 @@
 const { spawn } = require('node:child_process');
-const { accessSync, constants, existsSync, statSync } = require('node:fs');
-const { delimiter, extname, isAbsolute, join, resolve } = require('node:path');
+const { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } = require('node:fs');
+const { createRequire } = require('node:module');
+const { basename, delimiter, dirname, extname, isAbsolute, join, resolve } = require('node:path');
 
 const windows = process.platform === 'win32';
+
+function nativeCodexExecutable(shim, { platform = process.platform, arch = process.arch } = {}) {
+  if (platform !== 'win32' || !/^codex\.(cmd|bat)$/i.test(basename(shim))) return null;
+  const triple = { x64: 'x86_64-pc-windows-msvc', arm64: 'aarch64-pc-windows-msvc' }[arch];
+  if (!triple) return null;
+  try {
+    // Recognize npm's generated global/local shim without executing shell text.
+    const reference = readFileSync(shim, 'utf8').match(/(?:%dp0%|%~dp0)[\\/]?((?:node_modules[\\/]|\.\.[\\/])@openai[\\/]codex[\\/]bin[\\/]codex\.js)\b/i);
+    if (!reference) return null;
+    const entrypoint = resolve(dirname(shim), ...reference[1].split(/[\\/]/));
+    const packageJson = realpathSync(join(dirname(entrypoint), '..', 'package.json'));
+    const metadata = JSON.parse(readFileSync(packageJson, 'utf8'));
+    if (metadata.name !== '@openai/codex' || metadata.bin?.codex !== 'bin/codex.js' || !statSync(entrypoint).isFile()) return null;
+    const vendorRoots = [];
+    try {
+      const installed = createRequire(packageJson).resolve(`@openai/codex-win32-${arch}/package.json`);
+      vendorRoots.push(join(dirname(installed), 'vendor'));
+    } catch {}
+    vendorRoots.push(join(dirname(packageJson), 'vendor'));
+    for (const vendor of vendorRoots) {
+      const executable = join(vendor, triple, 'bin', 'codex.exe');
+      try {
+        accessSync(executable, constants.X_OK);
+        if (statSync(executable).isFile()) return executable;
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
 
 function executablePath(command, env = process.env) {
   const search = isAbsolute(command) ? [''] : (env.Path || env.PATH || '').split(delimiter);
@@ -13,7 +43,7 @@ function executablePath(command, env = process.env) {
       const candidate = resolve(directory, command + extension);
       try {
         accessSync(candidate, constants.X_OK);
-        if (statSync(candidate).isFile()) return candidate;
+        if (statSync(candidate).isFile()) return nativeCodexExecutable(candidate) || candidate;
       } catch {}
     }
   }
@@ -61,4 +91,4 @@ function killTree(child) {
   }
 }
 
-module.exports = { executablePath, invocation, launch, killTree };
+module.exports = { executablePath, nativeCodexExecutable, invocation, launch, killTree };
