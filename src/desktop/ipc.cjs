@@ -8,6 +8,7 @@ const { definitions, settingsFor, providerEnvironment, jsonSetting } = require('
 const { normalizeModel, normalizeEffort } = require('./execution.cjs');
 const { discoverModels } = require('./model-catalog.cjs');
 const { executablePath, launch } = require('./processes.cjs');
+const { openPath } = require('./shell.cjs');
 
 const privateRunFolder = name => name.toLowerCase() === '.doxie-transient';
 const fileTypes = {
@@ -53,12 +54,6 @@ async function preview(path, metadata = {}) {
     if (result.sizeBytes <= 12 * 1024 * 1024) result.dataUrl = `data:${mimeType};base64,${(await readFile(path)).toString('base64')}`;
   }
   return result;
-}
-
-async function openPath(shell, path) {
-  const error = await shell.openPath(path);
-  if (error) throw new Error(error);
-  return true;
 }
 
 function createActions({ app, dialog, shell, window, storage, agents, workflows, consoles, builders, notifications, mcp, emit, releaseNotes }) {
