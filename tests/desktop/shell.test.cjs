@@ -66,7 +66,7 @@ test('falls back to Explorer for an existing Windows directory and preserves its
   assert.equal(unreferenced, false);
   child.emit('spawn');
   assert.equal(await pending, true);
-  assert.deepEqual(request, [join(process.env.SystemRoot, 'explorer.exe'), [directory], { cwd: directory, stdio: 'ignore' }]);
+  assert.deepEqual(request, [join(process.env.SystemRoot, 'explorer.exe'), [directory], { cwd: directory, stdio: 'ignore', windowsHide: false }]);
   assert.equal(unreferenced, true);
 });
 

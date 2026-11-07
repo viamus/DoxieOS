@@ -1,8 +1,8 @@
+const { spawn } = require('node:child_process');
 const { stat } = require('node:fs/promises');
 const { join } = require('node:path');
-const { launch: launchProcess } = require('./processes.cjs');
 
-async function openPath(shell, path, { platform = process.platform, launch = launchProcess } = {}) {
+async function openPath(shell, path, { platform = process.platform, launch = spawn } = {}) {
   const error = await shell.openPath(path);
   if (!error) return true;
 
@@ -13,7 +13,7 @@ async function openPath(shell, path, { platform = process.platform, launch = lau
 
   // Some Windows shell configurations reject Electron's folder verb. Ask
   // Explorer directly, keeping the validated directory as one argument.
-  const child = launch(join(windowsDirectory, 'explorer.exe'), [path], { cwd: path, stdio: 'ignore' });
+  const child = launch(join(windowsDirectory, 'explorer.exe'), [path], { cwd: path, stdio: 'ignore', windowsHide: false });
   return new Promise((resolve, reject) => {
     child.once('error', reject);
     child.once('spawn', () => { child.unref(); resolve(true); });
