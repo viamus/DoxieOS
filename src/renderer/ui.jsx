@@ -273,26 +273,109 @@ export function selectModes(agent) {
 }
 
 export function VoiceInput({ append }) {
-  const { state, notify } = useApp();
+  const { state } = useApp();
+  const t = useText();
   const Engine = window.SpeechRecognition || window.webkitSpeechRecognition;
   const recognition = useRef(null);
-  const [listening, setListening] = useState(false);
-  useEffect(() => () => recognition.current?.abort(), []);
-  if (!Engine || !('processLocally' in Engine.prototype)) return null;
-  function toggle() {
-    if (recognition.current) { recognition.current.stop(); return; }
-    const speech = new Engine();
-    recognition.current = speech;
-    speech.lang = state.settings.language === 'en' || !state.settings.language ? 'en-US' : state.settings.language;
-    speech.processLocally = true;
-    speech.continuous = true;
-    speech.onresult = (event) => {
-      const text = Array.from(event.results).slice(event.resultIndex).filter((result) => result.isFinal).map((result) => result[0].transcript).join(' ');
-      if (text) append(text);
-    };
-    speech.onerror = (event) => { if (event.error !== 'aborted') notify(`Local dictation: ${event.error}`, 'error'); };
-    speech.onend = () => { recognition.current = null; setListening(false); };
-    try { speech.start(); setListening(true); } catch (error) { recognition.current = null; notify(error.message, 'error'); }
+  const request = useRef(0);
+  const timer = useRef(null);
+  const [phase, setPhase] = useState('idle');
+  const [message, setMessage] = useState('');
+  const statusId = useId();
+  const requestedLanguage = navigator.language || state.settings.language || 'en-US';
+  const locale = { en: 'en-US', es: 'es-ES', pt: 'pt-BR' }[requestedLanguage] || requestedLanguage;
+  const listening = phase === 'listening';
+  const busy = ['checking', 'starting', 'stopping'].includes(phase);
+  const unavailable = t('Voice.Unavailable', 'Local dictation is unavailable for {language} on this installation.').replace('{language}', locale);
+  useEffect(() => () => {
+    request.current++;
+    clearTimeout(timer.current);
+    recognition.current?.abort();
+  }, []);
+
+  async function toggle() {
+    if (recognition.current) {
+      setPhase('stopping');
+      setMessage(t('Voice.Stopping', 'Finishing dictation…'));
+      try { recognition.current.stop(); }
+      catch { recognition.current.abort(); }
+      return;
+    }
+    const currentRequest = ++request.current;
+    setPhase('checking');
+    setMessage(t('Voice.Checking', 'Checking local dictation…'));
+    if (!Engine || !('processLocally' in Engine.prototype) || typeof Engine.available !== 'function') {
+      setPhase('idle');
+      setMessage(unavailable);
+      return;
+    }
+    try {
+      const availability = await Promise.race([
+        Engine.available({ langs: [locale], processLocally: true }),
+        new Promise(resolve => { timer.current = setTimeout(() => resolve('unavailable'), 6000); }),
+      ]);
+      clearTimeout(timer.current);
+      if (currentRequest !== request.current) return;
+      if (availability !== 'available') {
+        const status = availability === 'downloading' ? t('Voice.Downloading', 'The local speech language is still downloading. Try dictation again when it finishes.')
+          : availability === 'downloadable' ? t('Voice.NotInstalled', 'The local speech language is not installed on this application.') : unavailable;
+        setPhase('idle');
+        setMessage(status);
+        return;
+      }
+      const speech = new Engine();
+      recognition.current = speech;
+      speech.lang = locale;
+      speech.processLocally = true;
+      speech.continuous = true;
+      const finish = () => {
+        if (recognition.current !== speech) return false;
+        clearTimeout(timer.current);
+        recognition.current = null;
+        setPhase('idle');
+        return true;
+      };
+      speech.onstart = () => {
+        if (recognition.current !== speech) return;
+        clearTimeout(timer.current);
+        setPhase('listening');
+        setMessage(t('Voice.Listening', 'Listening… Click the microphone again to finish.'));
+      };
+      speech.onresult = (event) => {
+        if (recognition.current !== speech) return;
+        const text = Array.from(event.results).slice(event.resultIndex).filter((result) => result.isFinal).map((result) => result[0].transcript).join(' ');
+        if (text) append(text);
+      };
+      speech.onerror = (event) => {
+        if (!finish()) return;
+        const errors = {
+          'language-not-supported': unavailable,
+          'not-allowed': t('Voice.Permission', 'Allow microphone access in your system settings, then try dictation again.'),
+          'service-not-allowed': t('Voice.Permission', 'Allow microphone access in your system settings, then try dictation again.'),
+          'audio-capture': t('Voice.Microphone', 'Connect a microphone and check that the system can hear it.'),
+          'no-speech': t('Voice.NoSpeech', 'No speech was detected. Try dictation again.'),
+        };
+        setMessage(event.error === 'aborted' ? '' : errors[event.error] || t('Voice.Failed', 'Local dictation could not finish. Try again.'));
+      };
+      speech.onend = () => { if (finish()) setMessage(''); };
+      setPhase('starting');
+      setMessage(t('Voice.Starting', 'Starting the microphone…'));
+      timer.current = setTimeout(() => {
+        if (!finish()) return;
+        speech.abort();
+        setMessage(t('Voice.Failed', 'Local dictation could not finish. Try again.'));
+      }, 10000);
+      speech.start();
+    } catch {
+      clearTimeout(timer.current);
+      if (currentRequest !== request.current) return;
+      recognition.current = null;
+      setPhase('idle');
+      setMessage(t('Voice.Failed', 'Local dictation could not finish. Try again.'));
+    }
   }
-  return <IconButton icon={listening ? MicOff : Mic} label={listening ? 'Stop dictation' : 'Start local dictation'} onClick={toggle} />;
+  return <span className="voice-input" data-phase={phase}>
+    <IconButton icon={listening ? MicOff : busy ? LoaderCircle : Mic} label={listening ? 'Stop dictation' : 'Start local dictation'} aria-pressed={listening} aria-describedby={message ? statusId : undefined} disabled={busy} onClick={toggle} />
+    {message && <small className="voice-feedback" id={statusId} role="status">{message}</small>}
+  </span>;
 }

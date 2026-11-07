@@ -43,6 +43,39 @@ test('builder sends explicit prior turns to a fresh provider call and preserves 
   }
 });
 
+test('starts the first builder response automatically without a user turn or an empty manifest', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-initialize-'));
+  const storage = createStorage({ root, databasePath: ':memory:' });
+  try {
+    storage.save('agents', { id: 'agent-builder', body: 'Help the user build an agent.' });
+    const requests = [];
+    let finish;
+    const waiting = new Promise(resolve => { finish = resolve; });
+    const builders = createBuilders({ storage, emit: () => {}, agents: {
+      runBuilder(_kind, params) { requests.push(params); return { id: 'greeting' }; },
+      wait() { return waiting; },
+    } });
+    const created = builders.start('agent', { providerId: 'codex', initialize: true });
+    assert.equal(created.status, 'Running');
+    assert.equal(created.initializing, true);
+    assert.equal(created.draft, null);
+    assert.deepEqual(created.messages, []);
+    const request = JSON.parse(requests[0].prompt.split('\n\n').at(-1));
+    assert.equal(request.stage, 'initialize');
+    assert.deepEqual(request.previousTurns, []);
+    finish({ status: 'Completed', output: [{ source: 'Stdout', text: 'What should your agent do?' }] });
+    await new Promise(resolve => setImmediate(resolve));
+    const ready = builders.get(created.id);
+    assert.equal(ready.status, 'Ready');
+    assert.equal(ready.initializing, false);
+    assert.equal(ready.draft, null);
+    assert.deepEqual(ready.messages, [{ role: 'assistant', text: 'What should your agent do?' }]);
+  } finally {
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('retries a builder message after authentication without duplicating it or replaying provider logs', async () => {
   const root = await mkdtemp(join(tmpdir(), 'doxie-builder-auth-'));
   const storage = createStorage({ root, databasePath: ':memory:' });

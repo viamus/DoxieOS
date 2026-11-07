@@ -244,6 +244,9 @@ svg { flex: 0 0 auto; }
 .chat-message.user { justify-self: end; border-color: #68473b; background: #372821; }
 .chat-message small { display: block; margin-bottom: 4px; color: var(--accent-strong); font-size: 10px; font-weight: 650; text-transform: uppercase; }
 .chat-composer { border-top: 1px solid var(--line-soft); }
+.voice-input { position: relative; display: inline-flex; flex: none; align-items: center; }
+.voice-input:is([data-phase="checking"], [data-phase="starting"], [data-phase="stopping"]) svg { animation: spin .85s linear infinite; }
+.voice-feedback { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 5; width: 290px; max-width: 70vw; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-compact); background: var(--panel); color: var(--text); box-shadow: 0 8px 24px #0005; font-size: 12px; line-height: 1.5; }
 .segmented { display: flex; align-items: center; gap: 4px; }
 
 .split-view { display: grid; grid-template-columns: minmax(190px, 28%) minmax(0, 1fr); gap: 12px; min-height: min(490px, 70vh); }
@@ -350,5 +353,5 @@ svg { flex: 0 0 auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spinner { animation: none; }
+  .spinner, .voice-input svg { animation: none; }
 }

@@ -20,20 +20,33 @@ if (args[0] === 'login') {
   assert.equal(args[args.indexOf('--model') + 1], 'doxie/builder-fixture');
   const request = readFileSync(0, 'utf8').split('\n\n')
     .find(section => section.startsWith('{\n  "schema": "doxie.builder-request.v1"'));
-  assert.deepEqual(JSON.parse(request), {
-    schema: 'doxie.builder-request.v1', previousTurns: [], omittedTurns: 0,
-    message: 'Build an agent that triages release notes.',
-  });
-
-  if (!existsSync(auth)) {
-    console.error('Fixture diagnostic that must stay out of the builder chat');
-    console.log(JSON.stringify({ type: 'turn.failed', error: { message: 'HTTP 401 Unauthorized: Missing bearer or basic authentication in header' } }));
-    process.exitCode = 1;
+  const parsed = JSON.parse(request);
+  assert.equal(parsed.schema, 'doxie.builder-request.v1');
+  assert.equal(parsed.omittedTurns, 0);
+  if (parsed.stage === 'initialize') {
+    assert.deepEqual(parsed.previousTurns, []);
+    assert.ok(parsed.message);
+    setTimeout(() => {
+      console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: "I'm ready to build your agent. What should it do?" } }));
+    }, 1400);
   } else {
-    writeFileSync(join('.draft', 'manifest.json'), JSON.stringify({
-      id: 'release-note-triage', name: 'Release Note Triage', description: 'Sorts release notes by impact.',
-      body: 'Read supplied release notes and report each entry with its impact.',
-    }));
-    console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'The release note triage draft is ready.' } }));
+    assert.equal(parsed.message, 'Build an agent\nthat triages release notes.');
+    assert.equal(parsed.previousTurns.filter(turn => turn.role === 'user').length, 0);
+    assert.ok(parsed.previousTurns.every(turn => turn.role === 'assistant'));
+    assert.ok(!JSON.stringify(parsed.previousTurns).includes('Fixture diagnostic'));
+
+    setTimeout(() => {
+      if (!existsSync(auth)) {
+        console.error('Fixture diagnostic that must stay out of the builder chat');
+        console.log(JSON.stringify({ type: 'turn.failed', error: { message: 'HTTP 401 Unauthorized: Missing bearer or basic authentication in header' } }));
+        process.exitCode = 1;
+      } else {
+        writeFileSync(join('.draft', 'manifest.json'), JSON.stringify({
+          id: 'release-note-triage', name: 'Release Note Triage', description: 'Sorts release notes by impact.',
+          body: 'Read supplied release notes and report each entry with its impact.',
+        }));
+        console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'The release note triage draft is ready.' } }));
+      }
+    }, 900);
   }
 }

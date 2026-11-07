@@ -26,7 +26,7 @@ function write(path, data) {
   renameSync(temporary, path);
 }
 
-function builderRequest(messages, text) {
+function builderRequest(messages, text, stage = 'message') {
   const recent = [];
   let size = 0;
   for (const turn of messages.slice(-20).reverse()) {
@@ -34,7 +34,7 @@ function builderRequest(messages, text) {
     if (size > 64 * 1024) break;
     recent.unshift(turn);
   }
-  const request = { schema: 'doxie.builder-request.v1', previousTurns: recent, omittedTurns: messages.length - recent.length, message: text };
+  const request = { schema: 'doxie.builder-request.v1', stage, previousTurns: recent, omittedTurns: messages.length - recent.length, message: text };
   return [
     'Read AGENTS.md for this builder’s instructions. Inspect the existing draft before changing it.',
     'Continue from the explicitly provided conversation below. If omittedTurns is greater than zero, the full transcript is available in .draft/desktop-session.json.',
@@ -139,10 +139,18 @@ function createBuilders({ storage, agents, emit }) {
     ].filter(Boolean).join('\n\n');
     for (const name of ['CLAUDE.md', 'AGENTS.md']) writeFileSync(join(directory, name), context);
     if (original) write(join(draft, 'manifest.json'), original);
-    return persist({
+    const session = persist({
       id, kind, workspaceId: workspace?.id, editingId, catalogId: params.catalogId || original?.catalogId,
       ...execution, status: 'Ready', messages: [],
     });
+    if (params.initialize === true) {
+      const language = settingsFor(storage).language;
+      const request = `Begin the ${kind} builder conversation in ${language}. Briefly introduce your role and ask one clear question about ${original ? 'the changes the user wants to make to the existing draft' : 'what the new agent should do'}. Wait for the user's requirements before creating or changing a manifest.`;
+      session.initialPrompt = request;
+      void respond(session, request, false, true).catch(error => console.error('Could not persist builder initialization:', error.message));
+      return get(id);
+    }
+    return session;
   }
 
   function idleSession(id) {
@@ -166,18 +174,21 @@ function createBuilders({ storage, agents, emit }) {
 
   function retry(id) {
     const session = idleSession(id);
+    if (session.failure && session.initializing && session.initialPrompt) return respond(session, session.initialPrompt, true, true);
     const turn = session.messages.at(-1);
     const text = turn?.text ?? turn?.content;
     if (!session.failure || turn?.role !== 'user' || typeof text !== 'string' || !text.trim()) throw new Error('There is no failed builder message to retry.');
     return respond(session, text, true);
   }
 
-  async function respond(session, text, retrying) {
+  async function respond(session, text, retrying, initializing = false) {
     const { id } = session;
     const { directory, draft } = paths(id);
     const providerId = session.providerId || settingsFor(storage).defaultProvider;
-    const prompt = builderRequest(retrying ? session.messages.slice(0, -1) : session.messages, text);
-    if (!retrying) session.messages.push({ role: 'user', text });
+    const prompt = builderRequest(retrying && !initializing ? session.messages.slice(0, -1) : session.messages, text, initializing ? 'initialize' : 'message');
+    if (!retrying && !initializing) session.messages.push({ role: 'user', text });
+    session.initializing = initializing;
+    if (!initializing) delete session.initialPrompt;
     session.status = 'Running';
     session.failure = null;
     current.add(id);
@@ -190,6 +201,8 @@ function createBuilders({ storage, agents, emit }) {
         const reply = output.filter(item => item.source.toLowerCase() === 'stdout' && !item.text.startsWith('▶')).map(item => item.text).join('\n');
         if (reply || read(safePath(draft, 'manifest.json'))) {
           session.status = 'Ready';
+          session.initializing = false;
+          delete session.initialPrompt;
           session.messages.push({ role: 'assistant', text: reply || 'The draft is ready to review.' });
         } else {
           session.failure = { kind: 'response', providerId, runId: job.id, message: 'The provider returned no response or draft. Retry the last message.' };

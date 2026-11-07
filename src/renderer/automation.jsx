@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, MessageSquare, Pencil, Play, Plug, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
+import { Activity, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, LoaderCircle, MessageSquare, Pencil, Play, Plug, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useEffortLabel, useText } from './ui.jsx';
 import { FilesBrowser, Markdown } from './workbench.jsx';
 
@@ -245,6 +245,7 @@ export function BuilderPage({ kind, query }) {
   const [workspaceId, setWorkspaceId] = useState(() => query.get('workspace') || '');
   const [execution, setExecution] = useState(() => ({ providerId: query.get('provider') || '', model: query.get('model') || '', effort: query.get('effort') || '' }));
   const sessionId = query.get('session') || '';
+  const sessionsView = query.get('sessions') === '1';
   const [sessionResult, setSessionResult] = useState(null);
   const [executionDraft, setExecutionDraft] = useState(null);
   const [draftText, setDraftText] = useState('');
@@ -253,6 +254,7 @@ export function BuilderPage({ kind, query }) {
   const [draftTab, setDraftTab] = useState('preview');
   const [chosenIcon, setChosenIcon] = useState('');
   const chat = useRef(null);
+  const automaticStart = useRef(null);
   const list = useAsync(() => invoke('builder:list', kind), [kind, sessionId]);
   const catalogOptions = state.catalogs || state.settings.catalogs || [];
   const editing = state[section].find((item) => item.id === editorId && (!initialCatalogId || (item.catalogId || 'default') === initialCatalogId));
@@ -267,8 +269,10 @@ export function BuilderPage({ kind, query }) {
   const failureMatchesProvider = !session?.failure?.providerId || session.failure.providerId === providerId;
 
   function routeTo(id, params = new URLSearchParams(query)) {
-    if (id) params.set('session', id);
-    else params.delete('session');
+    if (id) {
+      params.set('session', id);
+      params.delete('sessions');
+    } else params.delete('session');
     return `${builderPath}${params.size ? `?${params}` : ''}`;
   }
 
@@ -278,7 +282,9 @@ export function BuilderPage({ kind, query }) {
     setDraftText('');
     setExecutionDraft(null);
     setChosenIcon('');
-    go(routeTo(value?.id));
+    const params = new URLSearchParams(query);
+    if (!value && kind === 'agent') params.set('sessions', '1');
+    go(routeTo(value?.id, params));
   }
 
   async function runAction(label, action, args) {
@@ -295,9 +301,34 @@ export function BuilderPage({ kind, query }) {
   async function begin(event) {
     event.preventDefault();
     if (busy) return;
-    const result = await runAction('Starting session…', 'builder:start', [kind, { workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, effort: execution.effort || undefined, catalogId, editingId: editorId }]);
+    const result = await runAction('Starting session…', 'builder:start', [kind, { workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined, model: execution.model || undefined, effort: execution.effort || undefined, catalogId, editingId: editorId, initialize: kind === 'agent' }]);
     if (result?.id) showSession(result);
   }
+
+  useEffect(() => {
+    if (kind !== 'agent' || sessionId || sessionsView) {
+      automaticStart.current = null;
+      return;
+    }
+    let open = true;
+    setPending('Starting session…');
+    setError('');
+    // React replays effects in development. Both observations share one request.
+    automaticStart.current ??= invoke('builder:start', kind, {
+      workspaceId: workspaceId || undefined, providerId: execution.providerId || undefined,
+      model: execution.model || undefined, effort: execution.effort || undefined,
+      catalogId, editingId: editorId, initialize: true,
+    });
+    automaticStart.current.then((result) => {
+      if (open && result?.id) {
+        setPending('');
+        showSession(result);
+      }
+    }).catch((problem) => {
+      if (open) setError(problem.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''));
+    }).finally(() => { if (open) setPending(''); });
+    return () => { open = false; };
+  }, [kind, sessionId, sessionsView]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -364,15 +395,19 @@ export function BuilderPage({ kind, query }) {
   const loginAction = canAuthenticate && <Button onClick={authenticate} disabled={busy}>Authenticate</Button>;
   const providerHint = provider?.available === false ? <div className="stack"><p className="muted">{nameOf(provider)} CLI is unavailable. Choose an available provider or configure its executable.</p><div className="actions start"><Button to="/settings">Configure providers</Button></div></div>
     : signInNeeded && <div className="stack"><p className="muted">{localCodex ? 'The builder uses the local Codex CLI sign-in. Sign in to Codex to continue.' : `Sign in to ${nameOf(provider)} in DoxieOS to use the builder.`}</p><div className="actions start">{loginAction}</div></div>;
-  const progress = pending || (active(session?.status) ? 'Builder is working…' : '');
+  const progress = pending || (active(session?.status) ? session.initializing ? 'Preparing the first response…' : 'Builder is working…' : '');
+  const progressIndicator = progress && <div className="actions start" role="status" aria-live="polite"><LoaderCircle size={16} className="spinner" aria-hidden="true" /><span>{progress}</span></div>;
   return <div className="page"><PageHeading title={editing ? `Edit ${nameOf(editing)} with AI` : `Build a${kind === 'agent' ? 'n agent' : ' workflow'}`} icon={Sparkles} subtitle="Describe what you need, inspect the draft and save it to a catalog when ready." back={{ to: `/${section}`, label: kind === 'agent' ? 'Agents' : 'Workflows' }} actions={kind === 'workflow' && !editing && <Button to="/workflows/new" icon={Pencil}>Create manually</Button>} />
-    {!sessionId ? <div className="dashboard-grid"><Panel title="Start a builder session" icon={Sparkles}><form className="panel-body stack" onSubmit={begin}>
+    {!sessionId && kind === 'agent' && !sessionsView ? <Panel title="Preparing your agent builder" icon={Sparkles}><div className="panel-body stack">
+      <ErrorNotice error={error} />
+      {error ? <div className="actions start"><Button variant="primary" onClick={begin}>Try again</Button><Button onClick={() => showSession(null)}>Configure session</Button></div> : <>{progressIndicator || <Loading />}<p className="muted">The builder is starting and preparing its first response.</p></>}
+    </div></Panel> : !sessionId ? <div className="dashboard-grid"><Panel title="Start a builder session" icon={Sparkles}><form className="panel-body stack" onSubmit={begin}>
       <div className="form-grid"><ExecutionFields value={execution} onChange={setExecution} /></div>
       {providerHint}
       <Field label="Attach workspace"><select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="">No workspace</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>
       <Field label="Destination catalog"><select value={catalogId} onChange={(event) => setCatalogId(event.target.value)}>{!catalogOptions.some((item) => item.id === 'default') && <option value="default">Default catalog</option>}{catalogOptions.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}</select></Field>
       <ErrorNotice error={error} />
-      {progress && <p className="muted" role="status">{progress}</p>}
+      {progressIndicator}
       <Button variant="primary" icon={Sparkles} disabled={busy} type="submit">Start session</Button>
     </form></Panel><Panel title="Resume a session" icon={MessageSquare}>{list.loading ? <Loading /> : list.error ? <div className="panel-body"><ErrorNotice error={list.error} /></div> : resume.length ? <div className="row-list">{resume.map((item) => <ItemRow key={item.id} icon={MessageSquare} title={item.label || item.id} detail={<DateTime value={item.updatedAt || item.createdAt} />} onClick={() => { if (!busy) showSession(item); }}><Status status={item.status} /></ItemRow>)}</div> : <Empty title="No previous sessions" icon={MessageSquare} />}</Panel></div> :
       <div className="dashboard-grid detail-grid"><Panel title={session?.label || 'Builder chat'} icon={MessageSquare} actions={<>{session && <Status status={session.status} />}<Button onClick={() => showSession(null)} disabled={Boolean(pending)}>Sessions</Button></>}>
@@ -383,10 +418,10 @@ export function BuilderPage({ kind, query }) {
           {(!session.failure || !failureMatchesProvider) && providerHint}
           <ErrorNotice error={error || session.failure?.message} />
           {session.failure && <div className="actions start">{session.failure.kind === 'authentication' && failureMatchesProvider && loginAction}<Button onClick={retry} disabled={busy}>Retry last message</Button></div>}
-          {progress && <p className="muted" role="status">{progress}</p>}
         </div>
-        <div className="chat" ref={chat}>{session?.messages?.length ? session.messages.map((message, index) => <article className={`chat-message ${message.role || 'assistant'}`} key={message.id || index}><small>{message.role === 'user' ? 'You' : 'Builder'}</small><Markdown>{message.text || message.content}</Markdown></article>) : <Empty title="Start the conversation" detail="Tell the builder what the finished result should do." icon={MessageSquare} />}</div>
-        <form className="panel-body input-action chat-composer" onSubmit={submitMessage}><textarea aria-label="Message to builder" rows={2} placeholder="Describe a goal or ask for a change…" value={draftText} onChange={(event) => setDraftText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.currentTarget.form.requestSubmit(); }} /><VoiceInput append={(text) => setDraftText((old) => `${old}${old ? ' ' : ''}${text}`)} /><Button type="submit" icon={Send} variant="primary" disabled={busy || !draftText.trim()}>Send</Button></form></>}
+        <div className="chat" ref={chat} aria-busy={busy}>{session?.messages?.length ? session.messages.map((message, index) => <article className={`chat-message ${message.role || 'assistant'}`} key={message.id || index}><small>{message.role === 'user' ? 'You' : 'Builder'}</small><Markdown>{message.text || message.content}</Markdown></article>) : !busy && !session.failure && <Empty title="Start the conversation" detail="Tell the builder what the finished result should do." icon={MessageSquare} />}{progressIndicator && <article className="chat-message assistant"><small>Builder</small>{progressIndicator}</article>}</div>
+        {!busy && !session.failure && <p className="panel-body muted" role="status" aria-live="polite">Waiting for your message.</p>}
+        <form className="panel-body input-action chat-composer" onSubmit={submitMessage}><textarea aria-label="Message to builder" aria-describedby="builder-message-shortcut" rows={2} placeholder="Describe a goal or ask for a change…" value={draftText} onChange={(event) => setDraftText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draftText.trim()) event.currentTarget.form.requestSubmit(); } }} /><VoiceInput append={(text) => setDraftText((old) => `${old}${old ? ' ' : ''}${text}`)} /><Button type="submit" icon={Send} variant="primary" disabled={busy || !draftText.trim()}>Send</Button></form><small className="panel-body muted" id="builder-message-shortcut">Enter to send · Shift+Enter for a new line</small></>}
       </Panel><Panel title={kind === 'agent' ? 'Draft manifest' : 'Draft workflow'} icon={FileText} actions={draft && <Button variant="primary" onClick={promote} disabled={busy}>Save to catalog</Button>}>
         {draft ? <div className="panel-body stack"><div className="segmented"><Button variant={draftTab === 'preview' ? 'secondary' : 'ghost'} onClick={() => setDraftTab('preview')}>Preview</Button><Button variant={draftTab === 'source' ? 'secondary' : 'ghost'} onClick={() => setDraftTab('source')}>Source</Button></div>
           {draftTab === 'source' ? <pre>{typeof draft === 'string' ? draft : JSON.stringify(draft, null, 2)}</pre> : <><h3>{nameOf(draft.manifest || draft.definition || draft) || 'Draft'}</h3><Markdown>{draft.description || draft.manifest?.description || draft.definition?.description || draft.body || (typeof draft === 'string' ? draft : '')}</Markdown>{(draft.nodes || draft.definition?.nodes)?.map((node) => <ItemRow key={node.id} icon={GitBranch} title={node.label || node.id} detail={node.kind} />)}{kind === 'agent' && <div className="stack"><strong>Agent icon</strong><div className="actions start">{Object.entries(iconOptions).map(([key, icon]) => <Button key={key} className="icon-button" variant={(chosenIcon || draft.icon || 'SmartToy') === key ? 'primary' : 'secondary'} icon={icon} title={key} aria-label={key} aria-pressed={(chosenIcon || draft.icon || 'SmartToy') === key} onClick={() => setChosenIcon(key)} />)}</div></div>}</>}
