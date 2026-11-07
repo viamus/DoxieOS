@@ -6,7 +6,7 @@ import { FilesBrowser, Markdown } from './workbench.jsx';
 export const recordKey = (item) => `${item.catalogId || 'default'}/${item.id}`;
 export function recordRoute(kind, item, child = '', runId) {
   const query = new URLSearchParams();
-  if (item.catalogId && item.catalogId !== 'default') query.set('catalog', item.catalogId);
+  if (item.catalogId) query.set('catalog', item.catalogId);
   if (runId) query.set('run', runId);
   return `/${kind}/${part(item.id)}${child ? `/${child}` : ''}${query.size ? `?${query}` : ''}`;
 }
@@ -157,7 +157,7 @@ function AgentRunForm({ agent, launch, connector }) {
       <Field label={`Workspace${selectedWorkspaceRequired ? ' *' : ''}`}><select required={selectedWorkspaceRequired} value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}><option value="">{selectedWorkspaceRequired ? 'Select a workspace' : 'DoxieOS data directory'}</option>{state.workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{nameOf(workspace)}</option>)}</select></Field>
       {connector && <ExecutionFields value={execution} onChange={setExecution} inherited={agent.execution} inheritedLabel={agent.execution?.providerId ? 'Connector default' : 'Application default'} />}
     </div>
-    {connector ? <p className="muted">Provider and model selections in this form apply to this run.</p> : <section className="stack" aria-label="Agent execution"><strong>Agent execution</strong><div className="actions start"><Tag>{[nameOf(savedProvider) || savedProviderId, savedModel || 'Provider default model', savedEffort && effortLabel(savedEffort)].filter(Boolean).join(' · ')}</Tag></div><p className="muted">Uses the agent’s saved execution defaults. Edit Execution defaults above to change them.</p></section>}
+    {connector ? <p className="muted">Provider and model selections in this form apply to this run.</p> : <section className="stack" aria-label="Agent execution"><strong>Agent execution</strong><div className="actions start"><Tag>{[nameOf(savedProvider) || savedProviderId, savedModel || 'Provider default model', savedEffort && effortLabel(savedEffort)].filter(Boolean).join(' · ')}</Tag></div><p className="muted">Uses the agent’s saved model and reasoning effort. Use Edit agent to change them.</p></section>}
     {modes[mode]?.description && <p className="muted">{modes[mode].description}</p>}
     {fields.map((field) => <FieldInput key={field.id} field={field} catalogId={agent.catalogId} value={values[field.id]} onChange={(value) => setValues((old) => ({ ...old, [field.id]: value }))} />)}
     {!fields.length && <Field label="Arguments / prompt"><textarea rows={3} value={extra} onChange={(event) => setExtra(event.target.value)} placeholder="Describe what this agent should do…" /></Field>}
@@ -175,7 +175,7 @@ function AgentRunForm({ agent, launch, connector }) {
   </form>;
 }
 
-function AgentDefaults({ agent, connector }) {
+function ConnectorDefaults({ agent }) {
   const { state, refresh, notify } = useApp();
   const effortLabel = useEffortLabel();
   const [execution, setExecution] = useState(null);
@@ -189,15 +189,14 @@ function AgentDefaults({ agent, connector }) {
   return <>
     <Tag>{[nameOf(provider) || effectiveId, model, effort && effortLabel(effort)].filter(Boolean).join(' · ') || 'Application default'}</Tag>
     <Button icon={Cpu} onClick={() => { setError(''); setExecution(agent.execution || {}); }}>Execution defaults</Button>
-    {execution && <Modal title={connector ? 'Connector execution defaults' : 'Agent execution defaults'} icon={Cpu} close={close}><form onSubmit={async (event) => {
+    {execution && <Modal title="Connector execution defaults" icon={Cpu} close={close}><form onSubmit={async (event) => {
       event.preventDefault();
       setSaving(true);
       setError('');
       const { providerId, model, effort } = execution;
       const next = providerId ? { providerId, ...(model ? { model } : {}), ...(effort ? { effort } : {}) } : null;
       try {
-        if (connector) await invoke('connector:saveExecution', agent.id, next, agent.catalogId);
-        else await invoke('catalog:save', 'agents', { id: agent.id, catalogId: agent.catalogId, execution: next });
+        await invoke('connector:saveExecution', agent.id, next, agent.catalogId);
         await refresh();
         setExecution(null);
         notify('Execution defaults saved');
@@ -212,13 +211,8 @@ function AgentDefaults({ agent, connector }) {
 }
 
 function AgentMetadata({ agent }) {
-  const { perform } = useApp();
-  const [show, setShow] = useState(false);
-  const [category, setCategory] = useState(categoryOf(agent));
-  const sealed = agent.categorySealed || categoryOf(agent) === 'Doxie';
-  return <><div className="actions start"><Tag>{categoryOf(agent)}</Tag>{agent.isPrivate && <Tag>Private</Tag>}{agent.catalogName && <Tag>{agent.catalogName}</Tag>}<AgentDefaults agent={agent} />{!sealed && <Button variant="ghost" icon={Pencil} onClick={() => setShow(true)}>Change category</Button>}</div>
+  return <><div className="actions start"><Tag>{categoryOf(agent)}</Tag>{agent.isPrivate && <Tag>Private</Tag>}{agent.catalogName && <Tag>{agent.catalogName}</Tag>}</div>
     {!!agent.requirements?.length && <details className="panel inline-panel"><summary>Requirements</summary><ul>{agent.requirements.map((requirement, index) => <li key={index}>{typeof requirement === 'string' ? requirement : requirement.label || requirement.description || requirement.name || requirement.id || JSON.stringify(requirement)}</li>)}</ul></details>}
-    {show && <Modal title="Change category" close={() => setShow(false)}><form onSubmit={async (event) => { event.preventDefault(); const result = await perform('catalog:save', ['agents', { ...agent, category }], 'Category updated'); if (result) setShow(false); }}><div className="modal-body"><Field label="Category"><input required value={category} onChange={(event) => setCategory(event.target.value)} /></Field></div><footer className="modal-footer"><Button onClick={() => setShow(false)}>Cancel</Button><Button type="submit" variant="primary">Save</Button></footer></form></Modal>}
   </>;
 }
 
@@ -249,22 +243,46 @@ function useAgentRun(id) {
   return result.id === id ? result : { loading: !!id };
 }
 
+function useAgentDefinition(id, catalogId, connector) {
+  const [result, setResult] = useState({ id, catalogId, loading: true });
+  useEffect(() => {
+    if (connector) return;
+    let open = true;
+    let revision = 0;
+    const load = async () => {
+      const request = ++revision;
+      try {
+        const value = await invoke('catalog:get', 'agents', id, catalogId);
+        if (open && request === revision) setResult({ id, catalogId, value });
+      } catch (error) {
+        if (open && request === revision) setResult({ id, catalogId, error: error.message });
+      }
+    };
+    const unsubscribe = window.doxie.onEvent((event) => { if (event.type === 'catalog:changed') load(); });
+    load();
+    return () => { open = false; unsubscribe?.(); };
+  }, [id, catalogId, connector]);
+  return result.id === id && result.catalogId === catalogId ? result : { loading: true };
+}
+
 export function AgentPage({ id, catalogId, runId, connector = false }) {
   const effortLabel = useEffortLabel();
   const { state, perform } = useApp();
   const [files, setFiles] = useState(false);
   const section = connector ? 'connectors' : 'agents';
   const back = { to: `/${section}`, label: connector ? 'Connectors' : 'Agents' };
-  const agent = state[section].find((item) => item.id === id && (!catalogId || item.catalogId === catalogId));
+  const definition = useAgentDefinition(id, catalogId, connector);
+  const agent = connector ? state[section].find((item) => item.id === id && (!catalogId || item.catalogId === catalogId)) : definition.value;
   const history = state.agentRuns.filter((run) => run.agentId === id && (!catalogId || !run.catalogId || catalogId === run.catalogId)).sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || ''));
   const selectedRun = runId || history[0]?.id;
   const detail = useAgentRun(selectedRun);
   const run = detail.value || history.find((item) => item.id === selectedRun);
   const buildQuery = new URLSearchParams({ edit: id });
   if (catalogId) buildQuery.set('catalog', catalogId);
-  if (!agent) return <div className="page"><PageHeading title="Agent not found" icon={Bot} back={back} />{run && <Panel title={`Run ${run.id}`} icon={Terminal}><AgentRunOutput key={run.id} run={run} /></Panel>}</div>;
-  return <div className="page"><PageHeading title={nameOf(agent)} icon={connector ? Plug : iconOptions[agent.icon] || Bot} subtitle={agent.description} back={back} actions={!connector && <><Button to={`/agents/new?${buildQuery}`} icon={Pencil}>Edit with AI</Button><Button icon={Download} onClick={() => perform('catalog:export', ['agents', id, agent.catalogId])}>Export</Button></>} />
-    {connector ? <div className="actions start"><Tag>Model-backed connector</Tag><AgentDefaults agent={agent} connector /></div> : <AgentMetadata agent={agent} />}
+  if (!agent && !connector && definition.loading) return <div className="page"><Loading /></div>;
+  if (!agent) return <div className="page"><PageHeading title="Agent not found" icon={Bot} back={back} /><ErrorNotice error={definition.error} />{run && <Panel title={`Run ${run.id}`} icon={Terminal}><AgentRunOutput key={run.id} run={run} /></Panel>}</div>;
+  return <div className="page"><PageHeading title={nameOf(agent)} icon={connector ? Plug : iconOptions[agent.icon] || Bot} subtitle={agent.description} back={back} actions={!connector && <><Button to={recordRoute('agents', agent, 'edit')} icon={Pencil}>Edit agent</Button><Button to={`/agents/new?${buildQuery}`} icon={Sparkles}>Edit with AI</Button><Button icon={Download} onClick={() => perform('catalog:export', ['agents', id, agent.catalogId])}>Export</Button></>} />
+    {connector ? <div className="actions start"><Tag>Model-backed connector</Tag><ConnectorDefaults agent={agent} /></div> : <AgentMetadata agent={agent} />}
     <div className="dashboard-grid detail-grid agent-detail-grid">
       <Panel title="Configure run" icon={Play}><AgentRunForm agent={agent} connector={connector} launch={async (params) => { const result = await perform(connector ? 'connector:start' : 'agent:start', [id, params]); if (result?.id) go(recordRoute(section, agent, '', result.id)); return result; }} /></Panel>
       <Panel title={run ? 'Execution' : 'Latest run'} icon={Terminal} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('agent:stop', [run.id])}>Stop</Button>}</>}>

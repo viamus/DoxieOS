@@ -143,9 +143,10 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
   }
 
   function startRun(id, params) {
+    const execution = Object.fromEntries(['providerId', 'model', 'effort'].filter(key => Object.hasOwn(params, key)).map(key => [key, params[key]]));
     return agents.start(id, {
       arguments: params.arguments, inputs: params.inputs || params.fields, mode: params.mode, modeId: params.modeId,
-      workspaceId: params.workspaceId, catalogId: params.catalogId, providerId: params.providerId, model: params.model, effort: params.effort,
+      workspaceId: params.workspaceId, catalogId: params.catalogId, ...execution,
       env: validatedEnvironment(params.env, true),
     });
   }
@@ -301,7 +302,11 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     },
     'agent:start': (id, params = {}) => {
       if (!storage.get('agents', id, params.catalogId)) throw new Error('Agent not found.');
-      return startRun(id, params);
+      const { providerId, model, effort, ...run } = params;
+      if ([providerId, model, effort].some(value => value != null && !(typeof value === 'string' && !value.trim()))) {
+        throw new Error('Agent execution settings cannot be changed for a run. Use Edit agent to change its provider, model or reasoning effort.');
+      }
+      return startRun(id, run);
     },
     'connector:start': (id, params = {}) => {
       if (!storage.get('tools', id)?.modelBacked) throw new Error('This connector runs inside a workflow.');

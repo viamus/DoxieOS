@@ -208,6 +208,8 @@ test('starts explicitly, resumes builder sessions after restart, and saves indep
     await expect(page.getByLabel('Provider', { exact: true })).toHaveCount(0);
     await expect(page.getByLabel('Model', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('group', { name: 'Reasoning effort' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Execution defaults', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Edit agent', exact: true })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Agent execution', exact: true })).toContainText('doxie/saved-agent');
     await page.getByRole('button', { name: 'Run agent', exact: true }).click();
     await expect(page).toHaveURL(/#\/agents\/release-note-triage.*run=/);

@@ -4,6 +4,7 @@ import { Activity, Bell, BookOpen, Bot, CircleDot, Cpu, FolderKanban, GitBranch,
 import { AppContext, Button, Empty, ErrorNotice, IconButton, Loading, Modal, Status, href, invoke, useText } from './ui.jsx';
 import { Dashboard, HistoryPage, NotificationsPage, SettingsPage } from './overview.jsx';
 import { AgentsPage, AgentPage, BuilderPage, WorkflowsPage } from './automation.jsx';
+import { AgentEditor } from './agent-editor.jsx';
 import { ConnectorPage, ConnectorsPage } from './connectors.jsx';
 import { WorkflowEditor, WorkflowPage } from './workflow.jsx';
 import { ConsolesPage, LibrariesPage, Markdown, WorkspaceFilesPage, WorkspacesPage } from './workbench.jsx';
@@ -42,6 +43,7 @@ function Router({ route }) {
   if (section === 'agents') {
     if (id === 'new') return <BuilderPage kind="agent" query={query} />;
     if (id === 'prompt') return <ConnectorPage id={id} runId={runId} />;
+    if (id && child === 'edit') return <AgentEditor key={`${catalogId || 'default'}/${id}`} id={id} catalogId={catalogId} />;
     return id ? <AgentPage id={id} catalogId={catalogId} runId={runId} /> : <AgentsPage />;
   }
   if (section === 'connectors') return id ? <ConnectorPage id={id} runId={runId} /> : <ConnectorsPage />;
