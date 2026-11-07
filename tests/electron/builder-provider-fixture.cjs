@@ -26,7 +26,20 @@ if (args[0] === 'login') {
     assert.ok(args.includes("forced_login_method='chatgpt'"));
     assert.ok(args.includes("model_reasoning_effort='high'"));
     assert.ok(existsSync(auth));
-    console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Saved agent completed using the installed sign-in and saved model.' } }));
+    if (request.arguments === 'fixture-fail') {
+      console.log(JSON.stringify({ type: 'turn.failed', error: { message: 'Fixture provider failure.' } }));
+      process.exitCode = 1;
+      return;
+    }
+    console.error('2026-01-01T12:00:00Z WARN codex_core::shell_snapshot: Shell snapshot not supported yet for PowerShell');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      console.error(`2026-01-01T12:00:00Z WARN codex_rmcp_client::streamable_http_retry: MCP initialize failed retrying attempt=${attempt} http://localhost:8999/`);
+    }
+    console.error('2026-01-01T12:00:00Z WARN codex_mcp::rmcp_client: MCP server startup failed server_name="fixture-tools" error=HTTP request failed for http://localhost:8999/');
+    console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Checking the supplied material.' } }));
+    console.log(JSON.stringify({ type: 'item.completed', item: { type: 'command_execution', command: 'fixture-internal-command --inspect' } }));
+    console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message',
+      text: 'Saved agent completed using the installed sign-in and saved model.\n\n| Entry | Impact |\n| --- | --- |\n| Example update | Low |' } }));
     process.exit(0);
   }
   assert.equal(args[args.indexOf('--model') + 1], 'doxie/builder-fixture');

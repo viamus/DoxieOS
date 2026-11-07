@@ -13,6 +13,12 @@ const block = /^# BEGIN DOXIE MCP SERVERS\r?\n[\s\S]*?^# END DOXIE MCP SERVERS(?
 const secret = '••••••••';
 const providers = ['claude-code', 'codex'];
 
+function normalizeCommand(value) {
+  if (typeof value !== 'string') return value;
+  const command = value.trim();
+  return command.replace(/^(['"])([\s\S]*)\1$/, '$2');
+}
+
 function parseArguments(value) {
   if (Array.isArray(value)) return value.map(String);
   return (String(value || '').match(/"[^"]*"|'[^']*'|[^\s"']+/g) || []).map(arg => arg.replace(/^(['"])(.*)\1$/, '$2'));
@@ -50,7 +56,7 @@ function readProviderEntries(items, provider) {
   return Object.entries(items || {}).filter(([, value]) => value && typeof value === 'object').map(([id, config]) => {
     const { url, command, args, env, type, transport, enabled, ...metadata } = config;
     return {
-      id, name: id, transport: url ? 'http' : 'stdio', url, command, arguments: args || [],
+      id, name: id, transport: url ? 'http' : 'stdio', url, command: normalizeCommand(command), arguments: args || [],
       environment: env, providers: [provider], enabled: enabled !== false, extraJson: JSON.stringify(metadata),
     };
   });
@@ -58,7 +64,7 @@ function readProviderEntries(items, provider) {
 
 const fingerprint = item => item.transport === 'http'
   ? `http:${item.url?.replace(/\/$/, '')}`
-  : JSON.stringify([item.command, parseArguments(item.arguments)]);
+  : JSON.stringify([normalizeCommand(item.command), parseArguments(item.arguments)]);
 
 function ordered(value) {
   if (Array.isArray(value)) return value.map(ordered);
@@ -72,10 +78,10 @@ function equivalentClaude(config, definition) {
   const { env, args, command, type, transport, url, ...configMetadata } = config;
   const declared = definition.transport === 'http'
     ? { type: 'http', url: definition.url, metadata: extra(definition) }
-    : { command: definition.command, args: parseArguments(definition.arguments), env: parseEnvironment(definition.environment), metadata: extra(definition) };
+    : { command: normalizeCommand(definition.command), args: parseArguments(definition.arguments), env: parseEnvironment(definition.environment), metadata: extra(definition) };
   const present = url
     ? { type: 'http', url, metadata: configMetadata }
-    : { command, args: args || [], env: env || {}, metadata: configMetadata };
+    : { command: normalizeCommand(command), args: args || [], env: env || {}, metadata: configMetadata };
   return JSON.stringify(ordered(declared)) === JSON.stringify(ordered(present));
 }
 
@@ -128,7 +134,7 @@ function createMcp(storage) {
       const requestHeaders = headers || httpHeaders;
       const config = server.transport === 'http'
         ? { ...other, url: server.url }
-        : { ...other, command: server.command, args: parseArguments(server.arguments), env: parseEnvironment(server.environment) };
+        : { ...other, command: normalizeCommand(server.command), args: parseArguments(server.arguments), env: parseEnvironment(server.environment) };
       if (server.providers?.includes('claude-code') && !Object.hasOwn(claudeServers, server.id)) {
         claudeServers[server.id] = { ...config, ...(server.transport === 'http' ? { type: 'http', ...(requestHeaders ? { headers: requestHeaders } : {}) } : {}) };
         written.push(server.id);
@@ -154,8 +160,9 @@ function createMcp(storage) {
       if (!/^[a-z0-9][a-z0-9_-]*$/i.test(item.id || '') || ['__proto__', 'constructor', 'prototype'].includes(item.id)) throw new Error('Invalid MCP server ID.');
       const prior = previous.get(item.id);
       const transport = item.transport === 'http' ? 'http' : 'stdio';
+      const command = normalizeCommand(item.command);
       if (transport === 'http' && !/^https?:\/\//i.test(item.url || '')) throw new Error('MCP server URL must use HTTP or HTTPS.');
-      if (transport === 'stdio' && !item.command?.trim()) throw new Error('A stdio MCP server needs a command.');
+      if (transport === 'stdio' && (typeof command !== 'string' || !command.trim())) throw new Error('A stdio MCP server needs a command.');
       const oldMetadata = extra(prior || {});
       const metadata = { ...oldMetadata, ...extra(item) };
       if (item.headers) {
@@ -163,7 +170,7 @@ function createMcp(storage) {
         metadata.headers = Object.fromEntries(Object.entries(item.headers).map(([name, value]) => [name, value === secret ? oldHeaders[name] || '' : String(value)]));
       }
       normalized.set(item.id, {
-        id: item.id, name: String(item.name || item.id), transport, url: item.url, command: item.command,
+        id: item.id, name: String(item.name || item.id), transport, url: item.url, command,
         arguments: parseArguments(item.arguments), environment: item.environment === secret ? prior?.environment : item.environment,
         providers: providers.filter(provider => item.providers?.includes(provider)), enabled: item.enabled !== false, extraJson: JSON.stringify(metadata),
       });

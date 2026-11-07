@@ -218,7 +218,9 @@ function createBuilders({ storage, agents, emit }) {
       const result = await agents.wait(job.id);
       const output = result?.output || [];
       if (result?.status === 'Completed') {
-        const reply = output.filter(item => item.source.toLowerCase() === 'stdout' && !item.text.startsWith('▶')).map(item => item.text).join('\n');
+        const reply = result.presentation
+          ? result.presentation.response.map(item => item.text).join('\n')
+          : output.filter(item => ['stdout', 'response', 'assistant'].includes(item.source.toLowerCase()) && !item.text.startsWith('▶')).map(item => item.text).join('\n');
         if (reply || read(safePath(draft, 'manifest.json'))) {
           session.status = 'Ready';
           session.initializing = false;

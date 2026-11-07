@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Activity, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, LoaderCircle, MessageSquare, Pencil, Play, Plug, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, LoaderCircle, MessageSquare, Pencil, Play, Plug, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useEffortLabel, useText } from './ui.jsx';
 import { FilesBrowser, Markdown } from './workbench.jsx';
 
@@ -86,6 +86,31 @@ export function LogOutput({ lines, label = 'Execution output' }) {
   if (!lines?.length) return <Empty compact title="No output yet" icon={Terminal} />;
   const formatted = Array.isArray(lines) ? lines : String(lines).split(/\r?\n/);
   return <div ref={log} className="log-output" aria-label={label} tabIndex={0} onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40; }}><pre>{formatted.map((line, index) => typeof line === 'string' ? <span key={index}>{line}{'\n'}</span> : <span key={index} className={String(line.source || '').toLowerCase()}>{line.text ?? line.message ?? JSON.stringify(line)}{'\n'}</span>)}</pre></div>;
+}
+
+export function AgentRunOutput({ run }) {
+  const presentation = run.presentation;
+  const response = presentation?.response || [];
+  const activity = presentation?.activity || [];
+  const issues = presentation?.issues || [];
+  const diagnostics = presentation?.diagnostics || run.output || [];
+  const raw = presentation?.raw || run.output || [];
+  const failed = ['failed', 'interrupted'].includes(run.status?.toLowerCase());
+  return <div className="agent-run-output stack">
+    <section className="agent-response stack" aria-label="Agent response"><h3>Response</h3>
+      {response.length ? response.map((message, index) => <article className="agent-response-message" key={message.id || index}><Markdown>{message.text}</Markdown></article>)
+        : active(run.status) ? <div className="actions start" role="status" aria-live="polite"><LoaderCircle size={16} className="spinner" aria-hidden="true" /><span>The agent is working. Its response will appear here.</span></div>
+          : failed ? <ErrorNotice error="The agent could not finish this run." />
+            : <p className="muted">{presentation ? 'This run finished without a text response.' : 'No response yet.'}</p>}
+    </section>
+    {issues.length > 0 && <section className="agent-run-issues stack" aria-label="Run issues"><h3>Issues</h3>{issues.map((issue, index) => {
+      const Icon = issue.severity === 'error' ? AlertCircle : AlertTriangle;
+      return <div className={`agent-run-issue ${issue.severity === 'error' ? 'error' : 'warning'}`} key={`${issue.kind}/${issue.title}/${index}`} role={issue.severity === 'error' ? 'alert' : undefined}><Icon size={17} aria-hidden="true" /><div><div className="actions start"><strong>{issue.title}</strong>{issue.count > 1 && <Tag>{issue.count} occurrences</Tag>}</div>{issue.detail && <p>{issue.detail}</p>}</div></div>;
+    })}</section>}
+    {activity.length > 0 && <details className="agent-output-details"><summary>Activity ({activity.length})</summary><LogOutput lines={activity} label="Agent activity" /></details>}
+    {diagnostics.length > 0 && <details className="agent-output-details"><summary>Diagnostics ({diagnostics.length})</summary><LogOutput lines={diagnostics} label="Agent diagnostics" />{presentation && raw.length > diagnostics.length && <details className="agent-output-raw"><summary>Full log ({raw.length})</summary><LogOutput lines={raw} label="Full agent log" /></details>}</details>}
+    {presentation && !diagnostics.length && raw.length > 0 && <details className="agent-output-details"><summary>Full log ({raw.length})</summary><LogOutput lines={raw} label="Full agent log" /></details>}
+  </div>;
 }
 
 export function Guidance({ title, submit }) {
@@ -237,14 +262,14 @@ export function AgentPage({ id, catalogId, runId, connector = false }) {
   const run = detail.value || history.find((item) => item.id === selectedRun);
   const buildQuery = new URLSearchParams({ edit: id });
   if (catalogId) buildQuery.set('catalog', catalogId);
-  if (!agent) return <div className="page"><PageHeading title="Agent not found" icon={Bot} back={back} />{run && <Panel title={`Run ${run.id}`} icon={Terminal}><LogOutput lines={run.output} /></Panel>}</div>;
+  if (!agent) return <div className="page"><PageHeading title="Agent not found" icon={Bot} back={back} />{run && <Panel title={`Run ${run.id}`} icon={Terminal}><AgentRunOutput key={run.id} run={run} /></Panel>}</div>;
   return <div className="page"><PageHeading title={nameOf(agent)} icon={connector ? Plug : iconOptions[agent.icon] || Bot} subtitle={agent.description} back={back} actions={!connector && <><Button to={`/agents/new?${buildQuery}`} icon={Pencil}>Edit with AI</Button><Button icon={Download} onClick={() => perform('catalog:export', ['agents', id, agent.catalogId])}>Export</Button></>} />
     {connector ? <div className="actions start"><Tag>Model-backed connector</Tag><AgentDefaults agent={agent} connector /></div> : <AgentMetadata agent={agent} />}
-    <div className="dashboard-grid detail-grid">
+    <div className="dashboard-grid detail-grid agent-detail-grid">
       <Panel title="Configure run" icon={Play}><AgentRunForm agent={agent} connector={connector} launch={async (params) => { const result = await perform(connector ? 'connector:start' : 'agent:start', [id, params]); if (result?.id) go(recordRoute(section, agent, '', result.id)); return result; }} /></Panel>
       <Panel title={run ? 'Execution' : 'Latest run'} icon={Terminal} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('agent:stop', [run.id])}>Stop</Button>}</>}>
         {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.providerId && <Tag>{nameOf(state.providers.find(({ id }) => id === run.providerId)) || run.providerId}</Tag>}{run.model && <Tag>{run.model}</Tag>}{run.effort && <Tag>{effortLabel(run.effort)}</Tag>}{run.exitCode !== null && run.exitCode !== undefined && <Tag>Exit {run.exitCode}</Tag>}</div>
-          <LogOutput lines={run.output || run.logs} /><ErrorNotice error={detail.error} />
+          <AgentRunOutput key={run.id} run={run} /><ErrorNotice error={detail.error} />
           {active(run.status) && <div className="panel-body"><Guidance title={connector ? 'Guide the running connector…' : 'Guide the running agent…'} submit={(text) => perform('agent:guide', [run.id, text], 'Guidance sent')} /></div>}
           {run.usage && <div className="usage-grid"><div><small>Input tokens</small><strong>{Number(run.usage.inputTokens || 0).toLocaleString()}</strong></div><div><small>Output tokens</small><strong>{Number(run.usage.outputTokens || 0).toLocaleString()}</strong></div><div><small>Cost (USD)</small><strong>{run.usage.totalCostUsd ?? '—'}</strong></div></div>}
         </> : detail.loading && selectedRun ? <Loading /> : <Empty title="No run selected" detail={connector ? 'Run this connector to see its output here.' : 'Run this agent to see its output here.'} icon={Terminal} />}

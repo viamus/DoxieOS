@@ -96,6 +96,23 @@ test('filters agent memory and captures Codex usage', () => {
   assert.ok(output.usage.totalCostUsd > 0);
 });
 
+test('keeps provider commentary and tool activity separate from the final response', () => {
+  const provider = { id: 'codex' };
+  const item = value => providerOutput(provider, JSON.stringify({ type: 'item.completed', item: value }));
+  assert.deepEqual(item({ type: 'agent_message', phase: 'commentary', text: 'Checking the source.' }),
+    { source: 'Progress', lines: ['Checking the source.'] });
+  assert.deepEqual(item({ type: 'command_execution', command: 'some long command' }),
+    { source: 'Activity', lines: ['▶ some long command'] });
+  const table = '| City | Temperature |\n| --- | --- |\n| Example | 24 °C |';
+  assert.deepEqual(item({ type: 'agent_message', phase: 'final_answer', text: table }),
+    { source: 'Response', lines: [table] });
+  assert.deepEqual(item({ type: 'agent_message', text: table }), { source: 'Assistant', lines: [table] });
+  assert.deepEqual(providerOutput({ id: 'claude-code' }, JSON.stringify({ type: 'assistant', message: { content: [
+    { type: 'text', text: table }, { type: 'tool_use', name: 'Bash', input: { command: 'internal-command' } },
+  ] } })), { source: 'Response', lines: [table], activity: ['▶ Bash internal-command'] });
+  assert.equal(providerOutput(provider, JSON.stringify({ type: 'turn.failed', error: { message: 'Invalid credentials.' } })).error, true);
+});
+
 test('resolves explicit execution overrides ahead of provider-specific agent preferences', () => {
   const settings = { defaultProvider: 'codex', providers: { codex: { model: 'codex-default' }, 'claude-code': { model: 'claude-default' } } };
   const preference = normalizeExecution({ providerId: 'claude', model: 'team/agent-v1' });

@@ -215,6 +215,30 @@ test('starts explicitly, resumes builder sessions after restart, and saves indep
     await expect.poll(() => page.evaluate(id => window.doxie.invoke('agent:run', id), runId))
       .toMatchObject({ status: 'Completed', model: 'doxie/saved-agent', effort: 'high' });
     await expect(page.getByText('Saved agent completed using the installed sign-in and saved model.', { exact: true })).toBeVisible();
+    const response = page.getByRole('region', { name: 'Agent response', exact: true });
+    await expect(response.getByRole('table')).toBeVisible();
+    await expect(response).not.toContainText('codex_rmcp_client');
+    await expect(response).not.toContainText('fixture-internal-command');
+    await expect(response).not.toContainText('Checking the supplied material.');
+    await expect(page.getByRole('region', { name: 'Run issues', exact: true })).toContainText('MCP fixture-tools unavailable');
+    const diagnostics = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^Diagnostics \(/ }) });
+    await expect(diagnostics).not.toHaveAttribute('open', '');
+    await expect(page.getByLabel('Agent diagnostics', { exact: true })).toBeHidden();
+    await diagnostics.locator('summary').first().click();
+    await expect(page.getByLabel('Agent diagnostics', { exact: true })).toContainText('codex_rmcp_client');
+    await diagnostics.locator('summary').first().click();
+    const activity = page.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^Activity \(/ }) });
+    await expect(page.getByLabel('Agent activity', { exact: true })).toBeHidden();
+    await activity.locator('summary').first().click();
+    await expect(page.getByLabel('Agent activity', { exact: true })).toContainText('fixture-internal-command');
+    await activity.locator('summary').first().click();
+    await page.screenshot({ path: testInfo.outputPath('agent-response.png'), fullPage: true });
+    await page.getByLabel('Arguments / prompt', { exact: true }).fill('fixture-fail');
+    await page.getByRole('button', { name: 'Run agent', exact: true }).click();
+    await expect.poll(async () => new URLSearchParams(new URL(page.url()).hash.split('?')[1]).get('run')).not.toBe(runId);
+    const failedRunId = new URLSearchParams(new URL(page.url()).hash.split('?')[1]).get('run');
+    await expect.poll(() => page.evaluate(id => window.doxie.invoke('agent:run', id), failedRunId)).toMatchObject({ status: 'Failed' });
+    await expect(page.getByRole('region', { name: 'Run issues', exact: true }).getByRole('alert')).toContainText('Fixture provider failure.');
 
     await page.getByRole('link', { name: 'Agents', exact: true }).first().click();
     await page.locator('.toolbar').getByRole('link', { name: 'Sessions', exact: true }).click();

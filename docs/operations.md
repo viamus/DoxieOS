@@ -97,6 +97,13 @@ conversation in AppData. If sign-in is required, open **Authenticate** and retry
 after login. Tool connection warnings refer to the MCP URLs and commands
 configured in DoxieOS; verify those services separately from model authentication.
 
+The agent execution panel shows the response as Markdown, including tables and
+source links. Tool commands and interim progress stay under **Activity**;
+provider warnings and transport traces stay under **Diagnostics**. Relevant
+problems appear once per service with a short explanation and occurrence count.
+Actual provider failures remain visible. Open **Full log** for the complete
+stored output. The same presentation applies when reopening earlier runs.
+
 Model selectors can refresh the installed providers' inventory and show its
 source. Codex and Claude Code use model metadata from the DoxieOS or installed
 CLI profiles when available. In provider settings, **Default model** lists
@@ -105,8 +112,9 @@ enter a custom ID for a gateway. A cached or advertised model can still
 require account access.
 
 The reasoning effort control shows the levels the model advertises when
-available. A run can override the effort for one execution, and an agent,
-Prompt connector, or workflow node can save a preference. Switching to a
+available. Connector runs can override the effort for one execution; ordinary
+agent runs use the saved agent preference. An agent, Prompt connector, or
+workflow node can save a preference. Switching to a
 different model skips defaults tied to the previous model. Run history records
 the requested level. Local adapters use their own reasoning defaults.
 

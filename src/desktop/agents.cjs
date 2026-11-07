@@ -3,7 +3,8 @@ const { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync
 const { dirname, isAbsolute, join, relative, resolve, sep } = require('node:path');
 const { createInterface } = require('node:readline');
 const { launch, killTree } = require('./processes.cjs');
-const { providerFor, headlessArgs, inputMessage, providerOutput } = require('./providers.cjs');
+const { providerFor, headlessArgs, inputMessage, providerOutput, jsonSetting } = require('./providers.cjs');
+const { presentRunOutput } = require('./run-output.cjs');
 const { safePath } = require('./storage.cjs');
 
 const now = () => new Date().toISOString();
@@ -56,7 +57,7 @@ function agentInstructions(agent, mode, args) {
 
 function reportedOutput(storage, lines, cwd) {
   for (const { text, source } of lines) {
-    if (source !== 'Stdout') continue;
+    if (!['Stdout', 'Response', 'Assistant'].includes(source)) continue;
     try {
       const { output_dir: directory } = JSON.parse(text.trim().replace(/^```(?:json)?\s*|\s*```$/gi, ''));
       if (typeof directory !== 'string' || !directory.trim()) continue;
@@ -152,7 +153,11 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
 
   function getRun(id) {
     const run = fromRow(record.get(id));
-    return run ? { ...run, output: output.all(id).reverse().map(item => ({ ...item })) } : null;
+    if (!run) return null;
+    const lines = output.all(id).reverse().map(item => ({ ...item }));
+    return { ...run, output: lines, presentation: presentRunOutput(lines, {
+      status: run.status, exitCode: run.exitCode, mcpServers: jsonSetting(storage, 'provider_mcp_servers', []),
+    }) };
   }
 
   function listRuns(agentId) {
@@ -218,16 +223,17 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
       if (parsed.sessionId) sessionId = parsed.sessionId;
       if (parsed.usage) usage = parsed.usage;
       if (parsed.error) errored = true;
+      for (const text of parsed.activity || []) append('Activity', text);
       for (const text of parsed.lines || []) {
-        if (text && !text.startsWith('▶') && !parsed.error) hasResponse = true;
-        append(parsed.error ? 'Stderr' : 'Stdout', text);
+        if (text && !text.startsWith('▶') && !parsed.error && !['Progress', 'Activity', 'Assistant'].includes(parsed.source)) hasResponse = true;
+        append(parsed.error ? 'Fatal' : parsed.source || 'Stdout', text);
       }
-      if (!hasResponse && !parsed.error && parsed.fallback) append('Stdout', parsed.fallback);
+      if (!hasResponse && !parsed.error && parsed.fallback) append('Response', parsed.fallback);
     });
     createInterface({ input: child.stderr, crlfDelay: Infinity }).on('line', line => append('Stderr', line));
     child.on('error', error => {
       errored = true;
-      append('Stderr', error.message);
+      append('Fatal', error.message);
     });
     child.stdin.on('error', error => {
       if (!job.cancelled && error.code !== 'EPIPE') append('Stderr', error.message);

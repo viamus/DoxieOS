@@ -193,8 +193,9 @@ function providerOutput(provider, line) {
   if (usesCodex(provider)) {
     if (event.type === 'thread.started') return { sessionId: event.thread_id };
     if (event.type === 'item.completed') {
-      if (event.item?.type === 'agent_message') return { lines: [event.item.text] };
-      if (event.item?.type === 'command_execution') return { lines: [`▶ ${event.item.command}`] };
+      if (event.item?.type === 'agent_message') return { lines: [event.item.text],
+        source: event.item.phase === 'commentary' ? 'Progress' : event.item.phase === 'final_answer' ? 'Response' : 'Assistant' };
+      if (event.item?.type === 'command_execution') return { lines: [`▶ ${event.item.command}`], source: 'Activity' };
     }
     if (event.type === 'turn.completed' && event.usage) {
       const { input_tokens = 0, cached_input_tokens = 0, output_tokens = 0, reasoning_output_tokens = 0 } = event.usage;
@@ -214,14 +215,16 @@ function providerOutput(provider, line) {
   if (event.type === 'system' && event.session_id) return { sessionId: event.session_id };
   if (event.type === 'assistant') {
     const lines = [];
-    for (const block of event.message?.content || []) {
+    const activity = [];
+    const blocks = event.message?.content || [];
+    for (const block of blocks) {
       if (block.type === 'text' && block.text) lines.push(block.text);
       if (block.type === 'tool_use') {
         const detail = block.input?.file_path || block.input?.description || block.input?.pattern || block.input?.command || '';
-        lines.push(`▶ ${block.name} ${String(detail).slice(0, 160)}`.trimEnd());
+        activity.push(`▶ ${block.name} ${String(detail).slice(0, 160)}`.trimEnd());
       }
     }
-    return { lines };
+    return { lines, activity, source: 'Response' };
   }
   if (event.type !== 'result') return {};
   const usage = event.usage;

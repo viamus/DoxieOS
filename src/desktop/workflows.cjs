@@ -1106,7 +1106,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     function onOutput(line) {
       if (!line) return;
       const text = typeof line === 'string' ? line : String(line.text ?? '');
-      const stderr = lower(line.source) === 'stderr' || line.source === 1;
+      const stderr = ['stderr', 'fatal'].includes(lower(line.source)) || line.source === 1;
       record.logs.push(stderr ? `[stderr] ${text}` : text);
       mirrored++;
       if (!context.outputUpdate) {
