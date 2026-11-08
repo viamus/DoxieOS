@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc" shape-rendering="crispEdges">
+  <title id="title">DoxieOS icon</title>
+  <desc id="desc">Pixel-inspired DoxieOS app icon.</desc>
+  <rect x="20" y="82" width="56" height="6" rx="3" fill="#1f2933" opacity="0.22"/>
+  <path d="M24 18 H14 V24 H8 V36 H4 V62 H8 V74 H16 V84 H28 V78 H34 V62 H32 V34 H28 V24 H24 Z" fill="#d9642d"/>
+  <path d="M72 18 H82 V24 H88 V36 H92 V62 H88 V74 H80 V84 H68 V78 H62 V62 H64 V34 H68 V24 H72 Z" fill="#d9642d"/>
+  <path d="M30 10 H66 V14 H74 V22 H78 V54 H74 V70 H66 V82 H30 V78 H22 V70 H18 V54 H14 V34 H18 V22 H22 V14 H30 Z" fill="#e46f2e"/>
+  <path d="M62 14 H70 V22 H74 V54 H70 V70 H62 V78 H52 V54 H58 V34 H62 Z" fill="#c95825" opacity="0.55"/>
+  <path d="M26 16 H36 V24 H32 V30 H28 V42 H24 V56 H18 V34 H22 V22 H26 Z" fill="#68717a"/>
+  <path d="M70 16 H60 V24 H64 V30 H68 V42 H72 V56 H78 V34 H74 V22 H70 Z" fill="#68717a"/>
+  <path d="M42 10 H54 V18 H58 V30 H54 V42 H58 V54 H54 V66 H42 V54 H38 V42 H42 V30 H38 V18 H42 Z" fill="#f5f0e7"/>
+  <path d="M34 54 H62 V62 H66 V74 H58 V82 H38 V78 H30 V66 H34 Z" fill="#d96730"/>
+  <path d="M40 56 H56 V62 H60 V70 H56 V74 H40 V70 H36 V62 H40 Z" fill="#f5f0e7"/>
+  <path d="M16 32 H24 V40 H28 V58 H24 V70 H16 V66 H12 V42 H16 Z" fill="#858e97"/>
+  <path d="M80 32 H72 V40 H68 V58 H72 V70 H80 V66 H84 V42 H80 Z" fill="#858e97"/>
+  <path d="M26 28 H38 V34 H34 V38 H26 Z" fill="#27313a"/>
+  <path d="M58 28 H70 V38 H62 V34 H58 Z" fill="#27313a"/>
+  <path d="M24 48 H34 V58 H28 V64 H20 V56 H24 Z" fill="#27313a"/>
+  <path d="M62 48 H72 V56 H76 V64 H68 V58 H62 Z" fill="#27313a"/>
+  <rect x="25" y="36" width="16" height="16" fill="#f4c59a"/>
+  <rect x="55" y="36" width="16" height="16" fill="#f4c59a"/>
+  <rect x="29" y="38" width="8" height="10" fill="#1d2832"/>
+  <rect x="59" y="38" width="8" height="10" fill="#1d2832"/>
+  <rect x="33" y="39" width="3" height="3" fill="#f5f0e7"/>
+  <rect x="63" y="39" width="3" height="3" fill="#f5f0e7"/>
+  <path d="M40 62 H56 V66 H60 V74 H56 V78 H40 V74 H36 V66 H40 Z" fill="#1d2832"/>
+  <rect x="43" y="63" width="10" height="3" fill="#f5f0e7"/>
+  <rect x="45" y="78" width="6" height="4" fill="#1d2832"/>
+  <rect x="38" y="84" width="20" height="4" fill="#1d2832"/>
+  <rect x="18" y="18" width="4" height="4" fill="#ff8a36"/>
+  <rect x="74" y="18" width="4" height="4" fill="#ff8a36"/>
+  <rect x="14" y="60" width="4" height="4" fill="#ff8a36"/>
+  <rect x="78" y="60" width="4" height="4" fill="#ff8a36"/>
+</svg>

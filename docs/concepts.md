@@ -7,11 +7,12 @@ these concepts define the product model.
 
 | Concept | What It Means | Stored In |
 | --- | --- | --- |
-| Agent | A runnable Doxie skill with metadata, body, inputs, requirements, and output expectations. | `.doxie/skills/<id>/` |
-| Workflow | A graph of agent and connector nodes that turns repeatable work into an inspectable run. | `.doxie/workflows/<id>/workflow.json` |
+| Agent | A model-driven unit of work with instructions, inputs, an optional execution preference, and an output contract. | `.doxie/agents/<id>/` |
+| Connector | A built-in operation such as Approval, Loop, Aggregate, Library, or the model-backed Prompt. | `.doxie/tools/<id>/` |
+| Workflow | A graph of agent and connector nodes with explicit dependencies. | `.doxie/workflows/<id>/workflow.json` |
 | Library | A reusable memory pack mounted into workspaces or dispatched agents. | `.doxie/libraries/<id>/` |
 | Workspace | A persistent project folder where agents can read context and write artifacts. | `.workspace/` by default |
-| Catalog | A root folder containing Doxie skills, workflows, and libraries. | `.doxie/` or custom catalog folders |
+| Catalog | A root folder containing Doxie agents, workflows, and libraries. | `.doxie/` or custom catalog folders |
 | Provider | A CLI-backed execution target such as Claude Code or OpenAI Codex. | App settings and provider config |
 | Run | A persisted execution record for an agent or workflow. | SQLite state and run output folders |
 
@@ -39,13 +40,20 @@ An agent is the smallest reusable unit of Doxie work. It should define:
 - what output another human or workflow node can consume;
 - when it should stop and ask for help.
 
-Agents can be advisory, implementation-oriented, operational, workflow
-primitive, or handoff-focused.
+Agents can be advisory, implementation-oriented, or focused on transforming a
+payload. Each ordinary execution starts in a fresh provider session. A model
+preference can be attached to an agent and overridden for a single run or a
+workflow node.
 
 ## Workflows
 
 A workflow is a graph. It can run manually, on cron, or from persisted trigger
 definitions that will be wired later.
+
+Edges select which upstream results a node receives. Doxie passes transient
+context and isolated copies of declared artifacts from those predecessors.
+The provider's diagnostic output belongs to run history. Agents publish
+business outputs explicitly as transient context, durable artifacts, or both.
 
 ```mermaid
 flowchart LR
@@ -91,4 +99,6 @@ DoxieOS is provider-neutral. It prepares the run context and dispatches to the
 selected provider CLI. Provider compatibility is intentionally an adapter layer,
 not the product model.
 
-Supported provider families currently include Claude Code and OpenAI Codex.
+Claude Code and OpenAI Codex execute through their installed CLIs. Local
+models exposed by Ollama or LM Studio run through the Codex CLI's Responses
+client.

@@ -1,0 +1,34 @@
+{
+  "id": "if-else",
+  "displayName": "If / Else",
+  "description": "Evaluate a value from an upstream JSON artifact and select a workflow branch.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "decide": {
+      "description": "Evaluate one condition and select the true or false branch.",
+      "fields": [
+        {
+          "id": "source",
+          "label": "Source JSON file",
+          "placeholder": "result.json"
+        },
+        {
+          "id": "path",
+          "label": "JSON path",
+          "placeholder": "checks.ready"
+        },
+        {
+          "id": "operator",
+          "label": "Operator",
+          "placeholder": "truthy"
+        },
+        {
+          "id": "value",
+          "label": "Expected value",
+          "placeholder": "true"
+        }
+      ]
+    }
+  }
+}

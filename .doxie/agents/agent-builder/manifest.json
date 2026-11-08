@@ -1,0 +1,6 @@
+{
+  "id": "agent-builder",
+  "description": "Co-author a Doxie agent in a builder session and save a reviewable draft in the session sandbox.",
+  "displayName": "Agent Builder",
+  "category": "Doxie"
+}

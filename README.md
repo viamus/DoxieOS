@@ -2,97 +2,144 @@
   <img src="docs/assets/doxie-face.svg" alt="DoxieOS icon" width="112" height="112" />
 </p>
 
-# DoxieOS
+# DoxieOS 2.0
 
-[![CI](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml/badge.svg)](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml)
-[![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![Electron CI](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml/badge.svg)](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-2.0.0-CC785C)](docs/release-notes/v2.0.0.md)
+[![Electron](https://img.shields.io/badge/Desktop-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-DoxieOS is a local-first operating layer for AI-assisted engineering work. It
-turns a developer machine into a control plane for agents, workflows,
-workspaces, reusable memory, provider shims, live consoles, notifications, and
-reviewable delivery.
+DoxieOS is a local desktop workbench for AI-assisted engineering. Create and
+edit agents, connect them into workflows, and follow their work from one
+Electron application built with Node.js and React.
 
-Claude Code and OpenAI Codex are supported provider CLIs, but they are not the
-product boundary. DoxieOS owns the canonical `.doxie/` catalog and emits
-provider-specific compatibility files from that source of truth.
+Bring your project folders, reusable knowledge, and installed AI providers.
+DoxieOS keeps the catalog, execution history, conversations, and artifacts on
+your machine. Provider requests go to the cloud or local model you select.
 
-## What You Get
+## What's new in 2.0
 
-- A local web app for launching, observing, and reviewing agent work.
-- A canonical `.doxie/` catalog for agents, workflows, libraries, and memories.
-- Provider-neutral execution for Claude Code, OpenAI Codex, and future CLI-backed providers.
-- Workspace-aware memory mounting for project standards and team context.
-- Workflow orchestration for repeatable multi-agent delivery.
-- Agent and workflow builders with draft previews and catalog promotion.
-- Live consoles, run history, usage tracking, release notes, and notifications.
-- MCP-aware settings for Claude/Codex config reconciliation.
-- Docker Compose support for local containerized operation.
+Version 2.0 moves the workbench, workflow engine, SQLite storage, and terminals
+into the desktop app. The 1.x .NET server, HTTP API, SignalR, and Docker launch
+entry points have been retired.
 
-## Documentation
+| Area | Desktop experience |
+| --- | --- |
+| Workbench | React navigation for workspaces, consoles, agents, connectors, workflows, libraries, and history, with native folder access. |
+| Agent editing | Edit instructions, metadata, provider, model, and reasoning effort directly. Ordinary runs use the agent's saved execution settings. |
+| AI builders | Create agents and workflows through conversations, preview drafts, and save them to the catalog. Resume saved sessions after navigation or restart. |
+| Run results | Read the final response as Markdown, including tables and links. Expand Activity, Diagnostics, or Full log for execution details. |
+| Providers | Discover models from installed providers, share the installed Codex CLI's ChatGPT sign-in, and configure MCP servers in Settings. |
+| Voice input | Dictate locally with Whisper Tiny on the CPU and review the transcript before sending. The first use downloads the model. |
+| Packaging | Run a portable Windows app with an embedded Electron and Node.js runtime. |
 
-The full product documentation lives in [docs/](docs/README.md).
+See the [2.0 release notes](docs/release-notes/v2.0.0.md) and
+[upgrade guide](docs/operations.md#upgrade-from-doxieos-1x).
 
-- [Concepts](docs/concepts.md)
-- [Architecture](docs/architecture.md)
-- [Authoring Agents And Workflows](docs/authoring-agents-and-workflows.md)
-- [Operations Guide](docs/operations.md)
-- [Licensing And Attribution](docs/licensing.md)
+## Start on Windows
+
+1. Download the `DoxieOS-win32-x64` artifact from a successful [Electron CI run](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml) for the 2.0 branch or a commit that includes it.
+2. Extract the artifact and the enclosed `DoxieOS-win32-x64.zip`. Keep the application folder and its resources together.
+3. Open `run.bat` or `DoxieOS.exe` inside the extracted application folder.
+4. In **Settings → Agent CLI providers**, configure and authenticate an installed provider.
+
+The Windows package includes Electron and Node.js. Install the provider CLI
+you want to use separately. Application data lives in `%APPDATA%\doxieos`,
+including the managed workbench, provider profiles, and SQLite history.
+
+## Choose a provider
+
+| Provider | Setup |
+| --- | --- |
+| OpenAI Codex | Install the Codex CLI and authenticate from Settings. Cloud runs share the installed CLI's ChatGPT sign-in by default. |
+| Claude Code | Install the Claude Code CLI and authenticate from Settings using the profile managed by DoxieOS. |
+| Ollama / LM Studio | Install the Codex CLI, start your local model server, and select an exposed model. Workflow agents need a model with tool support. |
+
+Model selectors discover the installed providers' inventory. Agents save their
+execution preferences; connectors and workflow nodes can override them. MCP
+servers are configured in **Settings** and must be available when a provider
+uses them. See [provider setup](docs/operations.md#providers-and-mcp) for details.
+
+## Work with agents and workflows
+
+1. Create a **Workspace** for project files and context. Choosing an existing project folder copies its files into the managed workspace. Mount **Libraries** to share reusable knowledge and standards.
+2. Choose a catalog agent, edit it directly, or select **Build agent**, choose the session settings, and select **Start session**. Review the AI builder's draft and select **Save to catalog**.
+3. Run the agent with its saved settings and inspect its response, artifacts, and history. Use **Consoles** for interactive provider sessions.
+4. Use the visual **Workflow** editor or AI builder to connect agents and native connectors for approvals, conditions, loops, aggregation, and workspace output.
+
+Workflow edges carry transient context and isolated copies of declared
+artifacts. Workspaces keep durable output and memory. Run workflows manually
+or on enabled cron schedules while the app is open; cron uses UTC. Event and
+webhook definitions are retained for compatibility and do not trigger runs.
+
+Agents, workflows, workspaces, and libraries can be transferred as ZIP bundles.
+Learn more in [concepts](docs/concepts.md) and the
+[authoring guide](docs/authoring-agents-and-workflows.md).
+
+## Upgrade from 1.x
+
+1. Close DoxieOS 1.x and launch the desktop app. On first setup, it copies a snapshot of a detected legacy SQLite database if a desktop database does not exist yet.
+2. Select **File → Import workbench…** and choose your old workbench folder to copy its catalog and workspace files into the desktop profile.
+3. Check storage paths in **Settings**, then authenticate each provider you use.
+
+The desktop app also reads 1.x ZIP transfer archives. See the
+[upgrade guide](docs/operations.md#upgrade-from-doxieos-1x) for data paths and
+import behavior.
 
 ## Architecture At A Glance
 
 ```mermaid
 flowchart TD
-    UI["DoxieOS Web Shell"] --> Catalog[".doxie/ catalog"]
-    UI --> Runner["Agent and Workflow Runner"]
-    UI --> State["SQLite State"]
+    UI["React workbench"] -->|Electron IPC| Main["Electron main process"]
+    Main --> Catalog[".doxie/ catalog"]
+    Main --> Runner["Agent and Workflow Runner"]
+    Main --> State["SQLite State"]
     Runner --> Workspace["Workspace Context"]
     Runner --> Providers["Provider Adapters"]
     Providers --> Claude["Claude Code CLI"]
     Providers --> Codex["OpenAI Codex CLI"]
+    Codex --> Local["Ollama / LM Studio"]
     Catalog --> Generated["Generated provider shims"]
     Generated --> ClaudeFiles[".claude/"]
     Generated --> CodexFiles[".codex/"]
     Runner --> Runs["Run outputs and history"]
 ```
 
-## Run Locally
+DoxieOS owns the canonical `.doxie/` catalog and generates provider
+compatibility files from it. Catalog assets stay independent of the provider
+used to execute them.
 
-Install the .NET SDK pinned in [global.json](global.json), then run:
+## Develop Locally
 
-```bash
-dotnet run --project src/Viamus.Doxie.Orchestrator
-```
-
-The app listens on `http://localhost:5034` by default.
-
-Useful development commands:
+Install Node.js 22.17 or newer and npm. From the repository root, install the
+locked dependencies, verify them, and launch the workbench.
 
 ```bash
-dotnet restore Solution.slnx
-dotnet build Solution.slnx
-dotnet test Solution.slnx
+node tools/check-dependencies.mjs
+npm ci --ignore-scripts
+npm audit signatures
+npm audit --audit-level=high
+npm rebuild electron node-pty --ignore-scripts=false
+node node_modules/electron/install.js
+npm start
 ```
 
-## Run With Docker Compose
+`npm start` builds the React renderer and launches Electron. On Windows, the
+repository's `run.bat` opens an available package or starts the prepared local
+development setup.
 
-```bash
-docker compose up --build
-```
+| Command | Purpose |
+| --- | --- |
+| `npm run build` | Build the React renderer with Vite. |
+| `npm test` | Run Node tests using temporary databases and workbenches. |
+| `npm run test:desktop` | Build and run Playwright integration tests against Electron. |
+| `npm run package` | Build an unsigned desktop bundle for the host platform; Windows also produces a portable ZIP. |
 
-The default Compose profile exposes `http://localhost:6034`, bind-mounts the
-canonical `.doxie/` catalog and `.private/` folder, and persists runtime state
-plus provider auth in named Docker volumes.
-
-Use another host port with:
-
-```bash
-DOXIE_HTTP_PORT=6134 docker compose up --build
-```
-
-If MCP servers run beside DoxieOS in Docker, use their Docker service names
-instead of `localhost`. Host-machine MCP services can be reached from the
-container with `host.docker.internal`.
+Electron tests require a graphical session; use Xvfb on headless Linux.
+[Electron CI](.github/workflows/ci.yml) runs on Windows and Linux, verifies
+dependency sources, integrity and signatures, audits vulnerabilities, and runs
+the Node and desktop tests. Windows CI also packages the app, tests the
+packaged executable, and uploads the portable ZIP.
 
 ## Repository Shape
 
@@ -100,24 +147,27 @@ container with `host.docker.internal`.
 .
 ├── .doxie/                         # Canonical Doxie catalog
 ├── docs/                           # Product documentation
-├── src/                            # .NET / Blazor application
-├── tests/                          # Automated tests
-├── docker-compose.yml              # Containerized local runtime
+├── src/desktop/                    # Electron main process and Node runtime
+├── src/renderer/                   # React workbench
+├── tests/                          # Node and Electron tests
+├── run.bat                         # Windows launcher
 ├── LICENSE                         # Apache License 2.0
 └── NOTICE                          # Attribution notice for redistributions
 ```
 
-Runtime folders such as `.workspace/`, `.sandbox/`, `.runs/`, local databases,
-and private provider content are intentionally kept out of normal commits.
+The repository's `.doxie/` directory supplies the bundled catalog. Active
+catalogs, workspaces and runtime state live in Electron's user data directory.
 
-## Bundled Catalog
+## Documentation
 
-The bundled catalog includes:
+Start with the [documentation index](docs/README.md).
 
-- agent and workflow builders;
-- Doxie library authoring;
-- prompt, aggregate, loop, approval, and workspace output primitives;
-- transient sandbox management for isolated agent scratch work.
+- [Concepts](docs/concepts.md)
+- [Architecture](docs/architecture.md)
+- [Authoring Agents And Workflows](docs/authoring-agents-and-workflows.md)
+- [Operations Guide](docs/operations.md)
+- [Release History](docs/release-notes/README.md)
+- [Licensing And Attribution](docs/licensing.md)
 
 ## License
 

@@ -1,0 +1,19 @@
+{
+  "id": "approval-gate",
+  "displayName": "Approval Gate",
+  "description": "Pause a workflow for a decision in the desktop workbench.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "wait": {
+      "description": "Ask an operator to approve or reject the run.",
+      "fields": [
+        {
+          "id": "prompt",
+          "label": "Approval question",
+          "placeholder": "Approve delivery to the workspace?"
+        }
+      ]
+    }
+  }
+}

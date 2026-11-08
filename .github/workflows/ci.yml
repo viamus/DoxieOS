@@ -1,4 +1,4 @@
-name: CI
+name: Electron CI
 
 on:
   pull_request:
@@ -7,14 +7,18 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-test:
-    name: Build & Test (${{ matrix.os }} / .NET 10)
+  desktop:
+    name: Desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -22,34 +26,62 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          global-json-file: global.json
+          persist-credentials: false
 
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', 'global.json') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
+          node-version: '24'
+          package-manager-cache: false
 
-      - name: Restore
-        run: dotnet restore Solution.slnx
+      - name: Check dependency sources and integrity
+        run: node tools/check-dependencies.mjs
 
-      - name: Build
-        run: dotnet build Solution.slnx -c Release --no-restore
+      - name: Install the locked dependencies with lifecycle scripts disabled
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Test
-        run: dotnet test Solution.slnx -c Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+      - name: Verify npm registry signatures and available attestations
+        run: npm audit signatures
 
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Audit known vulnerabilities
+        run: npm audit --audit-level=high
+
+      - name: Prepare the verified Electron runtime and terminal binding
+        run: |
+          npm rebuild electron node-pty --ignore-scripts=false
+          node node_modules/electron/install.js
+
+      - name: Run Node tests
+        run: npm test
+
+      - name: Build the React renderer
+        run: npm run build
+
+      - name: Run Electron smoke tests on Windows
+        if: runner.os == 'Windows'
+        run: npm run test:desktop
+
+      - name: Run Electron smoke tests on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:desktop
+
+      - name: Package the Windows desktop app
+        if: runner.os == 'Windows'
+        run: npm run package
+
+      - name: Smoke-test the packaged Windows app
+        if: runner.os == 'Windows'
+        env:
+          DOXIE_TEST_EXECUTABLE: ${{ github.workspace }}\release\DoxieOS-win32-x64\DoxieOS.exe
+        run: npm run test:desktop
+
+      - name: Upload the portable Windows app
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: test-results-${{ matrix.os }}
-          path: TestResults/**/*.trx
-          if-no-files-found: ignore
+          name: DoxieOS-win32-x64
+          path: release/DoxieOS-win32-x64.zip
+          if-no-files-found: error
+          compression-level: 0

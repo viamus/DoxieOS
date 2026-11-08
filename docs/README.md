@@ -8,18 +8,19 @@ This folder is the product documentation entry point.
 
 ## Read First
 
-- [Concepts](concepts.md): the product vocabulary and how the pieces relate.
-- [Architecture](architecture.md): runtime boundaries, data flow, and provider compatibility.
-- [Authoring Agents And Workflows](authoring-agents-and-workflows.md): how Doxie catalog assets are shaped.
-- [Operations Guide](operations.md): running locally, Docker Compose, MCPs, storage, and validation.
-- [Public Content Guard](public-content-guard.md): pre-commit checks for keeping the public repo clean.
-- [Licensing And Attribution](licensing.md): why the project uses Apache-2.0 plus NOTICE.
+- [Concepts](concepts.md) describes the product vocabulary and how the pieces relate.
+- [Architecture](architecture.md) covers runtime boundaries, data flow, and provider compatibility.
+- [Authoring Agents And Workflows](authoring-agents-and-workflows.md) explains the catalog format.
+- [Operations Guide](operations.md) covers local setup, packaging, MCP, storage, and upgrades.
+- [Release History](release-notes/README.md) preserves previous release notes and illustrations.
+- [Public Content Guard](public-content-guard.md) describes the pre-commit checks for public contributions.
+- [Licensing And Attribution](licensing.md) explains the Apache-2.0 license and NOTICE.
 
 ## Product Map
 
 ```mermaid
 flowchart LR
-    User["Developer"] --> Shell["DoxieOS Web Shell"]
+    User["Developer"] --> Shell["DoxieOS desktop workbench"]
     Shell --> Agents["Agents"]
     Shell --> Workflows["Workflows"]
     Shell --> Workspaces["Workspaces"]
@@ -27,6 +28,7 @@ flowchart LR
     Shell --> Consoles["Live Consoles"]
     Agents --> Providers["Provider CLIs"]
     Workflows --> Agents
+    Workflows --> Tools["Doxie native tools"]
     Workspaces --> Libraries
     Providers --> Claude["Claude Code"]
     Providers --> Codex["OpenAI Codex"]
@@ -40,13 +42,14 @@ flowchart LR
 ```text
 .
 ├── .doxie/                         # Canonical Doxie catalog
-│   ├── skills/<id>/
+│   ├── agents/<id>/
+│   ├── tools/<id>/
 │   ├── workflows/<id>/
 │   └── libraries/<id>/
 ├── docs/                           # Product documentation
-├── src/                            # .NET / Blazor application
-├── tests/                          # Automated tests
-├── docker-compose.yml              # Containerized local runtime
+├── src/desktop/                    # Electron main process and Node runtime
+├── src/renderer/                   # React workbench
+├── tests/                          # Node and Electron tests
 ├── LICENSE                         # Apache License 2.0
 └── NOTICE                          # Attribution notice for redistributions
 ```
@@ -54,6 +57,6 @@ flowchart LR
 ## Documentation Rules
 
 - Keep product documentation in this folder.
-- Keep release-note markdown under `src/Viamus.Doxie.Orchestrator/docs/release-notes/` because those files are embedded in the app.
+- Keep release-note Markdown and illustrations under `docs/release-notes/`.
 - Prefer diagrams for relationships, flows, and boundaries.
-- Keep README concise; move durable explanations into `docs/`.
+- Keep README concise and place durable explanations in `docs/`.

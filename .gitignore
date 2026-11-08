@@ -19,42 +19,44 @@ workspace_*/
 # Local private directory for user-owned files and experiments.
 .private/
 
-# Visual Studio cache (created next to the .slnx)
-.vs/
-
-# .NET build artifacts (any project under the workspace)
+# Local dependencies, desktop bundles and test artifacts
+node_modules/
+dist/
+release/
+playwright-report/
+test-results/
 **/bin/
 **/obj/
-**/*.user
+.vs/
 
 # Canonical authoring layer (.doxie/) - DoxieOS reads this folder at
 # runtime; provider shims are regenerated from it.
 #
-# The public repository ships only the core Doxie kit. Custom skills,
-# agents, libraries, and workflows stay local by default.
+# The public repository ships the core agents and workflow connector definitions.
+# Custom catalog content and the legacy skills layout stay local by default.
 .doxie/libraries/*
 .doxie/workflows/*
 .doxie/skills/*
-!.doxie/skills/agent-builder/
-!.doxie/skills/agent-builder/**
-!.doxie/skills/aggregate/
-!.doxie/skills/aggregate/**
-!.doxie/skills/approval-gate/
-!.doxie/skills/approval-gate/**
-!.doxie/skills/library/
-!.doxie/skills/library/**
-!.doxie/skills/loop/
-!.doxie/skills/loop/**
-!.doxie/skills/prompt/
-!.doxie/skills/prompt/**
-!.doxie/skills/sandbox/
-!.doxie/skills/sandbox/**
-!.doxie/skills/workflow-builder/
-!.doxie/skills/workflow-builder/**
-!.doxie/skills/workflow-output-contract-designer/
-!.doxie/skills/workflow-output-contract-designer/**
-!.doxie/skills/write-to-workspace/
-!.doxie/skills/write-to-workspace/**
+.doxie/.retired/
+.doxie/agents/*
+!.doxie/agents/agent-builder/
+!.doxie/agents/workflow-builder/
+.doxie/agents/*/*
+!.doxie/agents/*/body.md
+!.doxie/agents/*/manifest.json
+.doxie/tools/*
+!.doxie/tools/aggregate/
+!.doxie/tools/approval-gate/
+!.doxie/tools/if-else/
+!.doxie/tools/library/
+!.doxie/tools/loop/
+!.doxie/tools/prompt/
+!.doxie/tools/sandbox/
+!.doxie/tools/write-to-workspace/
+.doxie/tools/*/*
+!.doxie/tools/*/body.md
+!.doxie/tools/*/manifest.json
+!.doxie/tools/prompt/run.md
 .doxie/private/
 
 # Provider shims - entirely derived from .doxie/, never tracked.
