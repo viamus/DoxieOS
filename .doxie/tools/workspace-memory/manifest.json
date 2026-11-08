@@ -1,0 +1,25 @@
+{
+  "id": "workspace-memory",
+  "displayName": "Workspace Memory",
+  "description": "List or load explicitly selected workspace Markdown inputs for a workflow step without adding raw documents to the central library.",
+  "kind": "workflow",
+  "category": "Tool",
+  "modes": {
+    "load": {
+      "description": "Load bounded Markdown content from explicit workspace-relative files or folders.",
+      "requiresWorkspace": true,
+      "fields": [
+        { "id": "paths", "label": "Workspace-relative Markdown paths, one per line", "multiline": true, "required": true, "placeholder": "notes/context.md\ndocs/reference" },
+        { "id": "maxBytes", "label": "Maximum context bytes", "placeholder": "16384" }
+      ]
+    },
+    "list": {
+      "description": "List Markdown sources under explicit workspace-relative paths without loading their content.",
+      "requiresWorkspace": true,
+      "fields": [
+        { "id": "paths", "label": "Workspace-relative Markdown paths, one per line", "multiline": true, "required": true, "placeholder": "notes\ndocs/reference" },
+        { "id": "maxBytes", "label": "Maximum context bytes", "placeholder": "16384" }
+      ]
+    }
+  }
+}

@@ -43,7 +43,7 @@ separate directories within the same user data directory.
 | Workbench path | Purpose |
 | --- | --- |
 | `.doxie/` | Canonical agents, native tool definitions, workflows, and libraries. |
-| `.workspace/` | Workspace folders, mounts, notes, and durable output. |
+| `.workspace/` | Workspace input files and durable output. |
 | `.runs/` | Durable run artifacts and active-workflow transport removed at completion. |
 | `.sandbox/` | Builder sessions and scratch folders. |
 | `.private/` | User-owned private content. |
@@ -70,8 +70,29 @@ files are eligible. **Settings** reports the number of removed folders.
 
 The desktop app also reads DoxieOS 1.x ZIP archives. Transfer an agent,
 workflow, workspace, or library through its catalog page. Workflow and
-workspace bundles can carry related agents. The import dialog requests a
+legacy workspace bundles can carry related agents; workspace mounts are ignored.
+The import dialog requests a
 choice when an existing item differs from its archived counterpart.
+
+## Upgrade from 2.0
+
+Version 2.1 introduces a shared memory database maintained by the agent harness.
+Legacy source library files are preserved without automatic registration.
+Workspace mount fields are removed during normalization. DoxieOS
+removes only its own generated `AGENTS.md` and `CLAUDE.md` workspace context
+files. Manually authored files, `WORKSPACE.md`, and legacy memory folders are
+preserved as input files. New workspaces do not create memory scaffolding.
+
+Legacy Library creation, `from-files`, `mount` and `from-current` steps report
+an explicit migration error. Use `query` or `remember` for shared knowledge,
+and **Workspace Memory** to supply manual Markdown as execution input.
+
+Open **Library** to inspect agent-produced knowledge and automatic feeds from
+**Codex** and **Claude Code**. The harness synchronizes recognized memory
+outputs on startup and every five minutes while open. It creates local
+knowledge records and never edits the provider's source files. Native memory tools are registered in the
+DoxieOS-managed provider profiles. Optional semantic search downloads its model
+only when enabled. See the [library guide](library-memory.md).
 
 ## Providers and MCP
 
@@ -134,6 +155,27 @@ download is about 44 MB and is stored under the AppData workbench's
 `.models/dictation/` directory. Each file is checked against a pinned SHA-256
 digest before use. The microphone records up to 60 seconds, then inserts the
 transcript into the current text field for review. Recordings are kept in memory.
+
+## Questions and desktop notifications
+
+When an agent needs a decision, its execution pauses at **Waiting for your
+answer**. Choose a suggested answer or type your own, then select **Send
+answer**. The same execution continues after the response. Workflow questions,
+including questions from loop iterations, appear in a dedicated panel on the
+workflow page. Use **Stop** to cancel a paused run.
+
+New questions, builder replies, and run outcomes are saved under
+**Notifications** and also request a native desktop alert. Clicking an alert
+restores and focuses DoxieOS and opens the source execution or conversation.
+The portable Windows package registers a per-user Start Menu shortcut for its
+notification identity. Windows notification settings and Do Not Disturb control
+whether the popup is displayed. The in-app notification remains available if
+the operating system cannot display it. Answered and cancelled questions are
+marked read and their native alerts are dismissed.
+
+Runs awaiting an answer keep their output files and transient handoffs until
+they finish or are stopped. Closing the application ends active executions;
+builder conversations can be reopened from **Sessions** after restarting.
 
 ## Workflow triggers
 

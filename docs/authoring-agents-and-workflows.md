@@ -52,7 +52,8 @@ Set a model-backed node's `execution` to override the provider selection for tha
 | `aggregate` | Merge text artifacts from direct upstream nodes. |
 | `approval-gate` | Pause for an operator decision. |
 | `if-else` | Evaluate upstream JSON and select the `true` or `false` edge. |
-| `library` | Create a library from selected material or mount an existing library into a workspace. |
+| `library` | Let the harness remember learnings, search shared knowledge, or relate evidence without a workspace mount. |
+| `workspace-memory` | List or load explicit Markdown inputs from a workspace without registering raw files as shared knowledge. |
 | `loop` | Run a subgraph for each item of an upstream JSON array. |
 | `prompt` | Invoke a model for a focused transformation on declared inputs. |
 | `sandbox` | Allocate and list temporary run-owned folders. |
@@ -77,6 +78,59 @@ flowchart LR
 ```
 
 Transient context is available while the run is active. A rerun that needs it may need to restart at its producing step. The run history records execution and artifact metadata.
+
+## Questions for the user
+
+When a missing decision prevents correct work, an agent or Prompt connector
+can pause and ask for clarification. The runner supplies
+`DOXIE_USER_QUESTION_OUT`; write one UTF-8 JSON object there and end the turn:
+
+```json
+{
+  "question": "Which release should I inspect?",
+  "options": ["Stable", "Preview"],
+  "context": "Read the manifest. No release has been changed."
+}
+```
+
+Only `question` is required. Use `context` as a short checkpoint so the next
+turn can continue from completed work. Questions accept up to six suggested
+answers; the user can always write a different answer. The runner validates
+the file after a successful provider exit, sets the run to `AwaitingInput`,
+and sends an in-app and native desktop notification. It does not treat
+ordinary output containing a question mark as a request for input.
+
+The user answers from the execution page. The same run continues in a fresh
+provider turn with its original instructions, exact inputs, and question and
+answer history. Workflow consumers remain blocked until the producer finishes;
+questions from loop iterations appear together on the workflow page. Transient
+context must be published again after continuing. Provider usage is accumulated
+across turns, with missing reports identified as incomplete.
+
+Keep the application open while a run awaits an answer. Stopping the run
+cancels the question; application shutdown cancels active runs. After an
+unexpected restart, interrupted agent runs must be started again. Existing
+builder conversations remain resumable through **Sessions**.
+
+## Context efficiency
+
+DoxieOS sends request JSON without formatting whitespace. Agent instructions,
+explicit inputs, upstream context, and agent-owned instruction memories remain
+whole. Workspace notes and the shared library are not automatically copied
+into the request. Use the built-in `memory_search`, `memory_get`,
+`memory_remember`, `memory_relate`, and `memory_graph` tools to retrieve relevant
+knowledge and publish verified learnings. Search responses are bounded rather
+than attaching the entire library. See the [library guide](library-memory.md).
+
+Builder requests retain the first user requirement and a recent window of
+whole exchanges, normally up to eight turns and 24 KiB. The current message
+is preserved exactly, and the full transcript stays in
+`.draft/desktop-session.json` for recovery of older decisions. Required content
+can exceed the budget rather than being cut.
+
+Execution details show request bytes and a rough token estimate using UTF-8
+bytes divided by four. The payload comparison measures DoxieOS's supplied
+text, not provider billing or the provider's additional tool and system context.
 
 ## Builders
 

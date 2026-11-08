@@ -64,12 +64,14 @@ test('manual cleanup removes fresh scratch once and preserves active runs and li
     INSERT INTO workflow_runs VALUES ('finished', 'manual', 'Succeeded');
     INSERT INTO workflow_runs VALUES ('approval', 'manual', 'AwaitingApproval');
     INSERT INTO workflow_runs VALUES ('replay', 'rerun:source:next', 'Queued');
+    INSERT INTO workflow_runs VALUES ('question', 'manual', 'AwaitingInput');
   `);
   const removed = ['.runs/finished', '.runs/agents/completed', '.sandbox/future-date'];
-  const preserved = ['.runs/approval', '.runs/source', '.runs/replay', '.runs/agents/active',
+  const preserved = ['.runs/approval', '.runs/source', '.runs/replay', '.runs/question', '.runs/agents/active', '.runs/agents/question',
     '.sandbox/builder-workflow-draft', '.sandbox/linked', '.workspace/demo'];
   for (const relative of [...removed, ...preserved]) await mkdir(path.join(root, relative), { recursive: true });
   db.prepare("INSERT INTO agent_runs VALUES (?, 'Running')").run(path.join(root, '.runs', 'agents', 'active'));
+  db.prepare("INSERT INTO agent_runs VALUES (?, 'AwaitingInput')").run(path.join(root, '.runs', 'agents', 'question'));
   const marker = path.join(root, '.workspace', 'demo', 'user.txt');
   await writeFile(marker, 'keep');
   const link = path.join(root, '.sandbox', 'linked', 'external');

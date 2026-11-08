@@ -25,23 +25,54 @@ function validatedEnvironment(environment = {}, perRun = false) {
   return environment;
 }
 
-function createNotifications(storage, emit) {
+function createNotifications(storage, emit, { show = () => {}, dismiss = () => {} } = {}) {
   const notifications = jsonSetting(storage, 'desktop.notifications', []);
   const persist = () => storage.setSetting('desktop.notifications', notifications);
+  function read(id) {
+    for (const item of notifications) {
+      if (!id || item.id === id) {
+        item.readAt ??= new Date().toISOString();
+        try { dismiss(item.id); } catch {}
+      }
+    }
+    persist();
+    return true;
+  }
   return {
     list: () => notifications,
     add(data) {
+      if (data.kind === 'question-resolved') {
+        for (const item of notifications) if (item.kind === 'question' && item.runId === data.runId && !item.readAt) read(item.id);
+        return null;
+      }
       const notification = { ...data, id: randomUUID(), timestamp: new Date().toISOString(), body: data.body || data.message || '' };
       notifications.unshift(notification);
       notifications.length = Math.min(notifications.length, 250);
       persist();
       emit({ type: 'notification', notification });
+      try { show(notification); }
+      catch (error) { console.error('Could not show desktop notification:', error.message); }
+      return notification;
     },
-    read(id) {
-      for (const item of notifications) {
-        if (!id || item.id === id) item.readAt ??= new Date().toISOString();
-      }
+    read,
+    remove(id) {
+      if (typeof id !== 'string' || !id.trim()) throw new TypeError('A notification ID is required.');
+      const index = notifications.findIndex(item => item.id === id);
+      if (index === -1) return false;
+      notifications.splice(index, 1);
       persist();
+      try { dismiss(id); } catch {}
+      emit({ type: 'notifications:changed' });
+      return true;
+    },
+    clear() {
+      if (!notifications.length) return false;
+      const removed = notifications.splice(0);
+      persist();
+      for (const item of removed) {
+        try { dismiss(item.id); } catch {}
+      }
+      emit({ type: 'notifications:changed' });
       return true;
     },
   };
@@ -58,6 +89,11 @@ async function preview(path, metadata = {}) {
 
 function createActions({ app, dialog, shell, window, storage, agents, workflows, consoles, builders, speech, notifications, mcp, emit, releaseNotes }) {
   const inventories = new Map();
+  const harnessOwnedLibrary = () => { throw new Error('The library is maintained by the agent harness. Put manual Markdown in a workspace and use Workspace Memory to supply it to an execution.'); };
+  function centralMemory() {
+    if (!storage.memory) throw new Error('The central library is unavailable.');
+    return storage.memory;
+  }
 
   function modelsFor(id, options) {
     if (!Object.hasOwn(definitions, id)) throw new Error('Unknown provider.');
@@ -153,7 +189,10 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
 
   return {
     bootstrap() {
-      const catalog = Object.fromEntries(['agents', 'workflows', 'workspaces', 'libraries', 'tools'].map(kind => [kind, storage.list(kind)]));
+      for (const item of notifications.list()) {
+        if (item.kind === 'question' && !item.readAt && agents.getRunSummary(item.runId)?.pendingQuestion?.id !== item.questionId) notifications.read(item.id);
+      }
+      const catalog = Object.fromEntries(['agents', 'workflows', 'workspaces', 'tools'].map(kind => [kind, storage.list(kind)]));
       const { skills, legacySkills, ...publicRoots } = storage.roots;
       catalog.workflows = catalog.workflows.map(workflow => {
         const scheduled = workflow.enabled && ['cron', '1'].includes(String(workflow.trigger?.kind).toLowerCase());
@@ -162,7 +201,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       });
       const configuration = settings();
       return {
-        ...catalog, connectors: catalog.tools, root: storage.root, storage: {
+        ...catalog, libraries: [], libraryStats: storage.memory?.stats() || {}, connectors: catalog.tools, root: storage.root, storage: {
           'App data': app.getPath('userData'), 'Data directory': storage.root, 'State database': storage.databasePath,
           'Provider profiles': safePath(storage.root, '.providers'), ...publicRoots,
           'Voice models': safePath(storage.root, '.models/dictation'),
@@ -176,11 +215,13 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'catalog:list': (kind) => storage.list(kind),
     'catalog:get': (kind, id, catalogId) => storage.get(kind, id, catalogId),
     'catalog:save': (kind, item) => {
+      if (kind === 'libraries') return harnessOwnedLibrary();
       const saved = storage.save(kind, item);
       emit({ type: 'catalog:changed', kind });
       return saved;
     },
     'catalog:remove': (kind, id, catalogId) => {
+      if (kind === 'libraries') return harnessOwnedLibrary();
       const removed = storage.remove(kind, id, catalogId);
       emit({ type: 'catalog:changed', kind });
       return removed;
@@ -196,6 +237,7 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       return result;
     },
     'catalog:import': async (kind, catalogId) => {
+      if (kind === 'libraries') return harnessOwnedLibrary();
       const selection = await dialog.showOpenDialog(window(), { properties: ['openFile'], filters: [{ name: 'DoxieOS archive', extensions: ['zip'] }] });
       if (selection.canceled || !selection.filePaths[0]) return null;
       const file = selection.filePaths[0];
@@ -228,32 +270,32 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     },
     ...files('files', 'workspaces'),
     ...files('library-files', 'libraries'),
-    'libraries:create': ({ id, name, description, catalogId }) => {
-      const item = storage.createLibrary({ id, name, description, catalogId });
-      emit({ type: 'catalog:changed', kind: 'libraries' });
-      return item;
+    'libraries:create': harnessOwnedLibrary,
+    'library-files:write': harnessOwnedLibrary,
+    'library-files:delete': harnessOwnedLibrary,
+    'memory:stats': () => centralMemory().stats(),
+    'memory:list': (options = {}) => centralMemory().list(options),
+    'memory:search': (options = {}) => centralMemory().semantic ? centralMemory().semantic.search(options) : centralMemory().search(options),
+    'memory:get': (id) => centralMemory().get(id),
+    'memory:graph': (options = {}) => centralMemory().graph(options),
+    'memory:sources': () => centralMemory().sources(),
+    'memory:semanticStatus': () => centralMemory().semantic?.status() || { state: 'missing', model: 'Multilingual semantic search', totalBytes: 135392488, receivedBytes: 0 },
+    'memory:semanticInstall': () => {
+      if (!centralMemory().semantic) throw new Error('Local semantic search is unavailable.');
+      return centralMemory().semantic.install();
     },
-    'library-files:write': (id, path, content, catalogId, options) => {
-      if (typeof path !== 'string' || !/\.md$/i.test(path)) throw new Error('Library memories must be Markdown files.');
-      if (options?.create) {
-        let exists = true;
-        try { storage.resolveFile('libraries', id, path, catalogId); }
-        catch (error) {
-          if (error.message !== 'The requested path does not exist') throw error;
-          exists = false;
-        }
-        if (exists) throw new Error('This memory already exists.');
-      }
-      const result = storage.writeFile('libraries', id, path, content, catalogId);
-      emit({ type: 'catalog:changed', kind: 'libraries' });
-      return result;
+    'memory:semanticReindex': () => {
+      if (!centralMemory().semantic) throw new Error('Local semantic search is unavailable.');
+      return centralMemory().semantic.reindex();
     },
-    'library-files:delete': (id, path, catalogId) => {
-      if (typeof path !== 'string' || !/\.md$/i.test(path)) throw new Error('Library memories must be Markdown files.');
-      const removed = storage.deleteFile('libraries', id, path, catalogId);
-      if (removed) emit({ type: 'catalog:changed', kind: 'libraries' });
-      return removed;
-    },
+    'memory:remember': harnessOwnedLibrary,
+    'memory:revise': harnessOwnedLibrary,
+    'memory:relate': harnessOwnedLibrary,
+    'memory:archive': harnessOwnedLibrary,
+    'memory:importPreview': harnessOwnedLibrary,
+    'memory:import': harnessOwnedLibrary,
+    'memory:feedStatus': () => storage.memoryFeed?.status() || { state: 'disabled', sources: [], lastRunAt: null, lastResult: null },
+    'memory:refreshSources': () => storage.memoryFeed?.refresh() || { state: 'disabled', sources: [], lastRunAt: null, lastResult: null },
     'run-files:list': async (id, path = '') => {
       const directory = runPath(id, path);
       let entries;
@@ -320,6 +362,13 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'agent:run': (id) => agents.getRun(id),
     'agent:stop': (id) => agents.stop(id),
     'agent:guide': (id, text) => agents.addHint(id, text),
+    'agent:answer': (id, questionId, text) => {
+      const result = agents.answer(id, questionId, text);
+      for (const item of notifications.list()) {
+        if (item.runId === id && item.questionId === questionId) notifications.read(item.id);
+      }
+      return result;
+    },
     'workflow:start': (id, input) => workflows.run(id, input),
     'workflow:run': (id) => workflows.getRun(id),
     'workflow:approve': (id, node, decision) => workflows.approve(id, node, decision),
@@ -350,6 +399,8 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'settings:importMcp': () => mcp.importGlobals(),
     'storage:cleanup': async () => ({ removed: await sweepScratch({ storage, builders, retentionMs: 0 }) }),
     'notifications:read': (id) => notifications.read(id),
+    'notifications:delete': (id) => notifications.remove(id),
+    'notifications:clear': () => notifications.clear(),
     'notifications:openSource': (id) => {
       const item = notifications.list().find(notification => notification.id === id);
       if (!item?.sourcePath) throw new Error('The notification has no source folder.');

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Activity, AlertCircle, AlertTriangle, BookOpen, Bot, Clock3, Code2, Cpu, Download, FileText, GitBranch, Import, LoaderCircle, MessageSquare, Pencil, Play, Plug, Plus, Search, Send, ShieldCheck, Sparkles, Square, Terminal, Trash2 } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, SearchBox, Status, Tag, VoiceInput, active, go, href, invoke, nameOf, part, selectModes, useApp, useAsync, useEffortLabel, useText } from './ui.jsx';
 import { FilesBrowser, Markdown } from './workbench.jsx';
@@ -88,6 +88,70 @@ export function LogOutput({ lines, label = 'Execution output' }) {
   return <div ref={log} className="log-output" aria-label={label} tabIndex={0} onScroll={(event) => { const node = event.currentTarget; follow.current = node.scrollHeight - node.scrollTop - node.clientHeight < 40; }}><pre>{formatted.map((line, index) => typeof line === 'string' ? <span key={index}>{line}{'\n'}</span> : <span key={index} className={String(line.source || '').toLowerCase()}>{line.text ?? line.message ?? JSON.stringify(line)}{'\n'}</span>)}</pre></div>;
 }
 
+export function UserQuestion({ runId, question }) {
+  const { perform } = useApp();
+  const labelId = useId();
+  const answerId = useId();
+  const key = `${runId || ''}/${question?.id || ''}`;
+  const latest = useRef(key);
+  const submitting = useRef(null);
+  const [form, setForm] = useState({ key, answer: '', sending: false, sent: false, error: '' });
+  latest.current = key;
+  const current = form.key === key ? form : { answer: '', sending: false, sent: false, error: '' };
+  useEffect(() => {
+    setForm({ key, answer: '', sending: false, sent: false, error: '' });
+    return () => { if (latest.current === key) latest.current = null; };
+  }, [key]);
+  if (!runId || !question?.id) return null;
+  const busy = current.sending || current.sent;
+  const updateAnswer = (answer) => setForm({ key, answer, sending: false, sent: false, error: '' });
+  return <form className="user-question stack" aria-labelledby={labelId} onSubmit={async (event) => {
+    event.preventDefault();
+    if (busy || submitting.current === key || !current.answer.trim() || latest.current !== key) return;
+    if (new TextEncoder().encode(current.answer).byteLength > 16384) {
+      setForm({ ...current, key, error: 'Your answer is too long. Please shorten it before sending.' });
+      return;
+    }
+    submitting.current = key;
+    const answer = current.answer;
+    setForm({ key, answer, sending: true, sent: false, error: '' });
+    try {
+      const result = await perform('agent:answer', [runId, question.id, answer]);
+      if (latest.current !== key) return;
+      setForm({ key, answer, sending: false, sent: result !== false,
+        error: result === false ? 'Your answer could not be sent. Check that this question is still awaiting an answer, then try again.' : '' });
+    } catch (error) {
+      if (latest.current === key) setForm({ key, answer, sending: false, sent: false, error: error.message });
+    } finally {
+      if (submitting.current === key) submitting.current = null;
+    }
+  }}>
+    <div className="user-question-heading"><MessageSquare size={18} aria-hidden="true" /><h3 id={labelId}>Waiting for your answer</h3></div>
+    <div className="user-question-text"><Markdown>{question.question}</Markdown></div>
+    {question.options?.length > 0 && <div className="user-question-options" role="group" aria-label="Suggested answers">{question.options.map((option, index) => <Button key={`${option}/${index}`} disabled={busy} aria-pressed={current.answer === option} onClick={() => updateAnswer(option)}>{option}</Button>)}</div>}
+    <label className="field" htmlFor={answerId}><span>Your answer</span><textarea id={answerId} aria-label="Your answer" rows={3} maxLength={16384} value={current.answer} disabled={busy} placeholder="Choose a suggestion or write your answer…" onChange={(event) => updateAnswer(event.target.value)} /></label>
+    <ErrorNotice error={current.error} />
+    <div className="actions start"><Button variant="primary" type="submit" icon={Send} disabled={busy || !current.answer.trim()}>{current.sending ? 'Sending…' : current.sent ? 'Answer sent' : 'Send answer'}</Button>{current.sent && <span className="muted" role="status">Continuing with your answer…</span>}</div>
+  </form>;
+}
+
+const formatBytes = (value) => Number(value || 0) >= 1024 ? `${(Number(value) / 1024).toFixed(1)} KiB` : `${Number(value || 0).toLocaleString()} B`;
+
+export function ContextMetrics({ metrics }) {
+  if (!metrics) return null;
+  const bytes = metrics.prompt?.bytes ?? metrics.selectedBytes;
+  const tokens = metrics.prompt?.estimatedTokens ?? metrics.estimatedSelectedTokens;
+  if (!Number.isFinite(bytes)) return null;
+  return <details className="context-metrics agent-output-details"><summary>Context sent (estimate)</summary><div className="context-metrics-body stack">
+    <dl><div><dt>Latest request</dt><dd>{formatBytes(bytes)}{Number.isFinite(tokens) && ` · ~${tokens.toLocaleString()} tokens`}</dd></div>
+      {metrics.savedBytes > 0 && <div><dt>Payload reduction</dt><dd>{formatBytes(metrics.savedBytes)}{metrics.originalBytes > 0 && ` (${Math.round(100 * metrics.savedBytes / metrics.originalBytes)}%)`} compared with the previous format</dd></div>}
+      {metrics.dispatches > 1 && <div><dt>Model requests</dt><dd>{metrics.dispatches}</dd></div>}
+      {metrics.omittedTurns > 0 && <div><dt>Conversation</dt><dd>{metrics.selectedTurns} turns included; {metrics.omittedTurns} available in the full transcript</dd></div>}
+      {metrics.memory?.omittedItems > 0 && <div><dt>Memory</dt><dd>{metrics.memory.selectedItems} sources included; {metrics.memory.omittedItems} available on demand</dd></div>}
+    </dl><p className="muted">Token estimate uses UTF-8 bytes ÷ 4 for the text supplied by DoxieOS. Actual provider usage can differ.</p>
+  </div></details>;
+}
+
 export function AgentRunOutput({ run }) {
   const presentation = run.presentation;
   const response = presentation?.response || [];
@@ -96,13 +160,17 @@ export function AgentRunOutput({ run }) {
   const diagnostics = presentation?.diagnostics || run.output || [];
   const raw = presentation?.raw || run.output || [];
   const failed = ['failed', 'interrupted'].includes(run.status?.toLowerCase());
+  const waiting = run.status === 'AwaitingInput' || Boolean(run.pendingQuestion);
   return <div className="agent-run-output stack">
+    {run.pendingQuestion && <UserQuestion key={`${run.id}/${run.pendingQuestion.id}`} runId={run.id} question={run.pendingQuestion} />}
     <section className="agent-response stack" aria-label="Agent response"><h3>Response</h3>
-      {response.length ? response.map((message, index) => <article className="agent-response-message" key={message.id || index}><Markdown>{message.text}</Markdown></article>)
+      {waiting ? <p className="muted" role="status">Waiting for your answer.</p>
+        : response.length ? response.map((message, index) => <article className="agent-response-message" key={message.id || index}><Markdown>{message.text}</Markdown></article>)
         : active(run.status) ? <div className="actions start" role="status" aria-live="polite"><LoaderCircle size={16} className="spinner" aria-hidden="true" /><span>The agent is working. Its response will appear here.</span></div>
           : failed ? <ErrorNotice error="The agent could not finish this run." />
             : <p className="muted">{presentation ? 'This run finished without a text response.' : 'No response yet.'}</p>}
     </section>
+    {run.interactions?.length > 0 && <details className="agent-output-details"><summary>Questions and answers ({run.interactions.length})</summary><div className="question-history stack">{run.interactions.map((item, index) => <article className="stack" key={item.id || index}><div><strong>Agent</strong><Markdown>{item.question}</Markdown></div><div><strong>You</strong><Markdown>{item.answer}</Markdown></div></article>)}</div></details>}
     {issues.length > 0 && <section className="agent-run-issues stack" aria-label="Run issues"><h3>Issues</h3>{issues.map((issue, index) => {
       const Icon = issue.severity === 'error' ? AlertCircle : AlertTriangle;
       return <div className={`agent-run-issue ${issue.severity === 'error' ? 'error' : 'warning'}`} key={`${issue.kind}/${issue.title}/${index}`} role={issue.severity === 'error' ? 'alert' : undefined}><Icon size={17} aria-hidden="true" /><div><div className="actions start"><strong>{issue.title}</strong>{issue.count > 1 && <Tag>{issue.count} occurrences</Tag>}</div>{issue.detail && <p>{issue.detail}</p>}</div></div>;
@@ -110,6 +178,7 @@ export function AgentRunOutput({ run }) {
     {activity.length > 0 && <details className="agent-output-details"><summary>Activity ({activity.length})</summary><LogOutput lines={activity} label="Agent activity" /></details>}
     {diagnostics.length > 0 && <details className="agent-output-details"><summary>Diagnostics ({diagnostics.length})</summary><LogOutput lines={diagnostics} label="Agent diagnostics" />{presentation && raw.length > diagnostics.length && <details className="agent-output-raw"><summary>Full log ({raw.length})</summary><LogOutput lines={raw} label="Full agent log" /></details>}</details>}
     {presentation && !diagnostics.length && raw.length > 0 && <details className="agent-output-details"><summary>Full log ({raw.length})</summary><LogOutput lines={raw} label="Full agent log" /></details>}
+    <ContextMetrics metrics={run.contextMetrics} />
   </div>;
 }
 
@@ -288,7 +357,7 @@ export function AgentPage({ id, catalogId, runId, connector = false }) {
       <Panel title={run ? 'Execution' : 'Latest run'} icon={Terminal} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('agent:stop', [run.id])}>Stop</Button>}</>}>
         {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.providerId && <Tag>{nameOf(state.providers.find(({ id }) => id === run.providerId)) || run.providerId}</Tag>}{run.model && <Tag>{run.model}</Tag>}{run.effort && <Tag>{effortLabel(run.effort)}</Tag>}{run.exitCode !== null && run.exitCode !== undefined && <Tag>Exit {run.exitCode}</Tag>}</div>
           <AgentRunOutput key={run.id} run={run} /><ErrorNotice error={detail.error} />
-          {active(run.status) && <div className="panel-body"><Guidance title={connector ? 'Guide the running connector…' : 'Guide the running agent…'} submit={(text) => perform('agent:guide', [run.id, text], 'Guidance sent')} /></div>}
+          {active(run.status) && run.status !== 'AwaitingInput' && !run.pendingQuestion && <div className="panel-body"><Guidance title={connector ? 'Guide the running connector…' : 'Guide the running agent…'} submit={(text) => perform('agent:guide', [run.id, text], 'Guidance sent')} /></div>}
           {run.usage && <div className="usage-grid"><div><small>Input tokens</small><strong>{Number(run.usage.inputTokens || 0).toLocaleString()}</strong></div><div><small>Output tokens</small><strong>{Number(run.usage.outputTokens || 0).toLocaleString()}</strong></div><div><small>Cost (USD)</small><strong>{run.usage.totalCostUsd ?? '—'}</strong></div></div>}
         </> : detail.loading && selectedRun ? <Loading /> : <Empty title="No run selected" detail={connector ? 'Run this connector to see its output here.' : 'Run this agent to see its output here.'} icon={Terminal} />}
       </Panel>
@@ -503,7 +572,7 @@ export function BuilderPage({ kind, query }) {
         </div>
         <div className="chat" ref={chat} aria-busy={busy}>{session?.messages?.length ? session.messages.map((message, index) => <article className={`chat-message ${message.role || 'assistant'}`} key={message.id || index}><small>{message.role === 'user' ? 'You' : 'Builder'}</small><Markdown>{message.text || message.content}</Markdown></article>) : !busy && !session.failure && <Empty title="Start the conversation" detail="Tell the builder what the finished result should do." icon={MessageSquare} />}{progressIndicator && <article className="chat-message assistant"><small>Builder</small>{progressIndicator}</article>}</div>
         {!busy && !session.failure && <p className="panel-body muted" role="status" aria-live="polite">Waiting for your message.</p>}
-        <form className="panel-body input-action chat-composer" onSubmit={submitMessage}><textarea aria-label="Message to builder" aria-describedby="builder-message-shortcut" rows={2} placeholder="Describe a goal or ask for a change…" value={draftText} onChange={(event) => setDraftText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draftText.trim()) event.currentTarget.form.requestSubmit(); } }} /><VoiceInput append={(text) => setDraftText((old) => `${old}${old ? ' ' : ''}${text}`)} /><Button type="submit" icon={Send} variant="primary" disabled={busy || !draftText.trim()}>Send</Button></form><small className="panel-body muted" id="builder-message-shortcut">Enter to send · Shift+Enter for a new line</small></>}
+        <form className="panel-body input-action chat-composer" onSubmit={submitMessage}><textarea aria-label="Message to builder" aria-describedby="builder-message-shortcut" rows={2} placeholder="Describe a goal or ask for a change…" value={draftText} onChange={(event) => setDraftText(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (!busy && draftText.trim()) event.currentTarget.form.requestSubmit(); } }} /><VoiceInput append={(text) => setDraftText((old) => `${old}${old ? ' ' : ''}${text}`)} /><Button type="submit" icon={Send} variant="primary" disabled={busy || !draftText.trim()}>Send</Button></form><small className="panel-body muted" id="builder-message-shortcut">Enter to send · Shift+Enter for a new line</small><div className="builder-context-metrics"><ContextMetrics metrics={session.contextMetrics} /></div></>}
       </Panel><Panel title={kind === 'agent' ? 'Draft manifest' : 'Draft workflow'} icon={FileText} actions={draft && <>{kind === 'agent' && <Button icon={Cpu} disabled={busy || !!draftExecution} onClick={() => { setError(''); setDraftExecution(draft.execution || {}); }}>Change agent execution</Button>}<Button variant="primary" onClick={promote} disabled={busy || !!draftExecution}>Save to catalog</Button></>}>
         {draft ? <div className="panel-body stack"><div className="segmented"><Button variant={draftTab === 'preview' ? 'secondary' : 'ghost'} onClick={() => setDraftTab('preview')}>Preview</Button><Button variant={draftTab === 'source' ? 'secondary' : 'ghost'} onClick={() => setDraftTab('source')}>Source</Button></div>
           {kind === 'agent' && <section className="stack" aria-label="Agent execution defaults"><strong>Agent execution defaults</strong><div className="actions start"><Tag>{draft.execution?.providerId ? [nameOf(state.providers.find((item) => item.id === draft.execution.providerId)) || draft.execution.providerId, draft.execution.model || 'Provider default model', draft.execution.effort && effortLabel(draft.execution.effort)].filter(Boolean).join(' · ') : 'Application default'}</Tag></div></section>}

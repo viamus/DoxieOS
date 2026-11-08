@@ -6,6 +6,7 @@ const { executablePath } = require('./processes.cjs');
 const { safePath } = require('./storage.cjs');
 const { reasoningEfforts, normalizeEffort, resolveExecution } = require('./execution.cjs');
 const { localProviderBaseUrl } = require('./model-catalog.cjs');
+const { nativeMemoryServer, serverConfig } = require('./memory-tools.cjs');
 
 const definitions = {
   'claude-code': { id: 'claude-code', name: 'Claude Code', executable: 'claude' },
@@ -106,9 +107,11 @@ function providerFor(storage, id, options = {}) {
     // Never import the installed user's plugins, model routing or MCP settings.
     mcpServers = existsSync(config) ? toml.parse(readFileSync(config, 'utf8').replace(/^\uFEFF/, '')).mcp_servers : null;
   }
+  const nativeMemory = storage.memory ? nativeMemoryServer(storage.root) : null;
+  if (nativeMemory) mcpServers = { ...mcpServers, [nativeMemory.id]: serverConfig(nativeMemory) };
   const installed = localCodex ? installedCodexSettings(environment.CODEX_HOME) : {};
   const store = installed.cli_auth_credentials_store;
-  return { ...provider, executable, model, effort, environment, localCodex, mcpServers,
+  return { ...provider, executable, model, effort, environment, localCodex, mcpServers, nativeMemory,
     ...(localCodex ? { authStore: ['auto', 'file', 'keyring', 'ephemeral'].includes(store) ? store : null,
       installedMcpIds: Object.keys(installed.mcp_servers || {}) } : {}) };
 }
@@ -137,6 +140,17 @@ function effortArgs(provider) {
   return provider.id === 'codex' ? ['-c', `model_reasoning_effort='${effort}'`] : ['--effort', effort];
 }
 
+function inlineConfig(value) {
+  if (typeof value === 'string' && !/[\u0000-\u001f\u007f]/.test(value)) {
+    if (!value.includes("'")) return `'${value}'`;
+    if (!value.includes("'''")) return `'''${value}'''`;
+  }
+  if (Array.isArray(value)) return `[${value.map(inlineConfig).join(', ')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, item]) => item !== undefined)
+    .map(([key, item]) => `${/^[\w-]+$/.test(key) ? key : toml.stringify.value(key)} = ${inlineConfig(item)}`).join(', ')}}`;
+  return toml.stringify.value(value);
+}
+
 function interactiveCodexArgs(provider) {
   if (!provider.localCodex) return [];
   // Interactive Codex has no --ignore-user-config switch. Disable installed
@@ -158,7 +172,7 @@ function interactiveCodexArgs(provider) {
   }
   return ['-c', "model_provider='openai'", '-c', "forced_login_method='chatgpt'",
     ...(provider.authStore ? ['-c', `cli_auth_credentials_store='${provider.authStore}'`] : []),
-    ...(Object.keys(servers).length ? ['-c', `mcp_servers=${toml.stringify.value(servers)}`] : [])];
+    ...(Object.keys(servers).length ? ['-c', `mcp_servers=${inlineConfig(servers)}`] : [])];
 }
 
 function headlessArgs(provider) {
@@ -167,9 +181,11 @@ function headlessArgs(provider) {
   if (usesCodex(provider)) {
     const localAuth = provider.localCodex ? ['--ignore-user-config', '-c', "forced_login_method='chatgpt'",
       ...(provider.authStore ? ['-c', `cli_auth_credentials_store='${provider.authStore}'`] : []),
-      ...(provider.mcpServers && Object.keys(provider.mcpServers).length ? ['-c', `mcp_servers=${toml.stringify.value(provider.mcpServers)}`] : [])] : [];
+      ] : [];
     return ['exec', '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check', '--json',
-      '--ephemeral', ...localAuth, ...localProviderArgs(provider), ...model, ...effort, '--color', 'never', '-'];
+      '--ephemeral', ...localAuth,
+      ...(provider.mcpServers && Object.keys(provider.mcpServers).length ? ['-c', `mcp_servers=${inlineConfig(provider.mcpServers)}`] : []),
+      ...localProviderArgs(provider), ...model, ...effort, '--color', 'never', '-'];
   }
   return [
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json',

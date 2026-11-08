@@ -5,6 +5,7 @@ const { parse } = require('jsonc-parser');
 const { settingsFor } = require('./providers.cjs');
 const { normalizeExecution, resolveExecution } = require('./execution.cjs');
 const { safePath } = require('./storage.cjs');
+const { comparisonMetrics, selectHistory } = require('./context-budget.cjs');
 
 const safeId = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const knownKinds = new Set(['agent', 'workflow']);
@@ -27,19 +28,32 @@ function write(path, data) {
 }
 
 function builderRequest(messages, text, stage = 'message') {
-  const recent = [];
+  const legacyRecent = [];
   let size = 0;
   for (const turn of messages.slice(-20).reverse()) {
     size += Buffer.byteLength(JSON.stringify(turn));
     if (size > 64 * 1024) break;
-    recent.unshift(turn);
+    legacyRecent.unshift(turn);
   }
-  const request = { schema: 'doxie.builder-request.v1', stage, previousTurns: recent, omittedTurns: messages.length - recent.length, message: text };
-  return [
+  const history = selectHistory(messages);
+  const request = { schema: 'doxie.builder-request.v1', stage, previousTurns: history.selected, omittedTurns: history.omittedTurns, message: text };
+  const instructions = [
+    'Read AGENTS.md for this builder’s instructions. Inspect the existing draft before changing it.',
+    'Continue from the explicit conversation below. For omittedTurns > 0, recover older requirements or decisions from .draft/desktop-session.json instead of guessing.',
+  ];
+  const prompt = [...instructions, JSON.stringify(request)].join('\n\n');
+  const previousPrompt = [
     'Read AGENTS.md for this builder’s instructions. Inspect the existing draft before changing it.',
     'Continue from the explicitly provided conversation below. If omittedTurns is greater than zero, the full transcript is available in .draft/desktop-session.json.',
-    JSON.stringify(request, null, 2),
+    JSON.stringify({ ...request, previousTurns: legacyRecent, omittedTurns: messages.length - legacyRecent.length }, null, 2),
   ].join('\n\n');
+  return {
+    prompt,
+    contextMetrics: comparisonMetrics(previousPrompt, prompt, {
+      scope: 'builder-request', selectedTurns: history.selected.length, omittedTurns: history.omittedTurns,
+      historyBudgetBytes: history.metrics.budgetBytes, overBudget: history.metrics.overBudget,
+    }),
+  };
 }
 
 function describeFailure(providerId, diagnostics, { id: runId, status } = {}) {
@@ -62,7 +76,7 @@ function describeFailure(providerId, diagnostics, { id: runId, status } = {}) {
   return { ...source, kind: 'provider', message: `${provider} could not finish this response. Check the provider and model, then retry.` };
 }
 
-function createBuilders({ storage, agents, emit }) {
+function createBuilders({ storage, agents, emit, notify = () => {} }) {
   const current = new Set();
   const base = storage.roots.sandboxes;
   mkdirSync(base, { recursive: true });
@@ -205,16 +219,17 @@ function createBuilders({ storage, agents, emit }) {
     const { id } = session;
     const { directory, draft } = paths(id);
     const providerId = session.providerId || settingsFor(storage).defaultProvider;
-    const prompt = builderRequest(retrying && !initializing ? session.messages.slice(0, -1) : session.messages, text, initializing ? 'initialize' : 'message');
+    const { prompt, contextMetrics } = builderRequest(retrying && !initializing ? session.messages.slice(0, -1) : session.messages, text, initializing ? 'initialize' : 'message');
     if (!retrying && !initializing) session.messages.push({ role: 'user', text });
     session.initializing = initializing;
     if (!initializing) delete session.initialPrompt;
     session.status = 'Running';
     session.failure = null;
+    session.contextMetrics = contextMetrics;
     current.add(id);
     try {
       persist(session);
-      const job = agents.runBuilder(session.kind, { cwd: directory, providerId, model: session.model, effort: session.effort, prompt });
+      const job = agents.runBuilder(session.kind, { cwd: directory, providerId, model: session.model, effort: session.effort, prompt, contextMetrics });
       const result = await agents.wait(job.id);
       const output = result?.output || [];
       if (result?.status === 'Completed') {
@@ -238,7 +253,16 @@ function createBuilders({ storage, agents, emit }) {
       current.delete(id);
     }
     if (session.failure) session.status = 'Failed';
-    return persist(session);
+    const updated = persist(session);
+    if (session.status === 'Ready' && !session.failure) {
+      const response = session.messages.at(-1)?.text || 'The draft is ready to review.';
+      Promise.resolve().then(() => notify({
+        title: `${session.kind === 'agent' ? 'Agent' : 'Workflow'} builder reply ready`,
+        body: Array.from(response.replace(/\s+/g, ' ').trim()).slice(0, 240).join(''), kind: 'builder-reply', sessionId: id,
+        href: `${session.kind === 'agent' ? '/agents/new' : '/workflows/new/chat'}?session=${encodeURIComponent(id)}`,
+      })).catch(error => console.error('Could not publish builder notification:', error.message));
+    }
+    return updated;
   }
 
   function validateAgent(manifest) {

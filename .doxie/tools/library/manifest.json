@@ -1,92 +1,88 @@
 {
   "id": "library",
   "displayName": "Library",
-  "description": "Create a reusable Doxie library from selected material or mount an existing library into a workspace.",
+  "description": "Retrieve, record and relate verified shared knowledge produced by the execution harness.",
   "kind": "workflow",
   "category": "Tool",
   "modes": {
-    "create": {
-      "description": "Create a library with the supplied metadata.",
+    "query": {
+      "description": "Retrieve a bounded set of relevant global memories without a workspace.",
       "fields": [
         {
-          "id": "id",
-          "label": "Library ID",
-          "placeholder": "team-standards",
-          "required": true
+          "id": "query",
+          "label": "Search knowledge",
+          "required": true,
+          "placeholder": "What knowledge would help this step?"
         },
-        {
-          "id": "name",
-          "label": "Display name",
-          "placeholder": "Team standards"
-        },
-        {
-          "id": "description",
-          "label": "Description",
-          "placeholder": "Guidance for recurring work"
-        }
-      ]
-    },
-    "mount": {
-      "description": "Mount an existing library into a Doxie workspace.",
-      "fields": [
         {
           "id": "libraryId",
-          "label": "Existing library",
-          "lookup": "libraries",
-          "required": true
+          "label": "Library (optional)",
+          "lookup": "libraries"
         },
         {
-          "id": "workspace",
-          "label": "Target workspace",
-          "lookup": "workspaces",
-          "required": true
+          "id": "limit",
+          "label": "Maximum results",
+          "placeholder": "8"
         }
       ]
     },
-    "from-files": {
-      "description": "Copy explicit workspace-relative files or direct upstream text artifacts into a new library.",
+    "remember": {
+      "description": "Save a reusable fact, lesson, entity or parameter with provenance.",
       "fields": [
         {
-          "id": "id",
-          "label": "Library ID",
-          "placeholder": "team-standards",
+          "id": "title",
+          "label": "Title",
           "required": true
         },
         {
-          "id": "name",
-          "label": "Display name",
-          "placeholder": "Team standards"
+          "id": "content",
+          "label": "Knowledge to remember",
+          "required": true,
+          "multiline": true
         },
         {
-          "id": "description",
-          "label": "Description",
-          "placeholder": "Guidance for recurring work"
+          "id": "kind",
+          "label": "Kind",
+          "placeholder": "memory, entity or parameter"
         },
         {
-          "id": "paths",
-          "label": "Workspace-relative paths, one per line",
-          "placeholder": "docs/checklist.md"
+          "id": "libraryId",
+          "label": "Library (optional)",
+          "lookup": "libraries"
+        },
+        {
+          "id": "tags",
+          "label": "Tags",
+          "placeholder": "Comma-separated tags"
+        },
+        {
+          "id": "parameters_json",
+          "label": "Structured parameters (JSON object)",
+          "multiline": true
+        },
+        {
+          "id": "source",
+          "label": "Source or provenance label"
         }
       ]
     },
-    "from-current": {
-      "description": "Create a library from the selected workspace's memory files.",
+    "relate": {
+      "description": "Record how two global memories are related.",
       "fields": [
         {
-          "id": "id",
-          "label": "Library ID",
-          "placeholder": "workspace-memory",
+          "id": "fromId",
+          "label": "Source memory ID",
           "required": true
         },
         {
-          "id": "name",
-          "label": "Display name",
-          "placeholder": "Workspace memory"
+          "id": "toId",
+          "label": "Target memory ID",
+          "required": true
         },
         {
-          "id": "description",
-          "label": "Description",
-          "placeholder": "Reusable project context"
+          "id": "type",
+          "label": "Relation",
+          "placeholder": "supports, contradicts, supersedes, related or mentions"
         }
       ]
     }

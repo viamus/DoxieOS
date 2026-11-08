@@ -46,7 +46,7 @@ async function fixture(t, definition, dispatch, initialize) {
     start(id, params) {
       const agentRunId = String(launched.push({ id, params }));
       const controller = new AbortController();
-      const task = Promise.resolve().then(() => dispatch?.(id, params, controller.signal));
+      const task = Promise.resolve().then(() => dispatch?.(id, params, controller.signal, agentRunId));
       jobs.set(agentRunId, { task, controller });
       return { id: agentRunId, providerId: params.providerId ?? 'claude-code', model: params.model ?? 'default-model' };
     },
@@ -73,6 +73,168 @@ async function until(predicate) {
   }
   assert.fail('Timed out waiting for workflow state');
 }
+
+function pauseForReply(params, signal, agentRunId, replies) {
+  const question = { id: `question-${agentRunId}`, question: 'Which project should I use?', options: ['Current project', 'Another project'], askedAt: new Date().toISOString() };
+  params.onQuestion(question, agentRunId);
+  return new Promise((resolve, reject) => {
+    const abort = () => { replies.delete(agentRunId); reject(signal.reason); };
+    signal.addEventListener('abort', abort, { once: true });
+    replies.set(agentRunId, () => {
+      signal.removeEventListener('abort', abort);
+      replies.delete(agentRunId);
+      params.onQuestion(null, agentRunId);
+      resolve();
+    });
+    if (signal.aborted) abort();
+  });
+}
+
+test('pauses a workflow for an agent question and keeps its handoff until the answer', async t => {
+  const definition = workflow([
+    node('ask', 'agent', { agentId: 'ask' }), node('consume', 'agent', { agentId: 'consume' }),
+  ], [edge('ask', 'consume')]);
+  const replies = new Map();
+  let transport;
+  const { engine, launched, db } = await fixture(t, definition, async (id, params, signal, agentRunId) => {
+    if (id === 'ask') {
+      transport = params.contextOutputPath;
+      await writeFile(transport, '{"project":"chosen"}');
+      await pauseForReply(params, signal, agentRunId, replies);
+    } else {
+      assert.equal(params.handoff.sources[0].contextJson, '{"project":"chosen"}');
+    }
+  });
+  const started = engine.run(definition.id);
+  let finished = false;
+  const completion = engine.wait(started.id).then(result => { finished = true; return result; });
+  await until(() => engine.getRun(started.id).status === 'AwaitingInput');
+  const waiting = engine.getRun(started.id);
+  assert.equal(waiting.nodeRuns.ask.status, 'AwaitingInput');
+  assert.equal(waiting.nodeRuns.ask.agentRunId, '1');
+  assert.equal(waiting.nodeRuns.ask.pendingQuestion.id, 'question-1');
+  assert.equal(waiting.nodeRuns.consume.status, 'Pending');
+  assert.equal(launched.length, 1);
+  assert.equal(finished, false);
+  assert.equal(engine.clearHistory(), 0);
+  assert.equal(await readFile(transport, 'utf8'), '{"project":"chosen"}');
+  const saved = db.prepare('SELECT status, pending_question, agent_run_id FROM workflow_node_runs WHERE run_id=? AND node_id=?').get(started.id, 'ask');
+  assert.equal(saved.status, 'AwaitingInput');
+  assert.equal(saved.agent_run_id, '1');
+  assert.equal(JSON.parse(saved.pending_question).question, 'Which project should I use?');
+  replies.get('1')();
+  const result = await completion;
+  assert.equal(result.status, 'Succeeded');
+  assert.equal(result.nodeRuns.ask.pendingQuestion, null);
+  assert.equal(result.nodeRuns.consume.status, 'Succeeded');
+  await assert.rejects(readFile(transport), { code: 'ENOENT' });
+});
+
+test('keeps concurrent questions visible when another question or native approval is answered', async t => {
+  const definition = workflow([
+    node('first', 'agent', { agentId: 'first' }), node('second', 'agent', { agentId: 'second' }),
+    node('review', 'Tool', { toolId: 'approval-gate' }),
+  ], []);
+  const replies = new Map();
+  const { engine } = await fixture(t, definition, async (id, params, signal, agentRunId) => {
+    await pauseForReply(params, signal, agentRunId, replies);
+  });
+  const started = engine.run(definition.id);
+  await until(() => Object.values(engine.getRun(started.id).nodeRuns).filter(record => record.status === 'AwaitingInput').length === 2);
+  assert.equal(engine.getRun(started.id).nodeRuns.review.status, 'AwaitingApproval');
+  const firstAgentRunId = engine.getRun(started.id).nodeRuns.first.agentRunId;
+  const secondAgentRunId = engine.getRun(started.id).nodeRuns.second.agentRunId;
+  replies.get(firstAgentRunId)();
+  await until(() => engine.getRun(started.id).nodeRuns.first.status === 'Succeeded');
+  assert.equal(engine.getRun(started.id).status, 'AwaitingInput');
+  assert.equal(engine.approve(started.id, 'review', true), true);
+  await until(() => engine.getRun(started.id).nodeRuns.review.status === 'Succeeded');
+  assert.equal(engine.getRun(started.id).status, 'AwaitingInput');
+  replies.get(secondAgentRunId)();
+  assert.equal((await engine.wait(started.id)).status, 'Succeeded');
+
+  const another = engine.run(definition.id);
+  await until(() => replies.size === 2);
+  for (const reply of [...replies.values()]) reply();
+  await until(() => engine.getRun(another.id).status === 'AwaitingApproval');
+  assert.equal(engine.approve(another.id, 'review', true), true);
+  assert.equal((await engine.wait(another.id)).status, 'Succeeded');
+});
+
+test('tracks separate questions from concurrent loop iterations', async t => {
+  const definition = workflow([
+    node('produce', 'agent', { agentId: 'produce' }),
+    node('iterate', 'Tool', { toolId: 'loop', inputs: { array_source: 'context', array_path: 'items', concurrency: '2' } }),
+    node('worker', 'agent', { agentId: 'worker', loopId: 'iterate' }),
+  ], [edge('produce', 'iterate'), edge('iterate', 'worker')]);
+  const replies = new Map();
+  const { engine } = await fixture(t, definition, async (id, params, signal, agentRunId) => {
+    if (id === 'produce') await writeFile(params.contextOutputPath, '{"items":[1,2]}');
+    else await pauseForReply(params, signal, agentRunId, replies);
+  });
+  const started = engine.run(definition.id);
+  await until(() => replies.size === 2);
+  const waiting = Object.values(engine.getRun(started.id).nodeRuns).filter(record => record.status === 'AwaitingInput');
+  assert.deepEqual(waiting.map(record => record.nodeId).sort(), ['worker#iter-0', 'worker#iter-1']);
+  assert.equal(new Set(waiting.map(record => record.agentRunId)).size, 2);
+  const [first, second] = [...replies.values()];
+  first();
+  await until(() => Object.values(engine.getRun(started.id).nodeRuns).filter(record => record.status === 'AwaitingInput').length === 1);
+  assert.equal(engine.getRun(started.id).status, 'AwaitingInput');
+  second();
+  const result = await engine.wait(started.id);
+  assert.equal(result.status, 'Succeeded');
+  assert.equal(result.nodeRuns.iterate.status, 'Succeeded');
+  assert(Object.values(result.nodeRuns).every(record => !record.pendingQuestion));
+});
+
+test('cancels an agent waiting for input and skips its dependents', async t => {
+  const definition = workflow([
+    node('ask', 'agent', { agentId: 'ask' }), node('next', 'aggregate'),
+  ], [edge('ask', 'next')]);
+  const replies = new Map();
+  const { engine } = await fixture(t, definition, async (id, params, signal, agentRunId) => {
+    await pauseForReply(params, signal, agentRunId, replies);
+  });
+  const started = engine.run(definition.id);
+  await until(() => engine.getRun(started.id).status === 'AwaitingInput');
+  assert.equal(engine.stop(started.id), true);
+  const result = await engine.wait(started.id);
+  assert.equal(result.status, 'Cancelled');
+  assert.equal(result.nodeRuns.ask.status, 'Skipped');
+  assert.equal(result.nodeRuns.ask.pendingQuestion, null);
+  assert.equal(result.nodeRuns.next.status, 'Skipped');
+  assert.equal(replies.size, 0);
+});
+
+test('persists model request metrics from dispatch through completion and reload', async t => {
+  const definition = workflow([node('inspect', 'agent', { agentId: 'inspect' })], []);
+  const initialMetrics = { prompt: { bytes: 1200, estimatedTokens: 300 }, savedBytes: 800, dispatches: 1 };
+  const finalMetrics = { ...initialMetrics, prompt: { bytes: 1400, estimatedTokens: 350 }, dispatches: 2, usageComplete: true };
+  let release;
+  const { engine, storage, agents, db } = await fixture(t, definition, async (id, params, signal) => {
+    await new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      release = () => { signal.removeEventListener('abort', abort); resolve(); };
+    });
+    return { status: 'Completed', output: [], contextMetrics: finalMetrics };
+  });
+  const startAgent = agents.start.bind(agents);
+  agents.start = (...args) => ({ ...startAgent(...args), contextMetrics: initialMetrics });
+  const started = engine.run(definition.id);
+  await until(() => Boolean(release));
+  assert.deepEqual(engine.getRun(started.id).nodeRuns.inspect.contextMetrics, initialMetrics);
+  const saved = db.prepare('SELECT context_metrics FROM workflow_node_runs WHERE run_id=? AND node_id=?').get(started.id, 'inspect');
+  assert.deepEqual(JSON.parse(saved.context_metrics), initialMetrics);
+  release();
+  const result = await engine.wait(started.id);
+  assert.equal(result.status, 'Succeeded');
+  assert.deepEqual(result.nodeRuns.inspect.contextMetrics, finalMetrics);
+  const hydrated = createWorkflows({ storage, agents });
+  assert.deepEqual(hydrated.getRun(started.id).nodeRuns.inspect.contextMetrics, finalMetrics);
+  await hydrated.close();
+});
 
 test('runs decisions, approval and workspace delivery, then reuses successful upstream artifacts on rerun', async t => {
   const fixtureValue = 'sensitive-example';
@@ -224,14 +386,19 @@ test('preserves legacy SQLite history and closes abandoned approval runs on star
       INSERT INTO workflow_runs VALUES ('waiting', 'sample', 'manual:api', '2026-11-05T18:02:00.0000000+00:00', NULL, 'AwaitingApproval');
       INSERT INTO workflow_node_runs VALUES ('legacy', 'trigger', 'Succeeded', NULL, NULL, 'done', 'line 1' || char(30) || 'line 2');
       INSERT INTO workflow_node_runs VALUES ('waiting', 'approval', 'AwaitingApproval', NULL, NULL, NULL, 'waiting');
+      INSERT INTO workflow_runs VALUES ('question', 'sample', 'manual:api', '2026-11-05T18:03:00.0000000+00:00', NULL, 'AwaitingInput');
+      INSERT INTO workflow_node_runs VALUES ('question', 'agent', 'AwaitingInput', NULL, NULL, NULL, 'question pending');
     `);
   });
   assert.deepEqual(engine.getRun('legacy').nodeRuns.trigger.logs, ['line 1', 'line 2']);
   assert.deepEqual(engine.getRun('legacy').triggerInputs, {});
   assert.equal(engine.getRun('waiting').status, 'Cancelled');
   assert.equal(engine.getRun('waiting').nodeRuns.approval.status, 'Skipped');
+  assert.equal(engine.getRun('question').status, 'Cancelled');
+  assert.equal(engine.getRun('question').nodeRuns.agent.status, 'Skipped');
+  assert.equal(engine.getRun('question').nodeRuns.agent.pendingQuestion, null);
   assert.equal(db.prepare("SELECT status FROM workflow_runs WHERE id='waiting'").get().status, 'Cancelled');
-  assert.equal(engine.clearHistory(), 2);
+  assert.equal(engine.clearHistory(), 3);
   assert.equal(engine.listRuns().length, 0);
 });
 
@@ -406,7 +573,7 @@ test('dispatches model-backed Prompt connectors and their legacy agent aliases w
   assert.equal(launched.length, 2);
 });
 
-test('mounts a library through a native connector and keeps repeated mounts idempotent', async t => {
+test('rejects retired library mounts without binding knowledge or changing workspace files', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'doxie-mount-'));
   const storage = createStorage({ root, databasePath: ':memory:', managed: true });
   const engine = createWorkflows({ storage, agents: { start() { assert.fail('Mount must run without a provider'); } } });
@@ -416,14 +583,81 @@ test('mounts a library through a native connector and keeps repeated mounts idem
     await rm(root, { force: true, recursive: true });
   });
   const workspace = storage.save('workspaces', { id: 'target' });
-  storage.createLibrary({ id: 'release', memories: [{ id: 'check', content: 'Read the checklist.' }] });
+  const library = storage.createLibrary({ id: 'release', memories: [{ id: 'check', content: 'Read the checklist.' }] });
   const definition = storage.save('workflows', workflow([
     node('explicit', 'Tool', { toolId: 'library', toolMode: 'mount', inputs: { libraryId: 'release', workspace: workspace.id } }),
     node('default-workspace', 'Tool', { toolId: 'library', toolMode: 'mount', inputs: { libraryId: 'release' } }),
   ], [edge('explicit', 'default-workspace')], { workspaceId: workspace.id }));
   const result = await engine.wait(engine.run(definition.id).id);
-  assert.equal(result.status, 'Succeeded');
-  assert.deepEqual(storage.get('workspaces', workspace.id).mountedLibraryIds, ['release']);
-  assert.match(await readFile(path.join(workspace.path, 'AGENTS.md'), 'utf8'), /Read the checklist/);
+  assert.equal(result.status, 'Failed');
+  assert(result.nodeRuns.explicit.logs.some(line => /Library mount has been retired/.test(line)));
+  assert.equal(result.nodeRuns['default-workspace'].status, 'Skipped');
+  assert.equal(Object.keys(storage.get('workspaces', workspace.id)).some(key => /^mounted/i.test(key)), false);
+  await assert.rejects(readFile(path.join(workspace.path, 'AGENTS.md')), { code: 'ENOENT' });
+  assert.equal(await readFile(path.join(library.path, 'memory', 'check.md'), 'utf8'), 'Read the checklist.');
   assert.equal(result.nodeRuns['default-workspace'].providerId, null);
+});
+
+test('native global memory query runs without a workspace and hands bounded context to a consumer', async t => {
+  const definition = workflow([
+    node('knowledge', 'Tool', { toolId: 'library', toolMode: 'query', workspaceId: 'retired-workspace', inputs: { query: 'release checklist', limit: '2' } }),
+    node('consume', 'agent', { agentId: 'consume', workspaceId: 'target' }),
+  ], [edge('knowledge', 'consume')]);
+  let received;
+  const { engine, storage, runs } = await fixture(t, definition, async (id, params) => {
+    received = JSON.parse(params.handoff.sources[0].contextJson);
+    assert.equal(received.schema, 'doxie.native-memory.v1');
+    assert.equal(received.action, 'query');
+    assert.equal(received.result.results[0].content, 'Review the release checklist.');
+  });
+  storage.memory = { search(options) {
+    assert.equal(options.query, 'release checklist');
+    assert.equal(options.limit, 2);
+    return { query: options.query, results: [{ id: 'knowledge-1', content: 'Review the release checklist.' }], truncated: false, bytes: 29 };
+  } };
+  const result = await engine.wait(engine.run(definition.id).id);
+  assert.equal(result.status, 'Succeeded');
+  assert.equal(result.nodeRuns.knowledge.hasTransientContext, true);
+  assert.equal(result.nodeRuns.knowledge.providerId, null);
+  const receipt = JSON.parse(await readFile(path.join(runs, result.id, 'knowledge', 'library.json'), 'utf8'));
+  assert.deepEqual(receipt, received);
+  assert(!JSON.stringify(result).includes('Review the release checklist.'), 'retrieved payload stays in handoff/artifact rather than logs');
+});
+
+test('native global memory context enforces the 64 KiB handoff limit', async t => {
+  const definition = workflow([node('knowledge', 'Tool', { toolId: 'library', toolMode: 'query', inputs: { query: 'large' } })], []);
+  const { engine, storage } = await fixture(t, definition);
+  storage.memory = { search: () => ({ results: [{ content: 'x'.repeat(65536) }] }) };
+  const result = await engine.wait(engine.run(definition.id).id);
+  assert.equal(result.status, 'Failed');
+  assert(result.nodeRuns.knowledge.logs.some(line => /64 KiB/.test(line)));
+  assert.equal(result.nodeRuns.knowledge.hasTransientContext, false);
+});
+
+test('explicit Workspace Memory inputs reach only downstream agents while raw documents never enter the central library', async t => {
+  const definition = workflow([
+    node('load-manual', 'Tool', { toolId: 'workspace-memory', toolMode: 'load', workspaceId: 'target', inputs: { paths: ['manual/source.md'] } }),
+    node('consume', 'Agent', { agentId: 'consumer', workspaceId: 'target' }),
+  ], [edge('load-manual', 'consume')]);
+  const original = '# Manual source\r\n  Preserve spacing and revisão 🐕.\n';
+  let received;
+  const { engine, storage, workspace, launched, runs } = await fixture(t, definition, async (id, params) => {
+    assert.equal(id, 'consumer');
+    received = JSON.parse(params.handoff.sources[0].contextJson);
+    assert.equal(received.schema, 'doxie.workspace-memory.v1');
+    assert.equal(received.sources[0].path, 'manual/source.md');
+    assert.equal(received.sources[0].content, original);
+    assert.equal(received.sources[0].bytes, Buffer.byteLength(original));
+  });
+  storage.memory = { remember() { assert.fail('A manual source is not a verified learning'); }, importText() { assert.fail('Raw Markdown must not be imported'); } };
+  await mkdir(path.join(workspace.path, 'manual'));
+  await writeFile(path.join(workspace.path, 'manual', 'source.md'), original, 'utf8');
+  const result = await engine.wait(engine.run(definition.id).id);
+  assert.equal(result.status, 'Succeeded', JSON.stringify(result.nodeRuns));
+  assert.deepEqual(launched.map(item => item.id), ['consumer']);
+  assert.equal(result.nodeRuns['load-manual'].providerId, null);
+  assert.equal(result.nodeRuns['load-manual'].hasTransientContext, true);
+  assert.equal(await readFile(path.join(workspace.path, 'manual', 'source.md'), 'utf8'), original);
+  assert.deepEqual(JSON.parse(await readFile(path.join(runs, result.id, 'load-manual', 'workspace-memory.json'), 'utf8')), received);
+  assert(!JSON.stringify(result).includes('Preserve spacing'), 'document text is delivered as context rather than diagnostics');
 });

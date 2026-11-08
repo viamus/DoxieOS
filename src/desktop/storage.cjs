@@ -15,6 +15,7 @@ const manifests = { skills: 'manifest.json', tools: 'manifest.json', workflows: 
 const catalogSetting = 'doxie.catalog.customRoots';
 const promptExecutionSetting = 'doxie.connector.prompt.execution';
 const generatedContext = '<!-- DoxieOS: auto-generated from workspace.json mountedLibraries -->';
+const generatedCatalogContext = '<!-- doxie/generated - edit the canonical .doxie catalog -->';
 const maxPreview = 256 * 1024;
 const maxImage = 4 * 1024 * 1024;
 const maxArchive = 64 * 1024 * 1024;
@@ -26,6 +27,8 @@ const title = id => id.replace(/[-_]+/g, ' ').replace(/\b\p{L}/gu, char => char.
 const unix = file => file.split(path.sep).join('/');
 const json = data => `${JSON.stringify(data, null, 2)}\n`;
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
+const workspaceMetadata = value => Object.fromEntries(Object.entries(value || {}).filter(([key]) => !/^mounted(?:libraries|libraryids|agents|agentids)$/i.test(key)));
+const generatedWorkspaceContext = text => [generatedContext, generatedCatalogContext].includes(String(text).split(/\r?\n/, 1)[0]);
 const isAgentKind = kind => kind === 'agents' || kind === 'skills';
 const internalAgents = new Set(['agent-builder', 'workflow-builder']);
 const retiredAgentId = 'workflow-output-contract-designer';
@@ -318,10 +321,14 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
       if (entries.size === 0) entries.set(`${id}/library.json`, Buffer.from(json({ name: item.name, description: item.description })));
       return writeZip(entries);
     }
-    if (kind === 'workspaces' && !entries.has(`${prefix}workspace.json`)) {
-      entries.set(`${prefix}workspace.json`, Buffer.from(json({ Name: item.name, Description: item.description, CreatedAt: item.createdAt, MountedLibraries: item.mountedLibraryIds, MountedAgents: item.mountedAgentIds })));
+    if (kind === 'workspaces') {
+      const metadata = readObject(entries.get(`${prefix}workspace.json`)?.toString()) || { Name: item.name, Description: item.description, CreatedAt: item.createdAt };
+      entries.set(`${prefix}workspace.json`, Buffer.from(json(workspaceMetadata(metadata))));
+      for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+        if (entries.has(prefix + name) && generatedWorkspaceContext(entries.get(prefix + name).toString())) entries.delete(prefix + name);
+      }
     }
-    const agentIds = kind === 'workspaces' ? item.mountedAgentIds : item.nodes.map(node => field(node, 'agentId'));
+    const agentIds = kind === 'workspaces' ? [] : item.nodes.map(node => field(node, 'agentId'));
     const agents = [];
     for (const agentId of includeAgents ? mountIds(agentIds) : []) {
       if (!idPattern.test(agentId) || !get('skills', agentId)) continue;
@@ -330,7 +337,7 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
       entries.set(file, exportAgent(agentId));
     }
     entries.set(`doxie-${singular}-export.json`, Buffer.from(json({ format: `doxie.${singular}.export.v1`, [`${singular}Id`]: id,
-      exportedAt: new Date().toISOString(), agents })));
+      exportedAt: new Date().toISOString(), ...(kind === 'workflows' ? { agents } : {}) })));
     return writeZip(entries);
   }
 
@@ -388,7 +395,6 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
       const manifest = readObject(files.get(manifests[kind])?.toString());
       if (!manifest || (kind === 'workflows' && field(manifest, 'id') !== id)) throw new Error(`Missing or invalid ${manifests[kind]}`);
       const recognized = new Set([bundleName, ...[...files.keys()].map(name => prefix + name)]);
-      const included = [];
       for (const dependency of Array.isArray(bundle.agents) ? bundle.agents : []) {
         const agentId = validateId(dependency?.id);
         const file = `agents/${agentId}.zip`;
@@ -396,18 +402,15 @@ function createTransfers({ root, roots, get, directory, selectCatalog, listCatal
         const imported = parseAgentZip(readZip(entries.get(file), budget));
         if (agentId !== imported.id) throw new Error('Bundled agent identifier does not match its manifest');
         recognized.add(file);
-        if (!connectorIds.has(agentId) && !retiredDefaultAgent(catalog, agentId)) {
-          included.push(agentId);
+        if (kind === 'workflows' && !connectorIds.has(agentId) && !retiredDefaultAgent(catalog, agentId)) {
           changes.push(...decideAgent(imported, catalog, overwrite));
         }
       }
       if (recognized.size !== entries.size) throw new Error('Unexpected ZIP entry');
       if (kind === 'workspaces') {
-        const oldIds = mountIds(field(manifest, 'mountedAgents') ?? field(manifest, 'mountedAgentIds'));
-        if (included.some(agentId => !oldIds.includes(agentId))) {
-          for (const key of Object.keys(manifest)) if (/^mountedAgent(?:s|Ids)$/i.test(key)) delete manifest[key];
-          manifest.MountedAgents = mountIds([...oldIds, ...included]);
-          files.set(manifests[kind], Buffer.from(json(manifest)));
+        files.set(manifests[kind], Buffer.from(json(workspaceMetadata(manifest))));
+        for (const name of ['AGENTS.md', 'CLAUDE.md']) {
+          if (files.has(name) && generatedWorkspaceContext(files.get(name).toString())) files.delete(name);
         }
       }
     }
@@ -645,9 +648,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
         workspaceId: field(metadata, 'workspaceId') ?? null, env: field(metadata, 'env') ?? {}, createdAt: field(metadata, 'createdAt'), updatedAt: field(metadata, 'updatedAt') };
     }
     if (kind === 'workspaces') {
-      return { ...base, createdAt: field(metadata, 'createdAt') ?? dirStat.birthtime.toISOString(),
-        mountedLibraryIds: mountIds(field(metadata, 'mountedLibraryIds') ?? field(metadata, 'mountedLibraries')),
-        mountedAgentIds: mountIds(field(metadata, 'mountedAgentIds') ?? field(metadata, 'mountedAgents')) };
+      return { ...workspaceMetadata(base), createdAt: field(metadata, 'createdAt') ?? dirStat.birthtime.toISOString() };
     }
     return { ...base, memories: memoryFiles(itemDir).map(relative => memoryEntry(itemDir, relative)),
       files: filesUnder(itemDir).map(relativePath => ({ relativePath, name: path.basename(relativePath) })) };
@@ -708,31 +709,17 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   }
 
   function updateWorkspaceContext(workspace) {
-    const context = { 'CLAUDE.md': [], 'AGENTS.md': [] };
-    for (const id of workspace.mountedLibraryIds) {
-      const library = idPattern.test(id) ? get('libraries', id) : null;
-      const section = [`## ${id}`, ''];
-      for (const lines of Object.values(context)) lines.push(...section);
-      if (!library) {
-        for (const lines of Object.values(context)) lines.push(`Library \`${id}\` is unavailable.`, '');
-        continue;
-      }
-      for (const relative of memoryFiles(library.path)) {
-        const full = safePath(library.path, relative);
-        context['CLAUDE.md'].push(`@${unix(path.relative(workspace.path, full))}`);
-        context['AGENTS.md'].push(`### ${relative}`, '', readText(full) ?? '', '');
-      }
-      context['CLAUDE.md'].push('');
-    }
-    for (const [name, lines] of Object.entries(context)) {
+    // Workspace folders carry inputs and outputs. Retire only known DoxieOS
+    // generated context; preserve user files, including legacy notes and memory.
+    for (const name of ['AGENTS.md', 'CLAUDE.md']) {
       const target = safePath(workspace.path, name);
       const previous = readText(target);
-      if (previous !== null && !previous.split(/\r?\n/, 1)[0].includes('DoxieOS: auto-generated')) continue;
-      if (workspace.mountedLibraryIds.length === 0) {
-        if (previous !== null) fs.unlinkSync(target);
-      } else {
-        writeIfChanged(target, [generatedContext, '', `# ${workspace.name} - workspace context`, '', ...lines].join('\n'));
-      }
+      if (previous !== null && generatedWorkspaceContext(previous)) fs.unlinkSync(target);
+    }
+    const manifest = safePath(workspace.path, 'workspace.json');
+    const previous = readObject(readText(manifest));
+    if (previous && Object.keys(previous).some(key => /^mounted(?:libraries|libraryids|agents|agentids)$/i.test(key))) {
+      writeIfChanged(manifest, json(workspaceMetadata(previous)));
     }
   }
 
@@ -810,18 +797,9 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
       merged.Name = data.name ?? current?.name ?? title(id);
       merged.Description = data.description ?? current?.description ?? '';
       merged.CreatedAt = current?.createdAt ?? new Date().toISOString();
-      merged.MountedLibraries = mountIds(mountedLibraryIds ?? field(fields, 'mountedLibraries') ?? current?.mountedLibraryIds);
-      merged.MountedAgents = mountIds(mountedAgentIds ?? field(fields, 'mountedAgents') ?? current?.mountedAgentIds);
       delete merged.id;
       if (!current) {
         if (managed && typeof sourcePath === 'string' && sourcePath.trim()) managedFiles.copyWorkspace(sourcePath, id);
-        const notes = safePath(itemDir, 'WORKSPACE.md');
-        if (!stat(notes)) atomicWrite(notes, `# Workspace ${merged.Name}\n\n${merged.Description}\n`);
-        const memoryDirectory = stat(safePath(itemDir, 'memory'));
-        if (!memoryDirectory || memoryDirectory.isDirectory()) {
-          const memory = safePath(itemDir, 'memory/MEMORY.md');
-          if (!stat(memory)) atomicWrite(memory, `# Workspace ${merged.Name} - local memory index\n`);
-        }
       }
     }
     writeItemFile(manifests[sourceKind], json(merged));
@@ -839,9 +817,7 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
   }
 
   function refreshWorkspaceContexts(libraryId) {
-    for (const workspace of list('workspaces')) {
-      if (workspace.mountedLibraryIds.some(id => id.toLowerCase() === libraryId.toLowerCase())) updateWorkspaceContext(workspace);
-    }
+    for (const workspace of list('workspaces')) updateWorkspaceContext(workspace);
   }
 
   function createLibrary({ id, name, description = '', catalogId, memories = [] }) {
@@ -1020,6 +996,8 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
     for (const workspace of list('workspaces')) updateWorkspaceContext(workspace);
     return counts;
   }
+
+  for (const workspace of list('workspaces')) updateWorkspaceContext(workspace);
 
   return { root, roots, db, databasePath, managed, runsRoot: roots.runs, workspacesRoot: roots.workspaces, list, get, getDispatchAgent, setConnectorExecution, save, remove, regenerate, watchCatalog, importWorkbench, createLibrary,
     listCatalogs, saveCatalogs, getSetting, setSetting, listFiles, readFile, writeFile, deleteFile, resolveFile,

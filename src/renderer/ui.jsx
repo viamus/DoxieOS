@@ -9,7 +9,7 @@ export const invoke = (action, ...args) => window.doxie.invoke(action, ...args);
 export const href = (route) => `#${route}`;
 export const go = (route) => { window.location.hash = route; };
 export const part = (value) => encodeURIComponent(value);
-export const active = (status) => ['queued', 'running', 'awaitingapproval'].includes(status?.toLowerCase());
+export const active = (status) => ['queued', 'running', 'awaitingapproval', 'awaitinginput'].includes(status?.toLowerCase());
 export const slug = (text) => text.normalize('NFKD').toLowerCase().replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 export const nameOf = (item) => item?.displayName || item?.name || item?.label || item?.id || '';
 export const split = (value) => value.split(/[\n,]/).map((part) => part.trim()).filter(Boolean);
@@ -208,7 +208,7 @@ export function Status({ status = 'Unknown' }) {
   const key = String(status).toLowerCase();
   const tone = ['succeeded', 'success', 'available', 'enabled', 'completed', 'connected'].includes(key) ? 'green'
     : ['running', 'live', 'active'].includes(key) ? 'blue'
-    : ['queued', 'awaitingapproval', 'warning'].includes(key) ? 'yellow'
+    : ['queued', 'awaitingapproval', 'awaitinginput', 'warning'].includes(key) ? 'yellow'
     : ['failed', 'error', 'rejected'].includes(key) ? 'red' : 'neutral';
   return <span className={`status ${tone}`}><i />{String(status).replace(/([a-z])([A-Z])/g, '$1 $2')}</span>;
 }

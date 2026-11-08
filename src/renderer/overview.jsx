@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleDollarSign, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2 } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
+import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleCheck, CircleDollarSign, CircleHelp, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Info, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2, TriangleAlert } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, useApp, useEffortLabel, useText } from './ui.jsx';
+import { Markdown } from './workbench.jsx';
 
 const categories = [
   { key: 'workflows', label: 'Workflows', icon: GitBranch, tone: 'copper' },
@@ -52,7 +53,7 @@ export function Dashboard() {
   const figures = {
     workflows: `${state.workflows.filter(({ enabled }) => enabled !== false).length} ${t('Home.Enabled', 'enabled')}`,
     agents: `${state.agentRuns.length} ${t('Home.Runs', 'runs')}`,
-    libraries: `${state.libraries.reduce((count, library) => count + (library.memories?.length || 0), 0)} ${t('Home.MemoryEntriesTotal', 'memory entries')}`,
+    libraries: `${Number(state.libraryStats?.memories || 0) + Number(state.libraryStats?.entities || 0) + Number(state.libraryStats?.parameters || 0)} ${t('Home.MemoryEntriesTotal', 'memory entries')}`,
     workspaces: `${consoles.length} ${t('Home.LiveConsolesCount', 'live consoles')}`,
   };
 
@@ -67,7 +68,7 @@ export function Dashboard() {
     </section>
     <div className="metrics">{categories.map(({ key, label, icon: Icon, tone }) => <a className={`metric ${tone}`} key={key} href={href(`/${key}`)}>
       <div className="metric-top"><span className="metric-icon"><Icon size={19} strokeWidth={1.65} /></span><ChevronRight size={17} className="row-caret" /></div>
-      <div className="metric-count">{state[key].length}<span>{t(`Home.${label}`, label)}</span></div><p>{figures[key]}</p>
+      <div className="metric-count">{key === 'libraries' ? 1 : state[key].length}<span>{key === 'libraries' ? t('Nav.Library', 'Library') : t(`Home.${label}`, label)}</span></div><p>{figures[key]}</p>
     </a>)}</div>
     <div className="dashboard-grid">
       <Panel title={t('Home.LiveNow', 'Live now')} icon={Activity} actions={<Tag>{running.length + consoles.length} active</Tag>}>
@@ -104,17 +105,81 @@ export function HistoryPage() {
   </div>;
 }
 
+const isUnreadNotification = (item) => !item.read && !item.readAt && !item.isRead;
+
+function NotificationItem({ item, busy, update }) {
+  const { perform } = useApp();
+  const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
+  const unread = isUnreadNotification(item);
+  const severity = String(item.severity || 'info').toLowerCase();
+  const tone = item.kind === 'question' ? 'question' : ['success', 'warning', 'error'].includes(severity) ? severity : 'info';
+  const Icon = { question: CircleHelp, success: CircleCheck, warning: TriangleAlert, error: TriangleAlert, info: Info }[tone];
+  const title = item.title || 'Notification';
+  const open = (link) => link?.startsWith('/') && !link.startsWith('//') ? go(link) : perform('shell:openExternal', [link]);
+
+  return <li className={`notification-row ${expanded ? 'expanded' : ''}`} data-unread={unread}>
+    <div className="notification-line">
+      <button type="button" className="notification-summary" aria-label={`${expanded ? 'Hide' : 'Show'} notification: ${title}`} aria-describedby={`${detailId}-state`} aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded((value) => !value)}>
+        <span className={`notification-kind ${tone}`} title={item.kind === 'question' ? 'Question' : severity}><Icon size={18} strokeWidth={1.7} /></span>
+        <span className="notification-copy"><span className="notification-title">{unread && <i className="notification-unread" title="Unread" />}<strong>{title}</strong></span><span className="notification-preview">{item.body || item.message || 'View details'}</span></span>
+        <ChevronRight size={15} className="notification-caret" />
+      </button>
+      <span id={`${detailId}-state`} className="notification-state">{unread ? 'Unread' : 'Read'} · {tone === 'question' ? 'Question' : severity}</span>
+      <span className="notification-time"><DateTime value={item.timestamp || item.createdAt} /></span>
+      <div className="notification-actions">
+        {unread && <IconButton icon={Check} label={`Mark read: ${title}`} disabled={busy} onClick={() => update('notifications:read', [item.id])} />}
+        <IconButton icon={Trash2} label={`Delete notification: ${title}`} disabled={busy} onClick={() => update('notifications:delete', [item.id])} />
+      </div>
+    </div>
+    <div id={detailId} className="notification-detail" hidden={!expanded}>
+      {expanded && <>
+        {(item.body || item.message) && <p className="notification-body">{item.body || item.message}</p>}
+        {item.content && (item.contentFormat === 'markdown' ? <Markdown>{item.content}</Markdown> : <pre>{item.content}</pre>)}
+        {(item.href || item.actions?.length > 0 || item.sourcePath) && <div className="actions start">
+          {item.href && <Button variant="ghost" icon={ExternalLink} onClick={() => open(item.href)}>View source</Button>}
+          {item.actions?.map((action, index) => <Button variant="ghost" key={`${action.href}/${index}`} icon={ExternalLink} onClick={() => open(action.href)}>{action.label}</Button>)}
+          {item.sourcePath && <Button variant="ghost" icon={FolderKanban} disabled={busy} onClick={() => perform('notifications:openSource', [item.id])}>Open source folder</Button>}
+        </div>}
+      </>}
+    </div>
+  </li>;
+}
+
 export function NotificationsPage() {
   const { state, perform } = useApp();
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const isUnread = (item) => !item.read && !item.readAt && !item.isRead;
-  const visible = unreadOnly ? state.notifications.filter(isUnread) : state.notifications;
-  const open = (link) => link?.startsWith('/') && !link.startsWith('//') ? go(link) : perform('shell:openExternal', [link]);
-  return <div className="page"><PageHeading icon={Bell} title="Notifications" subtitle="Run outcomes and updates from agents and workflows." actions={<Button icon={Check} disabled={!state.notifications.some(isUnread)} onClick={() => perform('notifications:read')}>Mark all read</Button>} />
-    <div className="toolbar"><label className="check"><input type="checkbox" checked={unreadOnly} onChange={(event) => setUnreadOnly(event.target.checked)} /> Unread only</label></div>
-    <div className="stack">{visible.length ? visible.map((item, index) => <Panel key={item.id || `${item.timestamp}-${index}`} title={item.title} icon={Bell} hint={<DateTime value={item.timestamp || item.createdAt} />} actions={<>{isUnread(item) && <Tag>Unread</Tag>}<Status status={item.severity || 'Info'} /></>}>
-      <div className="panel-body"><p>{item.body}</p>{item.content && <details><summary>Details</summary><pre>{item.content}</pre></details>}<div className="actions">{item.href && <Button icon={ExternalLink} onClick={() => open(item.href)}>View source</Button>}{item.actions?.map((action, actionIndex) => <Button key={`${action.href}/${actionIndex}`} icon={ExternalLink} onClick={() => open(action.href)}>{action.label}</Button>)}{item.sourcePath && <Button icon={FolderKanban} onClick={() => perform('notifications:openSource', [item.id])}>Open source folder</Button>}{isUnread(item) && <Button icon={Check} onClick={() => perform('notifications:read', [item.id])}>Mark read</Button>}</div></div>
-    </Panel>) : <Panel><Empty title="You're all caught up" icon={Bell} detail="Notifications from the workbench appear here." /></Panel>}</div>
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const unreadCount = state.notifications.filter(isUnreadNotification).length;
+  const visible = unreadOnly ? state.notifications.filter(isUnreadNotification) : state.notifications;
+
+  async function update(action, args = []) {
+    setBusy(true);
+    try { return await perform(action, args); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="page notifications-page">
+    <PageHeading icon={Bell} title="Notifications" />
+    <section className="notifications-inbox" aria-label="Notification inbox">
+      <div className="notifications-toolbar">
+        <div className="notification-filters" role="group" aria-label="Filter notifications">
+          <button type="button" aria-pressed={!unreadOnly} onClick={() => setUnreadOnly(false)}>All <span>{state.notifications.length}</span></button>
+          <button type="button" aria-pressed={unreadOnly} onClick={() => setUnreadOnly(true)}>Unread <span>{unreadCount}</span></button>
+        </div>
+        <div className="actions">
+          <Button variant="ghost" icon={Check} disabled={busy || !unreadCount} onClick={() => update('notifications:read')}>Mark all read</Button>
+          <Button variant="ghost" icon={Trash2} disabled={busy || !state.notifications.length} onClick={() => setConfirm(true)}>Clear all</Button>
+        </div>
+      </div>
+      {visible.length ? <ul className="notification-list" aria-label={unreadOnly ? 'Unread notifications' : 'All notifications'}>{visible.map((item) => <NotificationItem key={item.id} item={item} busy={busy} update={update} />)}</ul>
+        : <Empty icon={Bell} title={unreadOnly ? 'No unread notifications' : 'No notifications'} detail={unreadOnly ? "You're all caught up." : 'Updates will appear here.'} />}
+    </section>
+    {confirm && <Confirm title="Clear all notifications" detail={`Delete all ${state.notifications.length} notifications, including read notifications?`} label="Clear all" close={() => setConfirm(false)} confirm={async () => {
+      const result = await update('notifications:clear');
+      if (result !== false) setConfirm(false);
+    }} />}
   </div>;
 }
 
@@ -271,7 +336,7 @@ export function SettingsPage() {
       </ItemRow>)}</div>
     </Panel>
     <Panel title={t('Settings.McpServers', 'MCP servers')} icon={Layers3} hint="Configure tools available to your provider CLIs." actions={<><Button icon={Import} onClick={() => perform('settings:importMcp', [], 'Provider MCP configuration imported')}>{t('Settings.ImportFromProviders', 'Import from providers')}</Button><Button variant="primary" icon={Plus} onClick={() => setEditMcp({})}>{t('Settings.AddMcp', 'Add MCP')}</Button></>}>
-      {servers.length ? <div className="row-list">{servers.map((server) => <ItemRow key={server.id} icon={Layers3} title={server.name || server.id} detail={[server.transport, ...(server.providers || [])].filter(Boolean).join(' · ')}><Status status={server.enabled ? 'Enabled' : 'Disabled'} /><IconButton icon={Settings2} label="Edit MCP server" onClick={() => setEditMcp(server)} /><IconButton icon={Trash2} label="Remove MCP server" onClick={() => setRemoveMcp(server)} /></ItemRow>)}</div> : <Empty compact title="No MCP servers configured" icon={Layers3} />}
+      {servers.length ? <div className="row-list">{servers.map((server) => <ItemRow key={server.id} icon={Layers3} title={server.name || server.id} detail={[server.transport, ...(server.providers || [])].filter(Boolean).join(' · ')}><Status status={server.enabled ? 'Enabled' : 'Disabled'} />{server.builtin ? <Tag>Built in</Tag> : <><IconButton icon={Settings2} label="Edit MCP server" onClick={() => setEditMcp(server)} /><IconButton icon={Trash2} label="Remove MCP server" onClick={() => setRemoveMcp(server)} /></>}</ItemRow>)}</div> : <Empty compact title="No MCP servers configured" icon={Layers3} />}
     </Panel>
     <Panel title={t('Settings.DoxieCatalogs', 'Doxie catalogs')} icon={BookOpen} hint="Add a folder to copy its catalog into DoxieOS app data." actions={<Button icon={Plus} onClick={addCatalog}>{t('Settings.AddCatalog', 'Add catalog')}</Button>}>
       <div className="row-list">{catalogs.map((catalog) => <ItemRow key={catalog.id} icon={BookOpen} title={nameOf(catalog)} detail={catalog.path || catalog.root}>{catalog.isDefault || catalog.id === 'default' ? <Tag>Default</Tag> : <IconButton icon={Trash2} label="Remove catalog" onClick={() => setRemoveCatalog(catalog)} />}</ItemRow>)}</div>

@@ -51,8 +51,8 @@ function sweepScratch({ storage, builders, retentionMs = retention, clock = Date
 async function pruneScratch({ storage, builders, retentionMs, clock, stopped }) {
   const { root, db } = storage;
   const runs = path.join(root, '.runs');
-  const runningAgents = db.prepare("SELECT output_dir FROM agent_runs WHERE status IN ('Queued', 'Running')");
-  const runningWorkflows = db.prepare("SELECT id, triggered_by FROM workflow_runs WHERE status IN ('Queued', 'Running', 'AwaitingApproval')");
+  const runningAgents = db.prepare("SELECT output_dir FROM agent_runs WHERE status IN ('Queued', 'Running', 'AwaitingInput')");
+  const runningWorkflows = db.prepare("SELECT id, triggered_by FROM workflow_runs WHERE status IN ('Queued', 'Running', 'AwaitingApproval', 'AwaitingInput')");
   const cutoff = retentionMs === 0 ? Infinity : clock() - retentionMs;
 
   function inUse(folder) {

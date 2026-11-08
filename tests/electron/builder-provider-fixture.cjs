@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
+const toml = require('@iarna/toml');
 
 const args = process.argv.slice(2);
 assert.equal(process.env.DOXIE_TEST, '1');
@@ -43,8 +44,22 @@ if (args[0] === 'login') {
     process.exit(0);
   }
   assert.equal(args[args.indexOf('--model') + 1], 'doxie/builder-fixture');
+  const mcpOverrides = args.filter((argument, index) => args[index - 1] === '-c' && argument.startsWith('mcp_servers='));
+  assert.equal(mcpOverrides.length, 1, 'Builder turns receive the native library MCP override.');
+  const servers = toml.parse(mcpOverrides[0]).mcp_servers;
+  assert.deepEqual(Object.keys(servers), ['doxie_library_memory'], 'Builder turns exclude configured and installed external MCP servers.');
+  const nativeMemory = servers.doxie_library_memory;
+  assert.ok(nativeMemory.command);
+  assert.ok(nativeMemory.args[0].endsWith('memory-mcp.cjs'));
+  assert.deepEqual(nativeMemory.args.slice(-2), ['--root', join(process.env.DOXIE_USER_DATA, 'workbench')]);
+  assert.equal(nativeMemory.env.ELECTRON_RUN_AS_NODE, '1');
+  assert.match(nativeMemory.env.DOXIE_MEMORY_RUN_ID, /^[a-f0-9-]{36}$/);
   const request = input.split('\n\n')
-    .find(section => section.startsWith('{\n  "schema": "doxie.builder-request.v1"'));
+    .find(section => {
+      try { return JSON.parse(section)?.schema === 'doxie.builder-request.v1'; }
+      catch { return false; }
+    });
+  assert.ok(request, 'The builder must send an explicit JSON request.');
   const parsed = JSON.parse(request);
   assert.equal(parsed.schema, 'doxie.builder-request.v1');
   assert.equal(parsed.omittedTurns, 0);

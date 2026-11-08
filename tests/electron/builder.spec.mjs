@@ -29,6 +29,8 @@ test('starts explicitly, resumes builder sessions after restart, and saves indep
     await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
     await page.evaluate(executable => window.doxie.invoke('settings:save', {
       defaultProvider: 'codex', providers: { codex: { executable, model: 'doxie/builder-fixture' } },
+      mcpServers: [{ id: 'fixture-external-builder', name: 'Excluded external fixture', transport: 'stdio',
+        command: 'fixture-external-command', arguments: [], providers: ['codex'], enabled: true }],
     }), mock);
     await application.evaluate(({ BrowserWindow, ipcMain }) => {
       const original = ipcMain._invokeHandlers.get('doxie:invoke');

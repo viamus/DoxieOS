@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import memoryStore from '../../src/desktop/memory-store.cjs';
 
 test('runs the workbench, a local terminal and a persisted approval workflow in Electron', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'doxie-e2e-'));
@@ -50,7 +51,7 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     expect(paths['State database']).toBe(join(profile, 'state.db'));
     expect(paths.workspaces).toBe(join(root, '.workspace'));
     expect(agents).toEqual([]);
-    expect(connectors.map(connector => connector.id).sort()).toEqual(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'prompt', 'sandbox', 'write-to-workspace']);
+    expect(connectors.map(connector => connector.id).sort()).toEqual(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'prompt', 'sandbox', 'workspace-memory', 'write-to-workspace']);
     expect(paths.agents).toBe(join(root, '.doxie', 'agents'));
     await expect(stat(retiredAgent)).rejects.toThrow(/ENOENT/);
     await expect(stat(outside)).rejects.toThrow(/ENOENT/);
@@ -105,28 +106,46 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     await expect(stat(join(root, '.runs', runId))).rejects.toThrow(/ENOENT/);
     expect(await readFile(join(workspace.path, 'verification.md'), 'utf8')).toContain('Local workspace');
 
-    await page.getByRole('link', { name: 'Libraries', exact: true }).first().click();
-    await page.getByRole('button', { name: 'New library', exact: true }).click();
-    await page.getByRole('dialog').getByLabel('Name', { exact: true }).fill('Local reference');
-    await page.getByRole('dialog').getByRole('button', { name: 'Create library' }).click();
-    await page.getByRole('button', { name: 'New memory', exact: true }).click();
-    await page.getByRole('dialog').getByLabel('Name', { exact: true }).fill('Review notes');
-    await page.getByRole('dialog').getByLabel('Markdown', { exact: true }).fill('Keep decisions traceable.');
-    await page.getByRole('dialog').getByRole('button', { name: 'Save memory' }).click();
-    await page.locator('summary').filter({ hasText: 'Review notes' }).click();
-    await expect(page.getByText('Keep decisions traceable.', { exact: true })).toBeVisible();
+    const harness = memoryStore.createMemoryStore({ root });
+    try {
+      harness.remember({ title: 'Review notes', content: 'Keep decisions traceable.', source: { provider: 'doxie-agent', runId: 'electron-harness-fixture', section: 'Review notes' } });
+      harness.remember({ title: 'Standard review step', content: 'Keep decisions traceable with an independent reviewer.', source: { provider: 'doxie-agent', runId: 'electron-harness-fixture', section: 'Standard review step' } });
+    } finally { harness.close(); }
+    await page.getByRole('link', { name: 'Library', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New memory', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'New library', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Open memory Review notes', exact: true }).click();
+    await expect(page.locator('.memory-details')).toContainText('Keep decisions traceable.');
 
     await page.evaluate(() => { window.location.hash = '/workflows/new'; });
-    await page.getByLabel('Name', { exact: true }).fill('Mount reference');
+    await page.getByLabel('Name', { exact: true }).fill('Query reference');
     await page.getByLabel('Node type').selectOption('library');
     await page.getByRole('button', { name: 'Add node', exact: true }).click();
-    await page.getByLabel('Mode', { exact: true }).selectOption('mount');
-    await page.getByLabel(/Existing library/).selectOption({ label: 'Local reference' });
-    await page.getByLabel(/Target workspace/).selectOption({ label: 'Migration lab' });
+    await page.getByLabel('Mode', { exact: true }).selectOption('query');
+    await page.getByLabel(/Search knowledge/).fill('traceable');
+    await expect(page.getByLabel(/Target workspace/)).toHaveCount(0);
     await page.getByRole('button', { name: 'Save workflow', exact: true }).first().click();
-    const mounted = await page.evaluate(() => window.doxie.invoke('workflow:start', 'mount-reference'));
-    await expect.poll(async () => (await page.evaluate(id => window.doxie.invoke('workflow:run', id), mounted.id)).status).toBe('Succeeded');
-    expect((await page.evaluate(() => window.doxie.invoke('catalog:get', 'workspaces', 'migration-lab'))).mountedLibraryIds).toEqual(['local-reference']);
+    const queryDefinition = await page.evaluate(() => window.doxie.invoke('catalog:get', 'workflows', 'query-reference'));
+    expect(queryDefinition.workspaceId).toBeFalsy();
+    const queryNode = queryDefinition.nodes.find(node => node.toolId === 'library');
+    await page.evaluate(async ({ definition, queryNodeId }) => {
+      await window.doxie.invoke('catalog:save', 'workflows', {
+        ...definition,
+        nodes: [{ id: 'remember-reference', label: 'Remember reference', kind: 'Tool', toolId: 'library', toolMode: 'remember',
+          inputs: { title: 'Native review lesson', content: 'A traceable decision records the reviewer and result.' } }, ...definition.nodes],
+        edges: [{ fromNodeId: 'remember-reference', toNodeId: queryNodeId }],
+      });
+    }, { definition: queryDefinition, queryNodeId: queryNode.id });
+    const queried = await page.evaluate(() => window.doxie.invoke('workflow:start', 'query-reference'));
+    await expect.poll(async () => (await page.evaluate(id => window.doxie.invoke('workflow:run', id), queried.id)).status).toBe('Succeeded');
+    const nativeMemoryRun = await page.evaluate(id => window.doxie.invoke('workflow:run', id), queried.id);
+    expect(nativeMemoryRun.nodeRuns['remember-reference'].hasTransientContext).toBe(true);
+    expect(nativeMemoryRun.nodeRuns[queryNode.id].hasTransientContext).toBe(true);
+    const queryReceipt = JSON.parse(await readFile(join(root, '.runs', queried.id, queryNode.id, 'library.json'), 'utf8'));
+    expect(queryReceipt).toMatchObject({ schema: 'doxie.native-memory.v1', action: 'query' });
+    expect(queryReceipt.result.results.some(memory => memory.title === 'Standard review step')).toBe(true);
+    expect(queryReceipt.result.results.some(memory => memory.title === 'Native review lesson')).toBe(true);
 
     await page.getByRole('link', { name: 'Connectors', exact: true }).first().click();
     await expect(page.getByRole('heading', { name: 'Connectors', exact: true })).toBeVisible();

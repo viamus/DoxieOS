@@ -404,3 +404,78 @@ test('refuses active, missing and unsafe session removal while allowing interrup
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('builder bounds replay while preserving exact current input and the full durable conversation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-budget-'));
+  const storage = createStorage({ root, databasePath: ':memory:' });
+  try {
+    storage.save('agents', { id: 'agent-builder', body: 'Author an agent without losing requirements.' });
+    let captured;
+    const builders = createBuilders({ storage, emit: () => {}, agents: {
+      runBuilder(_kind, params) { captured = params; return { id: 'bounded-history' }; },
+      async wait() { return { status: 'Completed', output: [{ source: 'Response', text: 'The revised draft is ready.' }] }; },
+    } });
+    const session = builders.start('agent', { providerId: 'codex' });
+    const messages = Array.from({ length: 24 }, (_, index) => [
+      { role: 'user', text: `Requirement ${index}: ${'precise project context '.repeat(55)}` },
+      { role: 'assistant', text: `Reply ${index}: ${'generated draft details '.repeat(55)}` },
+    ]).flat();
+    const transcriptFile = join(storage.roots.sandboxes, session.id, '.draft', 'desktop-session.json');
+    await writeFile(transcriptFile, JSON.stringify({ ...session, messages }));
+    const text = 'Current exact requirement:\n  Preserve accents: revisão 🐕.\n' + 'Full new input. '.repeat(2500);
+    const result = await builders.message(session.id, text);
+    const request = JSON.parse(captured.prompt.split('\n\n').at(-1));
+    assert.equal(request.message, text);
+    assert.equal(request.previousTurns[0].text, messages[0].text);
+    assert.deepEqual(request.previousTurns.slice(1), messages.slice(-6));
+    assert.equal(request.omittedTurns, messages.length - request.previousTurns.length);
+    assert(captured.prompt.includes('.draft/desktop-session.json'));
+    assert(captured.contextMetrics.savedBytes > 15000);
+    assert.equal(captured.contextMetrics.selectedBytes, Buffer.byteLength(captured.prompt));
+    assert.equal(captured.contextMetrics.estimateMethod, 'utf8-bytes/4');
+    assert.deepEqual(result.contextMetrics, captured.contextMetrics);
+    const persisted = JSON.parse(await readFile(transcriptFile, 'utf8'));
+    assert.deepEqual(persisted.messages, [...messages, { role: 'user', text }, { role: 'assistant', text: 'The revised draft is ready.' }]);
+  } finally {
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('successful builder replies notify once with a resumable session link, while failures and reloads do not notify', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-builder-notify-'));
+  const storage = createStorage({ root, databasePath: ':memory:' });
+  try {
+    for (const kind of ['agent', 'workflow']) storage.save('agents', { id: `${kind}-builder`, body: 'Ask the user for requirements.' });
+    const notifications = [];
+    let fail = false;
+    const builders = createBuilders({ storage, emit: () => {}, notify: item => notifications.push(item), agents: {
+      runBuilder() { return { id: 'reply' }; },
+      async wait() { return fail
+        ? { status: 'Failed', output: [{ source: 'Fatal', text: 'Provider unavailable' }] }
+        : { status: 'Completed', output: [{ source: 'Response', text: 'Which project should I use?\nPlease choose a workspace.' }] }; },
+    } });
+    for (const kind of ['agent', 'workflow']) {
+      const session = builders.start(kind);
+      await builders.message(session.id, 'Help me build this.');
+      await new Promise(resolve => setImmediate(resolve));
+      const item = notifications.at(-1);
+      assert.equal(item.kind, 'builder-reply');
+      assert.equal(item.sessionId, session.id);
+      assert.equal(item.title, `${kind === 'agent' ? 'Agent' : 'Workflow'} builder reply ready`);
+      assert.equal(item.href, `${kind === 'agent' ? '/agents/new' : '/workflows/new/chat'}?session=${session.id}`);
+      assert.equal(item.body, 'Which project should I use? Please choose a workspace.');
+      builders.get(session.id);
+      builders.list(kind);
+      assert.equal(notifications.length, kind === 'agent' ? 1 : 2);
+    }
+    fail = true;
+    const failed = builders.start('agent');
+    await builders.message(failed.id, 'Try again.');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(notifications.length, 2);
+  } finally {
+    storage.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
