@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import memoryStore from '../../src/desktop/memory-store.cjs';
+import memoryService from '../../src/desktop/memory-service.cjs';
 
 test('runs the workbench, a local terminal and a persisted approval workflow in Electron', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'doxie-e2e-'));
@@ -106,13 +106,11 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     await expect(stat(join(root, '.runs', runId))).rejects.toThrow(/ENOENT/);
     expect(await readFile(join(workspace.path, 'verification.md'), 'utf8')).toContain('Local workspace');
 
-    const harness = memoryStore.createMemoryStore({ root });
-    try {
-      harness.remember({ title: 'Review notes', content: 'Keep decisions traceable.', source: { provider: 'doxie-agent', runId: 'electron-harness-fixture', section: 'Review notes' } });
-      harness.remember({ title: 'Standard review step', content: 'Keep decisions traceable with an independent reviewer.', source: { provider: 'doxie-agent', runId: 'electron-harness-fixture', section: 'Standard review step' } });
-    } finally { harness.close(); }
-    await page.getByRole('link', { name: 'Library', exact: true }).first().click();
-    await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
+    const harness = memoryService.connectMemoryService({ root, source: { runId: 'electron-harness-fixture' } });
+    await harness.call('memory_remember', { title: 'Review notes', content: 'Keep decisions traceable.', evidence: 'Verified fixture review guidance.' });
+    await harness.call('memory_remember', { title: 'Standard review step', content: 'Keep decisions traceable with an independent reviewer.', evidence: 'Verified fixture independent review step.' });
+    await page.getByRole('link', { name: 'Brain', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Brain', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'New memory', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'New library', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Open memory Review notes', exact: true }).click();

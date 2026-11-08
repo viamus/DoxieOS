@@ -172,11 +172,11 @@ function createAgents({ storage, emit = () => {}, notify = () => {} }) {
       catch (error) { console.error('Could not remove temporary agent guidance:', error.message); }
     };
     const interactionInstructions = params.builder ? '' : '\n\nIf a missing decision or ambiguity prevents correct work, ask the user instead of guessing: write one UTF-8 JSON object to DOXIE_USER_QUESTION_OUT with {"question":"one clear question","options":["optional choices"],"context":"brief checkpoint of completed work and next step"}, then end this turn. Do not continue dependent work until the user answers. This is the supported user-question channel for this headless run.';
-    const learningInstructions = storage.memory ? `\n\n## Autonomous harness learning\n${nativeInstructions}\nThis learning capability applies to every execution, including builder conversations. Before finishing, autonomously record any new reusable, verified learning or learned parameter with evidence through the native memory tools. Do not wait for a user to fill a library form. If nothing new was learned, add no filler. Manual Markdown belongs to workspace inputs and may be supplied by the Workspace Memory connector; turn it into durable knowledge only after verifying a reusable learning.` : '';
+    const learningInstructions = storage.memory ? `\n\n## Autonomous harness learning\n${nativeInstructions}\nThis required Brain connection applies to every execution, including builder conversations. Before finishing, autonomously record any new reusable, verified learning or learned parameter with evidence through the native memory tools. Do not wait for a user to fill a Brain form. If nothing new was learned, add no filler. Manual Markdown belongs to workspace inputs and may be supplied by the Workspace Memory connector; turn it into durable knowledge only after verifying a reusable learning.` : '';
     const augmentedPrompt = `${prompt}\n\nRead DOXIE_OPERATOR_HINTS_FILE for new operator guidance before the next work cycle.${interactionInstructions}${learningInstructions}`;
     if (provider.nativeMemory) {
       provider.nativeMemory.environment.DOXIE_MEMORY_RUN_ID = id;
-      provider.mcpServers[provider.nativeMemory.id] = serverConfig(provider.nativeMemory);
+      provider.mcpServers[provider.nativeMemory.id] = { ...serverConfig(provider.nativeMemory), enabled: true };
     }
     const options = headlessArgs(provider);
     const mcpConfig = join(storage.root, '.mcp.json');

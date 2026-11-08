@@ -11,13 +11,13 @@ function setup(t) {
   const root = join(home, 'app');
   const events = [];
   const store = createMemoryStore({ root });
-  const jobs = createMemoryImportJobs({ root, emit: event => events.push(event) });
+  const jobs = createMemoryImportJobs({ root, store, emit: event => events.push(event) });
   const write = (path, content) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
   t.after(async () => { await jobs.close(); store.close(); rmSync(home, { recursive: true, force: true }); });
   return { home, root, store, jobs, events, write };
 }
 
-test('real background workers preview both providers and import idempotently into the shared WAL database', async t => {
+test('explicit background import prepares both providers and commits idempotently through the Brain owner', async t => {
   const { home, store, jobs, events, write } = setup(t);
   write(join(home, '.codex', 'memories_v2', 'memory_summary.md'), '# Review policy\nRequire independent review.');
   write(join(home, '.claude', 'projects', 'workspace', 'memory', 'MEMORY.md'), '# Customer terms\nPreserve Portuguese terminology.');

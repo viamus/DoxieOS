@@ -51,7 +51,8 @@ function boundedMemoryNode(node, maxBytes = 16000) {
     result.availableParameterKeys = [...keys];
     result.totalParameterKeys = totalParameterKeys;
   }
-  const metadata = ['libraryId', 'catalogId', 'createdAt', 'updatedAt', 'supersededBy', 'archivedAt', 'score', 'semanticScore', 'label'];
+  const metadata = ['libraryId', 'catalogId', 'createdAt', 'updatedAt', 'supersededBy', 'archivedAt', 'score', 'semanticScore', 'label',
+    'origin', 'status', 'lifecycle', 'reviewAfter', 'reviewedAt', 'confidence', 'correlationScore', 'distance'];
   for (const key of metadata) if (node[key] !== undefined) result[key] = node[key];
   const selected = {};
   for (const key of Object.keys(parameters || {}).sort((left, right) => size({ [left]: parameters[left] }) - size({ [right]: parameters[right] }))) {
@@ -154,6 +155,11 @@ function boundedMemoryGraph(graph, maxBytes = 16000) {
     const preview = { id: edge.id, fromId, toId, from: fromId, to: toId, type: edge.type,
       ...(edge.label === undefined ? {} : { label: excerpt(edge.label, 160), ...(textSize(edge.label) > 160 ? { labelTruncated: true } : {}) }),
       ...(edge.createdAt ? { createdAt: edge.createdAt } : {}) };
+    for (const key of ['weight', 'semanticScore', 'correlationScore', 'distance']) {
+      if (typeof edge[key] === 'number' && Number.isFinite(edge[key])) preview[key] = edge[key];
+    }
+    if (typeof edge.inferred === 'boolean') preview.inferred = edge.inferred;
+    if (typeof edge.model === 'string') preview.model = excerpt(edge.model, 160);
     if (size({ ...result, edges: [...result.edges, preview] }) > maxBytes) { result.truncated = true; break; }
     result.edges.push(preview);
   }

@@ -21,9 +21,9 @@ flowchart TD
     ProviderResolver --> CodexCLI["OpenAI Codex CLI"]
     Runner --> RunOutputs[".runs/"]
     Runner --> Workspace["Input / output workspace"]
-    Runner <-->|Native memory MCP| Memory["Shared memory graph / text and vector index"]
+    Runner <-->|Required authenticated memory MCP| Memory["Brain / LadybugDB graph and vectors"]
     Memory --> Embeddings["Optional local embedding worker"]
-    Sources["Codex / Claude Code memories"] -->|Import worker and provenance| Memory
+    Sources["User-selected Codex / Claude Code memories"] -->|Manual preview / validated import| Memory
     Notifications --> Main
 ```
 
@@ -31,9 +31,9 @@ flowchart TD
 
 | Boundary | Responsibility |
 | --- | --- |
-| Renderer | Pages, settings, builders, history, notifications, and read-only knowledge graph inspection. |
+| Renderer | Pages, settings, builders, history, notifications, Brain exploration, explicit imports, and lifecycle review. |
 | Preload | Named IPC operations and runtime events exposed to the renderer. |
-| Main | Validates operations and owns filesystem access, SQLite, processes, and dialogs. |
+| Main | Validates operations and owns filesystem access, application SQLite state, the LadybugDB Brain, processes, and dialogs. |
 | Agents | Catalog parsing, provider prompt assembly, run persistence, process lifecycle. |
 | Workflows | Graph execution, selected-edge handoffs, transient context, native tools and durable artifact contracts. |
 | Consoles | PTY sessions and streaming output. |

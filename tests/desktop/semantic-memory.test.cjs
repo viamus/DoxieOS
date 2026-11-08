@@ -98,6 +98,24 @@ test('hybrid retrieval adds semantic matches, fuses lexical ranking and bounds p
   assert.equal(cosine([1], [1, 2]), -1);
 });
 
+test('local indexing creates weighted semantic neighborhoods and respects lifecycle during retrieval', async t => {
+  const { store, semantic } = await fixture(t);
+  const cat = store.remember({ title: 'Cat care', content: 'Cats need food and water.' });
+  const feline = store.remember({ title: 'Feline nutrition', content: 'A feline needs balanced meals.' });
+  store.remember({ title: 'Cooking recipe', content: 'Prepare a warm meal.' });
+  await semantic.install();
+  const edge = store.graph().edges.find(edge => edge.inferred && [edge.fromId, edge.toId].includes(cat.id) && [edge.fromId, edge.toId].includes(feline.id));
+  assert(edge, 'indexing must materialize a semantic relation');
+  assert(Math.abs(edge.semanticScore - 1) < 1e-6);
+  assert(edge.weight >= 0.62 && edge.weight <= 1);
+  assert(Math.abs(edge.distance - (1 - edge.weight)) < 1e-6);
+  store.review({ id: cat.id, status: 'stale', evidence: 'Needs a current veterinary reference.' });
+  const current = await semantic.search({ query: 'feline' });
+  assert(!current.results.some(item => item.id === cat.id));
+  const withStale = await semantic.search({ query: 'feline', includeStale: true });
+  assert(withStale.results.some(item => item.id === cat.id && item.lifecycle.status === 'stale'));
+});
+
 test('hybrid retrieval keeps large parameter and CJK provenance hits inside a 1 KiB total response', async t => {
   const { store, semantic } = await fixture(t);
   const parameters = Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`項目_${index}`, '🐕'.repeat(25)]));

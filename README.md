@@ -19,21 +19,21 @@ your machine. Provider requests go to the cloud or local model you select.
 
 ## What's new in 2.1
 
-Version 2.1 makes the library a shared knowledge base with search, a visible
-memory graph, provenance, revisions, and typed learned parameters. Agents and
+Version 2.1 introduces Brain, a shared knowledge base with local semantic
+search, weighted memory graphs, provenance, review dates, and typed learned parameters. Agents and
 workflows use it independently of their input/output workspace. The desktop
 workbench, workflow engine, SQLite storage, and terminals run together in Electron.
 
 | Area | Desktop experience |
 | --- | --- |
 | Workbench | React navigation for workspaces, consoles, agents, connectors, workflows, libraries, and history, with native folder access. |
-| Agent-owned library | Inspect knowledge, provenance, relationships, revisions and parameters learned autonomously by the harness. Existing Codex and Claude Code memories are synchronized in the background. |
+| Brain | Explore a local LadybugDB knowledge graph, weighted semantic connections, origins, revisions, and memory obsolescence. Import Codex and Claude Code memories manually through preview and selection. |
 | Semantic retrieval | Enable a local multilingual embedding model to search by meaning. Text search works immediately without a model download. |
 | Agent editing | Edit instructions, metadata, provider, model, and reasoning effort directly. Ordinary runs use the agent's saved execution settings. |
 | AI builders | Create agents and workflows through conversations, preview drafts, and save them to the catalog. Resume saved sessions after navigation or restart. |
 | Run results | Read the final response as Markdown, including tables and links. Expand Activity, Diagnostics, or Full log for execution details. |
 | Questions and alerts | Agents pause for your clarification, then continue with your answer. Native Windows alerts open the source run or builder conversation. |
-| Context efficiency | Compact requests and bounded builder history reduce repeated text. Required instructions stay whole, with optional memories available on demand. |
+| Context efficiency | Compact requests and bounded builder history reduce repeated text. Required instructions stay whole; the mandatory Brain connector retrieves focused memories on demand. |
 | Providers | Discover models from installed providers, share the installed Codex CLI's ChatGPT sign-in, and configure MCP servers in Settings. |
 | Voice input | Dictate locally with Whisper Tiny on the CPU and review the transcript before sending. The first use downloads the model. |
 | Packaging | Run a portable Windows app with an embedded Electron and Node.js runtime. |
@@ -74,8 +74,8 @@ uses them. See [provider setup](docs/operations.md#providers-and-mcp) for detail
 
 Workflow edges carry transient context and isolated copies of declared
 artifacts. Workspaces keep durable input and output files. The harness maintains
-one shared **Library** autonomously; its page is for inspection, not manual
-knowledge registration. Run workflows manually
+one shared **Brain** of verified learnings. Provider memory import is manual,
+with a preview and file selection. Run workflows manually
 or on enabled cron schedules while the app is open; cron uses UTC. Event and
 webhook definitions are retained for compatibility and do not trigger runs.
 

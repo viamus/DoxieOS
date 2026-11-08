@@ -3,8 +3,10 @@ const { isAbsolute, resolve } = require('node:path');
 const { createMemoryStore } = require('./memory-store.cjs');
 const { createSemanticMemory } = require('./semantic-memory.cjs');
 const { memoryTools, nativeInstructions, callMemoryTool } = require('./memory-tools.cjs');
+const { connectMemoryService } = require('./memory-service.cjs');
+const { initializeMemoryRuntime } = require('./brain-runtime.cjs');
 
-function createMemoryProtocol(store, { source = {} } = {}) {
+function createMemoryProtocol(store, { source = {}, invoke = (name, args) => callMemoryTool(store, name, args, source) } = {}) {
   let initialized = false;
   let ready = false;
   return async function handle(message) {
@@ -21,14 +23,14 @@ function createMemoryProtocol(store, { source = {} } = {}) {
       const requested = message.params?.protocolVersion;
       const supported = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
       return { jsonrpc: '2.0', id, result: { protocolVersion: supported.includes(requested) ? requested : supported[0],
-        capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'doxie-library-memory', version: '2.1.0' }, instructions: nativeInstructions } };
+        capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'doxie-brain', version: '2.1.0' }, instructions: nativeInstructions } };
     }
     if (message.method === 'ping') return { jsonrpc: '2.0', id, result: {} };
     if (!ready) return error(-32002, 'Initialize the memory server first.');
     if (message.method === 'tools/list') return { jsonrpc: '2.0', id, result: { tools: memoryTools } };
     if (message.method !== 'tools/call') return error(-32601, 'Method not found.');
     try {
-      const result = await callMemoryTool(store, message.params?.name, message.params?.arguments || {}, source);
+      const result = await invoke(message.params?.name, message.params?.arguments || {});
       return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result } };
     } catch (failure) {
       return { jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: String(failure.message || 'Memory operation failed.').slice(0, 600) }] } };
@@ -40,9 +42,12 @@ async function serve() {
   const index = process.argv.indexOf('--root');
   const root = process.argv[index + 1];
   if (index < 0 || typeof root !== 'string' || !isAbsolute(root)) throw new Error('An absolute DoxieOS workbench root is required.');
-  const store = createMemoryStore({ root: resolve(root) });
-  store.semantic = createSemanticMemory({ root: resolve(root), store });
-  const handle = createMemoryProtocol(store, { source: { runId: process.env.DOXIE_MEMORY_RUN_ID || undefined } });
+  const source = { runId: process.env.DOXIE_MEMORY_RUN_ID || undefined };
+  const service = connectMemoryService({ root: resolve(root), source });
+  if (!service) await initializeMemoryRuntime();
+  const store = service ? null : createMemoryStore({ root: resolve(root) });
+  if (store) store.semantic = createSemanticMemory({ root: resolve(root), store });
+  const handle = createMemoryProtocol(store, { source, ...(service ? { invoke: service.call } : {}) });
   const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
   let tail = Promise.resolve();
   input.on('line', line => {
@@ -56,7 +61,7 @@ async function serve() {
       if (result) process.stdout.write(JSON.stringify(result) + '\n');
     }).catch(error => process.stderr.write(`${error.message}\n`));
   });
-  input.once('close', () => { void tail.finally(async () => { await store.semantic.close(); store.close(); }); });
+  input.once('close', () => { void tail.finally(async () => { if (store) { await store.semantic.close(); store.close(); } }); });
 }
 
 if (require.main === module) void serve().catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });

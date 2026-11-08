@@ -89,9 +89,16 @@ async function preview(path, metadata = {}) {
 
 function createActions({ app, dialog, shell, window, storage, agents, workflows, consoles, builders, speech, notifications, mcp, emit, releaseNotes }) {
   const inventories = new Map();
+  let importSources = new Map();
+  const importPreviews = new Map();
+  const importLimits = { maxFiles: 4096, maxFileBytes: 16 * 1024 * 1024, maxTotalBytes: 64 * 1024 * 1024 };
+  function importJobs() {
+    if (!storage.memoryImports) throw new Error('Memory import is unavailable.');
+    return storage.memoryImports;
+  }
   const harnessOwnedLibrary = () => { throw new Error('The library is maintained by the agent harness. Put manual Markdown in a workspace and use Workspace Memory to supply it to an execution.'); };
   function centralMemory() {
-    if (!storage.memory) throw new Error('The central library is unavailable.');
+    if (!storage.memory) throw new Error('Brain is unavailable.');
     return storage.memory;
   }
 
@@ -277,6 +284,11 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'memory:list': (options = {}) => centralMemory().list(options),
     'memory:search': (options = {}) => centralMemory().semantic ? centralMemory().semantic.search(options) : centralMemory().search(options),
     'memory:get': (id) => centralMemory().get(id),
+    'memory:review': (input) => {
+      const result = centralMemory().review(input);
+      emit({ type: 'memory:changed' });
+      return result;
+    },
     'memory:graph': (options = {}) => centralMemory().graph(options),
     'memory:sources': () => centralMemory().sources(),
     'memory:semanticStatus': () => centralMemory().semantic?.status() || { state: 'missing', model: 'Multilingual semantic search', totalBytes: 135392488, receivedBytes: 0 },
@@ -292,10 +304,35 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'memory:revise': harnessOwnedLibrary,
     'memory:relate': harnessOwnedLibrary,
     'memory:archive': harnessOwnedLibrary,
-    'memory:importPreview': harnessOwnedLibrary,
-    'memory:import': harnessOwnedLibrary,
-    'memory:feedStatus': () => storage.memoryFeed?.status() || { state: 'disabled', sources: [], lastRunAt: null, lastResult: null },
-    'memory:refreshSources': () => storage.memoryFeed?.refresh() || { state: 'disabled', sources: [], lastRunAt: null, lastResult: null },
+    'memory:discoverSources': async () => {
+      const result = await importJobs().discover({ ...importLimits,
+        ...(process.env.CODEX_HOME ? { codexHome: process.env.CODEX_HOME } : {}),
+        ...(process.env.CLAUDE_CONFIG_DIR ? { claudeHome: process.env.CLAUDE_CONFIG_DIR } : {}) });
+      importSources = new Map(result.sources.map(source => [source.id, source]));
+      importPreviews.clear();
+      return result;
+    },
+    'memory:importPreview': async ({ sourceIds } = {}) => {
+      if (!Array.isArray(sourceIds) || !sourceIds.length || sourceIds.length > 4096 || sourceIds.some(id => !importSources.has(id))) throw new Error('Find and select recognized sources before previewing an import.');
+      const sources = [...new Set(sourceIds)].map(id => importSources.get(id));
+      const result = await importJobs().preview({ sources, ...importLimits });
+      const previewId = randomUUID();
+      if (importPreviews.size >= 4) importPreviews.delete(importPreviews.keys().next().value);
+      importPreviews.set(previewId, { sources, expectedFiles: result.files.map(({ id, contentHash }) => ({ id, contentHash })), expires: Date.now() + 15 * 60_000 });
+      return { ...result, previewId };
+    },
+    'memory:import': async ({ previewId, selectedFileIds } = {}) => {
+      const preview = importPreviews.get(previewId);
+      if (!preview || preview.expires < Date.now()) throw new Error('Preview the memory sources again before importing.');
+      const available = new Set(preview.expectedFiles.map(file => file.id));
+      if (!Array.isArray(selectedFileIds) || !selectedFileIds.length || selectedFileIds.length > 4096 || selectedFileIds.some(id => !available.has(id))) throw new Error('Select files from the current import preview.');
+      importPreviews.delete(previewId);
+      const result = await importJobs().import({ sources: preview.sources, expectedFiles: preview.expectedFiles, selectedFileIds: [...new Set(selectedFileIds)], ...importLimits });
+      emit({ type: 'memory:changed' });
+      return result;
+    },
+    'memory:feedStatus': () => ({ state: 'disabled', sources: [], lastRunAt: null, lastResult: null }),
+    'memory:refreshSources': () => { throw new Error('Provider memory import is manual. Find sources and preview an import from Brain.'); },
     'run-files:list': async (id, path = '') => {
       const directory = runPath(id, path);
       let entries;

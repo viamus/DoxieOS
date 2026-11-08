@@ -8,9 +8,9 @@ these concepts define the product model.
 | Concept | What It Means | Stored In |
 | --- | --- | --- |
 | Agent | A model-driven unit of work with instructions, inputs, an optional execution preference, and an output contract. | `.doxie/agents/<id>/` |
-| Connector | A built-in operation such as Approval, Loop, Aggregate, Library, or the model-backed Prompt. | `.doxie/tools/<id>/` |
+| Connector | A built-in operation such as Approval, Loop, Aggregate, Brain, or the model-backed Prompt. | `.doxie/tools/<id>/` |
 | Workflow | A graph of agent and connector nodes with explicit dependencies. | `.doxie/workflows/<id>/workflow.json` |
-| Library | Shared memories, entities, evidence relationships, and learned parameters, with optional source collections. | `.memory/knowledge.db`; source collections under `.doxie/libraries/<id>/` |
+| Brain | Imported, learned, and optimized memories; entities, weighted relationships, review lifecycle, and learned parameters. | `.memory/brain.lbdb`; legacy collections under `.doxie/libraries/<id>/` |
 | Workspace | A persistent input/output folder selected for an agent, workflow, or console execution. | `.workspace/` by default |
 | Catalog | A root folder containing Doxie agents, workflows, and libraries. | `.doxie/` or custom catalog folders |
 | Provider | A CLI-backed execution target such as Claude Code or OpenAI Codex. | App settings and provider config |
@@ -90,7 +90,7 @@ knowledge.
 
 ```mermaid
 flowchart TD
-    Sources["Codex / Claude Code / source collections"] --> Library["Central library"]
+    Sources["User-selected Codex / Claude Code memories"] -->|Manual preview and import| Library["Brain / local LadybugDB"]
     Library --> Graph["Memories and evidence graph"]
     Library --> Search["Text and optional semantic retrieval"]
     Agent["Agent / Workflow"] -->|Native memory tools| Search

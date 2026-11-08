@@ -15,10 +15,11 @@ const { prepareProfile } = require('./profile.cjs');
 const { createDictation } = require('./dictation.cjs');
 const { createDesktopNotifications, prepareWindowsNotificationShortcut, WINDOWS_APP_ID, WINDOWS_TOAST_CLSID } = require('./desktop-notifications.cjs');
 const { createMemoryStore } = require('./memory-store.cjs');
+const { initializeMemoryRuntime } = require('./brain-runtime.cjs');
 const { nativeMemoryServer } = require('./memory-tools.cjs');
 const { createMemoryImportJobs } = require('./memory-import-jobs.cjs');
 const { createSemanticMemory } = require('./semantic-memory.cjs');
-const { createMemoryFeed } = require('./memory-feed.cjs');
+const { createMemoryService } = require('./memory-service.cjs');
 
 const startPage = 'doxie://app/index.html';
 const appRoot = resolve(__dirname, '../..');
@@ -46,7 +47,7 @@ let memory;
 let memoryWatch;
 let memoryTimer;
 let memoryImports;
-let memoryFeed;
+let memoryService;
 let quitting = false;
 let closed = false;
 
@@ -87,29 +88,31 @@ async function initialize() {
   const bundledFiles = app.isPackaged ? undefined : existsSync(seedManifest) ? JSON.parse(readFileSync(seedManifest, 'utf8')) : [];
   storage = createStorage({ root, databasePath, bundledRoot, bundledFiles, managed: true, legacyRoot: selectedRoot() || appRoot });
   storage.regenerate();
+  await initializeMemoryRuntime();
   memory = createMemoryStore({ root });
   storage.memory = memory;
   memory.semantic = createSemanticMemory({ root, store: memory, emit });
-  memoryImports = createMemoryImportJobs({ root, emit });
+  memoryService = await createMemoryService({ root, store: memory });
+  memoryImports = createMemoryImportJobs({ root, store: memory, emit });
   storage.memoryImports = memoryImports;
-  memoryFeed = createMemoryFeed({ imports: memoryImports, emit, enabled: process.env.DOXIE_TEST !== '1',
-    codexHome: process.env.CODEX_HOME, claudeHome: process.env.CLAUDE_CONFIG_DIR });
-  storage.memoryFeed = memoryFeed;
-  memoryFeed.start();
+  let graphPrepared = false;
   const indexAvailableMemories = async () => {
     const status = await memory.semantic.status();
-    if (status.state === 'ready' && status.pending) await memory.semantic.reindex();
+    if (status.state === 'ready' && (status.pending || !graphPrepared)) {
+      graphPrepared = true;
+      await memory.semantic.reindex();
+    }
   };
-  void indexAvailableMemories().catch(error => console.error('Could not index library meaning:', error.message));
+  void indexAvailableMemories().catch(error => console.error('Could not index Brain meaning:', error.message));
   storage.watchCatalog?.(() => emit({ type: 'catalog:changed' }), error => console.error(error.message));
   memoryWatch = watch(join(root, '.memory'), () => {
     clearTimeout(memoryTimer);
     memoryTimer = setTimeout(() => {
       emit({ type: 'memory:changed' });
-      void indexAvailableMemories().catch(error => console.error('Could not index new library memories:', error.message));
+      void indexAvailableMemories().catch(error => console.error('Could not index new Brain memories:', error.message));
     }, 200);
   });
-  memoryWatch.on('error', error => console.error('Could not watch central library changes:', error.message));
+  memoryWatch.on('error', error => console.error('Could not watch Brain changes:', error.message));
   const notificationIcon = join(__dirname, 'assets', 'icon.png');
   const onNotificationError = error => console.error('Could not show a desktop notification:', error.message);
   if (!testProfile) prepareWindowsNotificationShortcut({ app, shell, onError: onNotificationError });
@@ -228,12 +231,12 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
-    memoryFeed?.close();
     desktopNotifications?.close();
     memoryWatch?.close();
     clearTimeout(memoryTimer);
     Promise.allSettled([workflows?.close(), consoles?.close(), speech?.close(), stopHousekeeping?.(), memoryImports?.close(), memory?.semantic?.close()]).then(async () => {
       await agents?.close();
+      await memoryService?.close();
       memory?.close();
       storage.close();
     }).catch(error => console.error(error)).finally(() => {

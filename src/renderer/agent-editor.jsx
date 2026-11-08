@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { Bot, Cpu, Pencil, Save, Sparkles } from 'lucide-react';
+import { Bot, Brain, Cpu, Pencil, Save, Sparkles } from 'lucide-react';
 import { Button, ErrorNotice, ExecutionFields, Field, Loading, PageHeading, Panel, go, invoke, nameOf, useApp, useAsync } from './ui.jsx';
 import { recordKey, recordRoute } from './automation.jsx';
 
@@ -62,6 +62,7 @@ function AgentEditorForm({ agent }) {
           <Field label="Instructions"><textarea aria-label="Instructions" required rows={14} spellCheck={false} value={draft.body} onChange={(event) => change({ body: event.target.value })} /></Field>
         </div></Panel>
         <Panel title="Agent execution defaults" icon={Cpu}><div className="panel-body stack"><p className="muted">Choose the provider, model and reasoning effort used when this agent runs.</p><div className="form-grid"><ExecutionFields value={draft.execution} onChange={(execution) => change({ execution })} requireProvider /></div></div></Panel>
+        <Panel title="Brain" icon={Brain}><div className="panel-body stack"><p>Every agent consults shared knowledge, explores its connections, and records reusable learnings through Brain.</p><div className="actions start"><span className="tag">Required connector · always connected</span><Button to="/libraries" variant="ghost">Explore Brain</Button></div></div></Panel>
       </fieldset>
     </form>
   </div>;

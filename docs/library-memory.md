@@ -1,138 +1,139 @@
-# Central library and memory graph
+# Brain: local knowledge and semantic graph
 
-DoxieOS 2.1 keeps reusable knowledge in one shared library, independently of
-workspaces. A workspace is an input/output folder selected for an execution.
-The library holds memories, entities, learned parameters, and evidence links
-produced by the agent harness. It is a single shared knowledge base with no
-manual registration forms and no workspace associations.
+Brain is the shared knowledge base for agents, workflow model steps, builders,
+and provider consoles. Workspaces hold execution inputs and outputs. Brain
+holds imported memories, verified agent learnings, optimized revisions,
+entities, learned parameters, provenance, and weighted relationships.
 
-## Use the library
+## Explore knowledge
 
-Open **Library** to search knowledge or filter by memory type.
-Select a result or graph node to inspect its content, typed parameters, source,
-and revision history. The graph supports selection, zoom, and relationship
-inspection. Agents connect evidence with `supports`, `contradicts`, `related`,
-`mentions`, or `supersedes` links.
+Open **Brain** to search by words or meaning and filter by memory type and
+lifecycle. Select a result or graph node to inspect its content, parameters,
+sources, revision history, review date, and connection scores. The map supports
+zoom, pan, dragging, semantic and evidence views, and minimum connection
+strength. Stronger links draw nodes closer; thickness shows weight. Reset
+restores the layout calculated from connection weights.
 
-Every model execution can autonomously read and feed the library, including
-agent runs, workflow nodes and builder conversations. The execution contract
-instructs agents to record new, reusable, verified learnings and parameters
-with evidence before finishing. It adds no separate model invocation for this
-purpose, and agents add no filler when nothing new was learned. A revised
-learning preserves its predecessor and links the evidence automatically.
+Explicit `supports`, `contradicts`, `mentions`, `related`, and `supersedes`
+relationships carry a strength between 0 and 1. Indexing also connects nearby
+embeddings with inferred relationships. Semantic score is cosine similarity;
+correlation combines title/tag overlap (70%) and a shared source file (30%).
+Weight combines semantic similarity (80%) and correlation (20%). Distance is
+`1 - weight`. These scores describe proximity, not causation, factual
+confidence, or evidence of support. Inferred links remain distinguishable from
+explicit evidence.
 
-The page provides visibility into that process. Manual Markdown belongs in a
-workspace and is supplied through the **Workspace Memory** connector as input.
-An agent can derive a verified learning from that material; loading the file
-does not copy raw Markdown into the shared library. Provider source files are
-never edited by library operations. Learning stores knowledge, not model weights.
+The index selects six neighbors per indexed memory with semantic similarity
+at least 0.62. Undirected pairs are deduplicated; incoming neighbors can add
+more connections. New embeddings update affected neighborhoods; **Reindex
+memories** also refreshes existing links.
 
-## Automatic Codex and Claude Code memory feeds
+## Import provider memories manually
 
-The harness discovers recognized memory locations on startup and refreshes
-them in the background every five minutes while the app is open. **Agent
-memory sources** shows the current state, source counts, last update and any
-excluded files. **Refresh agent memories** requests another harness sync; it
-does not register arbitrary Markdown or expose a manual content form.
+Provider memory files are never scanned or imported on startup or on a timer.
 
-Discovery, preview and import run in workers. The harness validates a complete
-snapshot of file identities and content hashes before writing. If the source
-changes during a sync, it takes a fresh snapshot and retries once. Operational
-errors appear in feed status and can be retried on the next refresh.
+1. Select **Find import sources** to discover recognized Codex and Claude Code
+   memory directories on this device.
+2. Select sources and choose **Preview selected sources**. Inspect the file
+   list, excerpts, sizes, and exclusion notes.
+3. Select files and choose **Import selected memories**.
 
-- Codex: agent-produced files under `memories_v2` and `memories`.
-- Claude Code: agent-produced files under `memory` and `projects/*/memory`.
-- Provider homes are resolved by the harness, not supplied as arbitrary paths
-  by the renderer.
+Discovery and preview create no knowledge records. Import validates the full
+preview snapshot before writing; changed files require another preview.
+Unchanged content deduplicates, updates create revisions, and shorter files
+retire obsolete chunks while preserving history. Provider files stay intact.
+No background resynchronization follows an import.
 
-Imports accept recognized agent-memory outputs. Global `CLAUDE.md` and other
-manually authored profile instructions are not imported as learned knowledge.
-Credential/configuration files,
-conversation transcripts, sessions, logs, and symbolic links are excluded.
-Files with detected credential material are reported as excluded. Feed status
-reports limits and unreadable sources. One sync handles up to 4,096 files,
-256 KiB per file, and 64 MiB total. Large text is split into bounded memories
-with the original source path and chunk number preserved.
+Recognized sources are Codex `memories_v2` and `memories`, and Claude Code
+`memory` and `projects/*/memory`. Root instructions such as `CLAUDE.md`,
+credentials, transcripts, sessions, logs, and symbolic links are excluded.
+Notes identify excluded paths and reasons. Imports allow 4,096 files, 16 MiB
+per file, and 64 MiB total. Long files split into chunks of at most 16,000
+UTF-8 bytes, preserving paragraphs where possible, every character, source
+path, and chunk number. Limits reject files with an explanation instead of
+silently truncating content.
 
-Reimporting unchanged material is idempotent. Changed material creates a
-revision with provenance. Importing a source does not erase other knowledge;
-obsolete versions are retained as history. Source collection files from earlier
-DoxieOS versions remain on disk but are not automatically registered as shared
-knowledge. Put manual references in a workspace and let an agent derive verified
-learnings through the harness.
+General Markdown remains explicit execution input through **Workspace Memory**.
+An agent can derive a verified learning from that input and retain its source.
 
-## Retrieval and token use
+## Lifecycle and provenance
 
-Text search works immediately through SQLite FTS5. DoxieOS retrieves bounded
-excerpts and evidence IDs rather than copying the entire library into a
-provider request. Agent-owned operating instructions and explicit inputs remain
-separate from retrieved knowledge.
+Origin distinguishes **Imported memory**, **Agent learning**, and **Optimized
+knowledge**. Provider, source file, execution ID, and evidence explain where
+knowledge came from. Agents can construct and refine knowledge independently
+of provider file imports.
 
-**Search by meaning** optionally downloads the pinned multilingual
-MiniLM embedding model, approximately 135 MB. Its files are verified by
-size and SHA-256 before use. Inference runs locally on the CPU in a worker;
-model weights and vectors are reused between searches. The shared index stores
-vectors for memory revisions. Hybrid retrieval combines text relevance and
-vector similarity. Text search remains available while the model is missing.
+New imports are due for review after 90 days; learnings and optimized knowledge
+after 180 days, unless another review date is supplied. Passing the date marks
+knowledge **Needs review**, preserves the memory, and excludes it from default
+agent retrieval. Brain can display these records for inspection. A user or
+agent can flag, confirm, or archive knowledge; reviews retain an evidence note.
 
-Provider system prompts, tool definitions, retrieved files and model-side
-behavior also consume tokens. Request byte estimates describe the text
-DoxieOS supplies, not a guaranteed reduction in billed provider tokens.
+**Previous version** identifies a superseded revision. **Archived** records also
+remain available as history. Neither is returned by default agent search.
+Restoring an archived record is explicit; reimporting unchanged content does
+not undo an archive. Superseded revisions cannot be confirmed current in place.
 
-## Native agent and workflow access
+## Local retrieval
 
-DoxieOS registers its built-in memory MCP server in its own Codex and Claude
-Code profiles. Agents, workflow steps, builder sessions, and consoles can use:
+Word search uses a local term index rebuilt from the graph database. **Enable
+semantic search** downloads the pinned multilingual MiniLM model (about 135 MB),
+verifies file sizes and SHA-256 hashes, and indexes on the CPU in a worker.
+Inference sends no memory content to an embedding service. Indexing retains
+all token windows of long chunks.
+
+Hybrid retrieval combines word relevance with exact cosine nearest neighbors
+from the native database. No HNSW extension is downloaded or required; this
+implementation performs exact vector scans rather than approximate indexing.
+Responses contain bounded excerpts and evidence IDs. Full memories are read
+on demand. Provider requests still consume tokens for instructions, tools,
+retrieved context, and model behavior.
+
+## Mandatory agent connector
+
+The built-in **DoxieOS Brain** MCP server is always registered, including when
+optional MCP servers are disabled. Models receive instructions to query
+knowledge before substantive work, inspect relevant relationships, check
+provenance and lifecycle, and retain verified reusable learnings with evidence.
+Registration is enforced by the runtime; following tool-use instructions still
+depends on the selected model.
 
 | Tool | Purpose |
 | --- | --- |
-| `memory_search` | Retrieve relevant memories and learned parameters. |
-| `memory_get` | Read a specific memory and its provenance. |
-| `memory_remember` | Record a verified learning, entity, or typed parameter. |
-| `memory_relate` | Link supporting, conflicting, related, or superseding evidence. |
-| `memory_graph` | Inspect a bounded neighborhood of the knowledge graph. |
+| `memory_search` | Bounded hybrid retrieval; stale knowledge is excluded unless requested. |
+| `memory_get` | Inspect a memory and its provenance. |
+| `memory_remember` | Retain a learning, optimized revision, entity, or typed parameter. |
+| `memory_relate` | Record explicit weighted evidence relationships. |
+| `memory_graph` | Explore a bounded neighborhood and its scores. |
+| `memory_review` | Revalidate, flag, or archive knowledge with evidence. |
 
-Read results as source material and retain their IDs when explaining a
-decision. Record durable, verified learnings with evidence instead of saving
-raw execution logs. Learned parameters accept typed JSON values and reject
-credential fields.
+The **Brain** workflow connector retains internal ID `library` for existing
+workflows; `brain` is an execution alias. Its `query` (`search` alias),
+`remember`, `relate`, `graph`, and `review` actions return context and receipts. Retired
+creation and mount modes report migration errors. **Workspace Memory** supplies
+manual Markdown without directly registering it as knowledge.
 
-The native **Library** workflow connector supports `remember`, `query`
-(`search` alias), and `relate`. It publishes receipts and bounded transient
-context for downstream steps, without requiring a workspace. The separate
-**Workspace Memory** connector lists or loads explicit relative Markdown paths
-from a selected workspace. It returns bounded input context and a source
-receipt without persisting the raw files as learned knowledge. Legacy source
-creation, `from-files`, `mount` and `from-current` Library actions report a
-migration error rather than recreating manual library registration or mounts.
+## Storage and upgrade
 
-```json
-{
-  "id": "load-manual-reference",
-  "kind": "Tool",
-  "toolId": "workspace-memory",
-  "toolMode": "load",
-  "inputs": { "paths": "memory/release-rules.md" }
-}
-```
+- `.memory/brain.lbdb`: LadybugDB graph, provenance, revisions, lifecycle,
+  relationships, and typed embedding arrays.
+- `.memory/knowledge.db`: preserved legacy SQLite input after migration.
+- `.memory/service.json`: temporary private authenticated endpoint for MCP
+  clients, removed when the app closes.
+- `.models/semantic/`: verified local inference model.
 
-## Storage and implementation
+Existing DoxieOS knowledge migrates transactionally, preserving IDs, links,
+vectors, and original SQLite files. A marker prevents repeated migration.
+This does not scan or import provider homes. Settings and run history remain
+in the separate application SQLite database.
 
-- `.memory/knowledge.db`: memories, source provenance, revisions, relations,
-  text index, and embedding vectors in a local SQLite database using WAL.
-- `.models/`: downloaded, verified local inference models.
-- `.doxie/libraries/`: original source collection manifests and reference files.
-- `.workspace/`: execution inputs and outputs, without generated memory mounts.
+The main process owns LadybugDB, commits imports, and serves authenticated
+loopback tool calls. Workers discover, validate, and prepare files without
+competing for the database lock. The desktop uses LadybugDB's official Node.js
+WebAssembly build with the host filesystem, avoiding Windows native addon
+compatibility problems. It requires no database service or runtime extension
+download. Back up the complete application
+profile with DoxieOS closed, including the graph database and sidecars.
 
-Back up the application profile with DoxieOS closed. SQLite WAL sidecar files
-must accompany a live database copy; copying only the main file while it is
-being written is not a consistent backup. Source collection ZIP transfer does
-not represent a backup of the central learned graph.
-
-The embedded graph/text/vector store keeps the portable desktop distribution
-self-contained. Chroma is a possible future remote adapter; its JavaScript
-client connects to a running backend. See the [Chroma client documentation](https://github.com/chroma-core/chroma/blob/main/clients/js/packages/chromadb-client/README.md).
-The embedding implementation follows the model publisher's
-[Transformers.js usage](https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2).
-The native tools follow the [MCP tools contract](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
-and [Codex MCP configuration](https://developers.openai.com/codex/mcp/).
+See the official [LadybugDB Node API](https://docs.ladybugdb.com/client-apis/nodejs/)
+and [concurrency model](https://docs.ladybugdb.com/concurrency/).

@@ -108,7 +108,7 @@ function createMcp(storage, { nativeServers = [] } = {}) {
       return {
         id: server.id, name: server.name, transport: server.transport, command: server.command, arguments: server.arguments,
         url: server.url, providers: server.providers, enabled: server.enabled, environment: server.environment ? secret : '',
-        headers: masked, extraJson: JSON.stringify(masked ? { headers: masked } : {}), builtin: nativeIds.has(server.id.toLowerCase()),
+        headers: masked, extraJson: JSON.stringify(masked ? { headers: masked } : {}), builtin: nativeIds.has(server.id.toLowerCase()), required: Boolean(server.required),
       };
     });
   }
@@ -123,8 +123,17 @@ function createMcp(storage, { nativeServers = [] } = {}) {
     const managed = new Set(legacyManaged);
     const claudeServers = Object.fromEntries(Object.entries(claude.mcpServers || {}).filter(([id]) => !managed.has(id)));
     const codexText = read(codexPath);
-    const unmanagedText = codexText.replace(block, '');
-    const unmanaged = toml.parse(unmanagedText).mcp_servers || {};
+    let unmanagedText = codexText.replace(block, '');
+    const unmanagedConfiguration = toml.parse(unmanagedText);
+    const unmanaged = unmanagedConfiguration.mcp_servers || {};
+    const reserved = Object.keys(unmanaged).filter(id => nativeIds.has(id.toLowerCase()));
+    if (reserved.length) {
+      // This is DoxieOS's managed provider profile, never the installed user's
+      // profile. Replace reserved IDs completely: TOML overrides deep-merge,
+      // which could otherwise retain a disabled flag or an incompatible URL.
+      for (const id of reserved) delete unmanaged[id];
+      unmanagedText = toml.stringify(unmanagedConfiguration);
+    }
     const otherCodex = readProviderEntries(unmanaged, 'codex');
     const codexServers = Object.create(null);
     const written = [];
@@ -141,7 +150,8 @@ function createMcp(storage, { nativeServers = [] } = {}) {
         written.push(server.id);
       }
       if (server.providers?.includes('codex') && !otherCodex.some(item => item.id === server.id || fingerprint(item) === fingerprint(server))) {
-        codexServers[server.id] = { ...config, ...(server.transport === 'http' && requestHeaders ? { http_headers: requestHeaders } : {}) };
+        codexServers[server.id] = { ...config, ...(nativeIds.has(server.id.toLowerCase()) ? { enabled: true } : {}),
+          ...(server.transport === 'http' && requestHeaders ? { http_headers: requestHeaders } : {}) };
       }
     }
     const codexResult = Object.keys(codexServers).length

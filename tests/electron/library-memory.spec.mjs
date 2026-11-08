@@ -1,4 +1,5 @@
 import { expect, test, _electron as electron } from '@playwright/test';
+import { createRequire } from 'node:module';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -57,7 +58,7 @@ async function tool(name, args) {
         content: 'Prepare the environment and retain the learned deployment settings.', tags: ['release', 'deployment'],
         parameters: { environment: 'staging', retryLimit: 3, requiresReview: true }, evidence: 'Verified fixture deployment settings.' });
       const review = await tool('memory_remember', { title: 'Release verification', content: 'A reviewer verifies the release before it is published.', evidence: 'Verified fixture review process.' });
-      await tool('memory_relate', { fromId: review.id, toId: rollout.id, type: 'supports' });
+      await tool('memory_relate', { fromId: review.id, toId: rollout.id, type: 'supports', weight: 0.85 });
     }
   } finally { child.stdin.end(); await ended; }
   const response = 'Completed the local verification and retained its reusable learnings through the harness.';
@@ -66,10 +67,12 @@ async function tool(name, args) {
 })().catch(error => { child.kill(); console.error(error.stack); process.exitCode = 1; });
 `;
 
-test('observes autonomous agent learnings, revision history and harness-managed source sync', async ({}, testInfo) => {
+test('observes Brain learning, lifecycle, weighted links and explicit provider import', async ({}, testInfo) => {
   const directory = await mkdtemp(join(tmpdir(), 'doxie-library-memory-'));
   const profile = join(directory, 'app-data');
   const root = join(profile, 'workbench');
+  const codexHome = join(directory, 'codex-fixture');
+  const claudeHome = join(directory, 'claude-fixture');
   const providerScript = join(directory, 'learning-provider.cjs');
   const provider = join(directory, process.platform === 'win32' ? 'learning-provider.cmd' : 'learning-provider');
   let application;
@@ -78,19 +81,25 @@ test('observes autonomous agent learnings, revision history and harness-managed 
     await mkdir(agentPath, { recursive: true });
     await writeFile(join(agentPath, 'manifest.json'), JSON.stringify({ id: 'memory-learning-agent', displayName: 'Memory Learning Agent', category: 'Other', execution: { providerId: 'claude-code', model: 'doxie-memory-fixture' } }));
     await writeFile(join(agentPath, 'body.md'), 'Verify the deployment process and retain reusable evidence through the native memory tools.');
+    await mkdir(join(codexHome, 'memories_v2'), { recursive: true });
+    await mkdir(claudeHome, { recursive: true });
+    await writeFile(join(codexHome, 'memories_v2', 'review.md'), '# Imported review checklist\n\nReview a release after checking its recorded evidence.');
+    await writeFile(join(codexHome, 'memories_v2', 'large.md'), '# Large imported note\n\n' + 'Local semantic memory context. '.repeat(12000));
     await writeFile(providerScript, learningProvider);
     await writeFile(provider, process.platform === 'win32' ? `@echo off\r\n"${process.execPath}" "${providerScript}" %*\r\n` : `#!/bin/sh\nexec "${process.execPath}" "${providerScript}" "$@"\n`, { mode: 0o700 });
     const executablePath = process.env.DOXIE_TEST_EXECUTABLE;
-    application = await electron.launch({ ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }), env: { ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1' } });
+    application = await electron.launch({ ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }), env: { ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1', CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome } });
     const page = await application.firstWindow();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
     await page.evaluate(executable => window.doxie.invoke('settings:save', { providers: { 'claude-code': { executable } } }), provider);
-    await page.getByRole('link', { name: 'Library', exact: true }).first().click();
-    await expect(page.getByRole('heading', { name: 'Library', exact: true })).toBeVisible();
+    await page.getByRole('link', { name: 'Brain', exact: true }).first().click();
+    await expect(page.getByRole('heading', { name: 'Brain', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Memory map', exact: true })).toBeVisible();
     await expect(page.getByText('No agent learnings yet', { exact: true })).toBeVisible();
+    expect((await page.evaluate(() => window.doxie.invoke('memory:stats'))).total).toBe(0);
+    await expect(page.getByRole('button', { name: 'Find import sources', exact: true })).toBeEnabled();
     await expect(page.getByRole('region', { name: 'Search by meaning', exact: true })).toContainText('135 MB');
     await expect(page.getByRole('button', { name: 'Enable semantic search', exact: true })).toBeEnabled();
     for (const name of ['New memory', 'New library', 'Revise memory', 'Archive memory', 'Connect']) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
@@ -106,8 +115,17 @@ test('observes autonomous agent learnings, revision history and harness-managed 
     const original = (await page.evaluate(() => window.doxie.invoke('memory:list', { kind: 'parameter' })))[0];
     expect(original.parameters).toEqual({ environment: 'staging', requiresReview: true, retryLimit: 3 });
     expect(original.source).toMatchObject({ provider: 'doxie-agent', runId: firstRunId });
-    await page.getByRole('link', { name: 'Library', exact: true }).first().click();
+    await page.getByRole('link', { name: 'Brain', exact: true }).first().click();
     await expect(page.locator('.memory-map-edge')).toHaveCount(1);
+    await expect(page.locator('.memory-map-edge title')).toContainText('85%');
+    await page.getByLabel('Graph relationships', { exact: true }).selectOption('semantic');
+    await expect(page.locator('.memory-map-edge')).toHaveCount(0);
+    await page.getByLabel('Graph relationships', { exact: true }).selectOption('evidence');
+    await expect(page.locator('.memory-map-edge')).toHaveCount(1);
+    await page.getByLabel('Minimum connection strength', { exact: true }).selectOption('0.9');
+    await expect(page.locator('.memory-map-edge')).toHaveCount(0);
+    await page.getByLabel('Minimum connection strength', { exact: true }).selectOption('0');
+    await page.getByLabel('Graph relationships', { exact: true }).selectOption('all');
     await page.getByRole('button', { name: 'Open memory Canary rollout', exact: true }).click();
     await expect(page.locator('.memory-details').getByRole('heading', { name: 'Canary rollout', exact: true })).toBeVisible();
     await expect(page.locator('.memory-parameters')).toContainText('staging');
@@ -165,6 +183,16 @@ test('observes autonomous agent learnings, revision history and harness-managed 
     await page.getByRole('searchbox', { name: 'Search memories…', exact: true }).fill('');
     await expect(page.locator('.memory-result')).toHaveCount(2);
 
+    await page.getByRole('button', { name: 'Open memory Canary rollout', exact: true }).click();
+    await page.getByRole('button', { name: 'Flag for review', exact: true }).click();
+    await expect(page.locator('.memory-details .memory-lifecycle')).toHaveText('Needs review');
+    await page.getByLabel('Memory lifecycle', { exact: true }).selectOption('stale');
+    await expect(page.locator('.memory-result')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Confirm current', exact: true }).click();
+    await expect(page.locator('.memory-details .memory-lifecycle')).toHaveText('Current');
+    await page.getByLabel('Memory lifecycle', { exact: true }).selectOption('');
+    await expect(page.locator('.memory-result')).toHaveCount(2);
+
     const nextRun = await page.evaluate(() => window.doxie.invoke('agent:start', 'memory-learning-agent', { arguments: 'refresh-learnings' }));
     await expect.poll(async () => (await page.evaluate(id => window.doxie.invoke('agent:run', id), nextRun.id)).status).toBe('Completed');
     expect((await page.evaluate(id => window.doxie.invoke('agent:run', id), nextRun.id)).contextMetrics.dispatches).toBe(1);
@@ -180,19 +208,77 @@ test('observes autonomous agent learnings, revision history and harness-managed 
     await page.locator('.memory-details').getByRole('button', { name: 'Open current version', exact: true }).click();
     await expect(page.locator('.memory-details').getByRole('heading', { name: 'Canary rollout reviewed', exact: true })).toBeVisible();
 
-    const feed = await page.evaluate(() => window.doxie.invoke('memory:feedStatus'));
-    expect(feed.state).toBe('disabled');
-    expect(feed.sources).toEqual([]);
-    const sourcePanel = page.getByRole('region', { name: 'Agent memory sources', exact: true });
-    await expect(sourcePanel).toContainText('Automatic source sync is disabled for this profile.');
-    await expect(sourcePanel.getByRole('button', { name: 'Refresh agent memories', exact: true })).toBeDisabled();
-    for (const name of ['Import Codex', 'Import Claude', 'Choose folder', 'New memory', 'New library', 'Revise memory', 'Archive memory', 'Connect']) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    const beforeImport = (await page.evaluate(() => window.doxie.invoke('memory:stats'))).total;
+    const sourcePanel = page.getByRole('region', { name: 'Import memories', exact: true });
+    await expect(sourcePanel).toContainText('when you choose');
+    await expect(sourcePanel.getByRole('checkbox')).toHaveCount(0);
+    await sourcePanel.getByRole('button', { name: 'Find import sources', exact: true }).click();
+    await expect(sourcePanel.getByRole('checkbox')).toHaveCount(1);
+    await sourcePanel.getByRole('checkbox').check();
+    await sourcePanel.getByRole('button', { name: 'Preview selected sources', exact: true }).click();
+    await expect(sourcePanel.locator('.memory-import-file')).toHaveCount(2);
+    expect((await page.evaluate(() => window.doxie.invoke('memory:stats'))).total).toBe(beforeImport);
+    await sourcePanel.getByRole('checkbox', { name: /Large imported note/ }).uncheck();
+    await sourcePanel.getByRole('button', { name: 'Import selected memories', exact: true }).click();
+    await expect(sourcePanel.getByRole('status')).toContainText('1 memories added');
+    expect((await page.evaluate(() => window.doxie.invoke('memory:stats'))).total).toBe(beforeImport + 1);
+    await expect(page.locator('.memory-result').filter({ hasText: 'Imported review checklist' })).toBeVisible();
+    await expect(page.locator('.memory-result').filter({ hasText: 'Imported review checklist' })).toContainText('Imported memory');
     expect((await page.evaluate(() => window.doxie.invoke('memory:semanticStatus'))).state).toBe('missing');
     await page.screenshot({ path: testInfo.outputPath('central-memory-map.png'), fullPage: true });
     expect(errors).toEqual([]);
   } finally {
     await application?.close().catch(() => {});
     if (dirname(resolve(directory)) !== resolve(tmpdir()) || !basename(directory).startsWith('doxie-library-memory-')) throw new Error('Refusing cleanup outside the memory test directory.');
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+  }
+});
+
+
+test('explores weighted semantic neighborhoods and preserves their provenance', async ({}, testInfo) => {
+  const directory = await mkdtemp(join(tmpdir(), 'doxie-brain-map-'));
+  const profile = join(directory, 'app-data');
+  const root = join(profile, 'workbench');
+  const require = createRequire(import.meta.url);
+  const { createMemoryStore } = require('../../src/desktop/memory-store.cjs');
+  let application;
+  let store;
+  try {
+    await require('../../src/desktop/brain-runtime.cjs').initializeMemoryRuntime();
+    store = createMemoryStore({ root });
+    const add = (title, content, extra = {}) => store.remember({ title, content, source: { provider: 'doxie-agent', runId: 'synthetic-graph-fixture', section: title, label: 'Synthetic local graph test fixture.' }, ...extra });
+    const rollout = add('Canary deployment', 'Release a small canary before promoting a deployment.', { tags: ['release', 'deployment'], origin: 'learned' });
+    const review = add('Independent verification', 'A reviewer checks canary metrics before promotion.', { tags: ['release', 'verification'], origin: 'optimized' });
+    const retries = add('Retry policy', 'Use five retries for transient deployment failures.', { kind: 'parameter', parameters: { maxRetries: 5 }, tags: ['deployment'] });
+    const oldPolicy = add('Earlier retry policy', 'An earlier record suggested unlimited deployment retries.', { origin: 'imported', source: { provider: 'codex', path: 'synthetic/retries.md' } });
+    const production = add('Production environment', 'Production receives verified canary deployments.', { kind: 'entity', tags: ['release'] });
+    store.relate({ fromId: review.id, toId: rollout.id, type: 'supports', weight: 0.94 });
+    store.relate({ fromId: retries.id, toId: oldPolicy.id, type: 'contradicts', weight: 0.82 });
+    store.relate({ fromId: rollout.id, toId: production.id, type: 'mentions', weight: 0.88 });
+    store.review({ id: oldPolicy.id, status: 'stale', evidence: 'Synthetic record requires another review.' });
+    for (const [memory, vector] of [[rollout, [1, 0.1, 0]], [review, [0.9, 0.2, 0.1]], [retries, [0.8, 0.3, 0.1]], [oldPolicy, [0.7, 0.4, 0.1]], [production, [0.85, 0.1, 0.3]]]) store.setEmbedding(memory.id, vector, { model: 'synthetic-local-fixture' });
+    await store.rebuildSemanticRelations({ model: 'synthetic-local-fixture', threshold: 0.65, neighbors: 3 });
+    await store.close(); store = null;
+    const executablePath = process.env.DOXIE_TEST_EXECUTABLE;
+    application = await electron.launch({ ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }), env: { ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1', CODEX_HOME: join(directory, 'empty-codex'), CLAUDE_CONFIG_DIR: join(directory, 'empty-claude') } });
+    const page = await application.firstWindow();
+    await page.getByRole('link', { name: 'Brain', exact: true }).first().click();
+    await expect(page.locator('.memory-map-node')).toHaveCount(5);
+    await expect.poll(() => page.locator('.memory-map-edge.inferred').count()).toBeGreaterThan(0);
+    await expect(page.locator('.memory-map-edge.conflict')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Open memory Independent verification', exact: true }).click();
+    await expect(page.locator('.memory-details')).toContainText('Optimized knowledge');
+    await expect(page.locator('.memory-details')).toContainText('94% strength');
+    await page.getByLabel('Graph relationships', { exact: true }).selectOption('semantic');
+    await expect(page.locator('.memory-map-edge:not(.inferred)')).toHaveCount(0);
+    await page.getByLabel('Graph relationships', { exact: true }).selectOption('conflicts');
+    await expect(page.locator('.memory-map-edge')).toHaveCount(1);
+    await page.getByLabel('Graph relationships', { exact: true }).selectOption('all');
+    await page.screenshot({ path: testInfo.outputPath('brain-weighted-semantic-graph.png'), fullPage: true });
+  } finally {
+    await store?.close();
+    await application?.close().catch(() => {});
+    if (dirname(resolve(directory)) !== resolve(tmpdir()) || !basename(directory).startsWith('doxie-brain-map-')) throw new Error('Refusing cleanup outside the Brain test directory.');
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
   }
 });

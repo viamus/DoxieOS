@@ -14,7 +14,7 @@ const triggerKinds = ['manual', 'cron', 'event', 'webhook'];
 const terminal = new Set(['Succeeded', 'Failed', 'Cancelled']);
 const connectorKinds = new Map([
   ['aggregate', 'aggregate'], ['write-to-workspace', 'output'], ['loop', 'loop'],
-  ['if-else', 'decision'], ['approval-gate', 'approval'], ['library', 'library'], ['sandbox', 'sandbox'], ['prompt', 'prompt'], ['workspace-memory', 'workspace-memory'],
+  ['if-else', 'decision'], ['approval-gate', 'approval'], ['library', 'library'], ['brain', 'library'], ['sandbox', 'sandbox'], ['prompt', 'prompt'], ['workspace-memory', 'workspace-memory'],
 ]);
 const transientFolder = '.doxie-transient';
 const maxContextBytes = 64 * 1024;

@@ -1,12 +1,12 @@
 import { useEffect, useId, useState } from 'react';
-import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleCheck, CircleDollarSign, CircleHelp, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Info, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2, TriangleAlert } from 'lucide-react';
+import { Activity, ArrowRight, Bell, BookOpen, Brain, Bot, CalendarClock, Check, ChevronRight, CircleCheck, CircleDollarSign, CircleHelp, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Info, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2, TriangleAlert } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, useApp, useEffortLabel, useText } from './ui.jsx';
 import { Markdown } from './workbench.jsx';
 
 const categories = [
   { key: 'workflows', label: 'Workflows', icon: GitBranch, tone: 'copper' },
   { key: 'agents', label: 'Agents', icon: Bot, tone: 'blue' },
-  { key: 'libraries', label: 'Libraries', icon: BookOpen, tone: 'violet' },
+  { key: 'libraries', label: 'Brain', icon: Brain, tone: 'violet' },
   { key: 'workspaces', label: 'Workspaces', icon: FolderKanban, tone: 'green' },
 ];
 
@@ -68,7 +68,7 @@ export function Dashboard() {
     </section>
     <div className="metrics">{categories.map(({ key, label, icon: Icon, tone }) => <a className={`metric ${tone}`} key={key} href={href(`/${key}`)}>
       <div className="metric-top"><span className="metric-icon"><Icon size={19} strokeWidth={1.65} /></span><ChevronRight size={17} className="row-caret" /></div>
-      <div className="metric-count">{key === 'libraries' ? 1 : state[key].length}<span>{key === 'libraries' ? t('Nav.Library', 'Library') : t(`Home.${label}`, label)}</span></div><p>{figures[key]}</p>
+      <div className="metric-count">{key === 'libraries' ? 1 : state[key].length}<span>{key === 'libraries' ? t('Nav.Library', 'Brain') : t(`Home.${label}`, label)}</span></div><p>{figures[key]}</p>
     </a>)}</div>
     <div className="dashboard-grid">
       <Panel title={t('Home.LiveNow', 'Live now')} icon={Activity} actions={<Tag>{running.length + consoles.length} active</Tag>}>

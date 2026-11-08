@@ -224,14 +224,27 @@ function createSemanticMemory({ root, store, emit = () => {}, model = bundledMod
     if (!indexing) {
       error = undefined;
       indexing = (async () => {
+        const embeddedIds = [];
         while (!closed) {
           const nodes = store.unembedded({ model: modelKey, limit: bounded(batchSize, 25, 25) });
           if (!nodes.length) break;
           const vectors = await embed(nodes.map(node => `${node.title}\n\n${node.content}`));
           if (closed) throw new Error('DoxieOS is closing.');
-          nodes.forEach((node, index) => store.setEmbedding(node.id, vectors[index], { model: modelKey }));
+          const save = () => nodes.forEach((node, index) => store.setEmbedding(node.id, vectors[index], { model: modelKey }));
+          if (store.batch) store.batch(save); else save();
+          embeddedIds.push(...nodes.map(node => node.id));
           changed();
           await new Promise(resolve => setImmediate(resolve));
+        }
+        if (!closed && store.rebuildSemanticRelations) {
+          phase = 'correlating';
+          changed();
+          // New embeddings only need their own nearest neighborhoods. A manual
+          // reindex with no pending vectors refreshes all existing connections.
+          const rebuild = store.rebuildSemanticRelationsAsync || store.rebuildSemanticRelations;
+          await rebuild({ model: modelKey, ...(embeddedIds.length ? { ids: embeddedIds } : {}), threshold: 0.62, neighbors: 6,
+            shouldContinue: () => !closed, onProgress: () => changed() });
+          emit({ type: 'memory:changed' });
         }
       })().catch(failure => { error = failure.message; throw failure; }).finally(() => { indexing = null; phase = undefined; changed(); });
       changed();
@@ -261,14 +274,16 @@ function createSemanticMemory({ root, store, emit = () => {}, model = bundledMod
     if (!(await status()).state.match(/ready|indexing/) || !options.query?.trim()) return { ...lexical, mode: 'lexical' };
     try {
       const [queryVector] = await embed([options.query]);
-      const scope = { libraryId: options.libraryId, catalogId: options.catalogId, kind: options.kind };
-      const embeddings = store.getEmbeddings({ model: modelKey, ...scope, limit: 10000 });
-      const semantic = embeddings.map(item => ({ id: item.id, similarity: cosine(queryVector, item.vector) }))
-        .filter(item => item.similarity >= 0.15).sort((left, right) => right.similarity - left.similarity).slice(0, Math.max(40, limit * 4));
-      if (!embeddings.length) return { ...lexical, mode: 'lexical' };
+      const scope = { libraryId: options.libraryId, catalogId: options.catalogId, kind: options.kind,
+        includeStale: options.includeStale, includeArchived: options.includeArchived, includeSuperseded: options.includeSuperseded, status: options.status };
+      const embeddings = store.nearest ? null : store.getEmbeddings({ model: modelKey, ...scope, limit: 10000 });
+      const semantic = store.nearest ? store.nearest(queryVector, { model: modelKey, ...scope, limit: Math.max(40, limit * 4) })
+        : embeddings.map(item => ({ id: item.id, similarity: cosine(queryVector, item.vector) }))
+          .filter(item => item.similarity >= 0.15).sort((left, right) => right.similarity - left.similarity).slice(0, Math.max(40, limit * 4));
+      if (!semantic.length && !lexical.results.length) return { ...lexical, mode: 'hybrid' };
       const ranks = new Map();
       lexical.results.forEach((item, index) => ranks.set(item.id, { id: item.id, lexicalRank: index + 1, score: 1 / (61 + index) }));
-      semantic.forEach((item, index) => {
+      semantic.filter(item => item.similarity >= 0.15).forEach((item, index) => {
         const rank = ranks.get(item.id) || { id: item.id, lexicalRank: Infinity, score: 0 };
         rank.score += 1 / (61 + index);
         rank.semanticScore = item.similarity;
@@ -280,11 +295,12 @@ function createSemanticMemory({ root, store, emit = () => {}, model = bundledMod
       const resultBudget = budget - bytes({ query: responseQuery, results: [], truncated: false, bytes: budget, mode: 'hybrid', ...queryMetadata }) + 2;
       const results = [];
       let truncated = lexical.truncated || candidates.length > limit || responseQuery !== options.query
-        || Boolean(store.embeddingStats && store.embeddingStats({ model: modelKey, ...scope }).indexed > embeddings.length);
+        || Boolean(embeddings && store.embeddingStats && store.embeddingStats({ model: modelKey, ...scope }).indexed > embeddings.length);
       for (const rank of candidates) {
         if (results.length >= limit) break;
         const node = store.get(rank.id);
-        if (!node || node.supersededBy || node.archivedAt) continue;
+        if (!node || (node.supersededBy && !options.includeSuperseded) || (node.archivedAt && !options.includeArchived)
+          || (node.lifecycle?.status === 'stale' && options.includeStale !== true)) continue;
         const remaining = resultBudget - bytes(results) - 2;
         if (remaining < 256) { truncated = true; break; }
         const allowance = Math.min(remaining, Math.max(256, Math.floor(resultBudget / limit) - 4));

@@ -3,7 +3,7 @@ const { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readdirS
 const { homedir } = require('node:os');
 const { basename, extname, join, parse, relative, resolve, sep } = require('node:path');
 
-const defaultLimits = { maxFiles: 500, maxFileBytes: 256 * 1024, maxTotalBytes: 16 * 1024 * 1024, maxDepth: 8 };
+const defaultLimits = { maxFiles: 500, maxFileBytes: 16 * 1024 * 1024, maxTotalBytes: 64 * 1024 * 1024, maxDepth: 8 };
 const deniedPart = /^(?:auth|credentials?|secrets?|passwords?|tokens|sessions?|transcripts?|logs?|shell_snapshots|config)(?:[._-]|$)/i;
 const credentials = /-----BEGIN [\w ]*PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{24,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/;
 const fingerprint = text => createHash('sha256').update(text).digest('hex');
@@ -12,7 +12,7 @@ const positive = (value, fallback, cap) => Number.isSafeInteger(value) && value 
 
 function limits(options) {
   return { maxFiles: positive(options.maxFiles, defaultLimits.maxFiles, 4096),
-    maxFileBytes: positive(options.maxFileBytes, defaultLimits.maxFileBytes, 256 * 1024),
+    maxFileBytes: positive(options.maxFileBytes, defaultLimits.maxFileBytes, 16 * 1024 * 1024),
     maxTotalBytes: positive(options.maxTotalBytes, defaultLimits.maxTotalBytes, 64 * 1024 * 1024),
     maxDepth: positive(options.maxDepth, defaultLimits.maxDepth, 12) };
 }
@@ -57,14 +57,14 @@ function boundedRead(path, maximum) {
   try {
     const info = fstatSync(handle);
     if (!info.isFile() || info.size > maximum) throw new Error('The memory file exceeds the file-size limit.');
-    const buffer = Buffer.alloc(maximum + 1);
+    const buffer = Buffer.alloc(Math.min(maximum, info.size) + 1);
     let size = 0;
     while (size < buffer.length) {
       const count = readSync(handle, buffer, size, buffer.length - size, null);
       if (!count) break;
       size += count;
     }
-    if (size > maximum) throw new Error('The memory file grew beyond the file-size limit.');
+    if (size > maximum || size !== info.size || fstatSync(handle).size !== info.size) throw new Error('The memory file changed while it was being read.');
     const contents = buffer.subarray(0, size);
     return { text: new TextDecoder('utf-8', { fatal: true }).decode(contents), contentHash: fingerprint(contents) };
   } finally { closeSync(handle); }
@@ -74,13 +74,19 @@ function chunksFor(text, maxBytes = 16000) {
   const chunks = [];
   let content = '';
   let size = 0;
-  for (const character of text) {
-    const bytes = Buffer.byteLength(character);
-    if (size + bytes > maxBytes && content) { chunks.push(content); content = ''; size = 0; }
-    content += character;
-    size += bytes;
+  // Keep paragraphs together when they fit; split long paragraphs on Unicode
+  // boundaries. Concatenation always recovers the complete original file.
+  for (const paragraph of text.match(/[\s\S]*?(?:\r?\n[ \t]*\r?\n|$)/g) || []) {
+    const paragraphBytes = Buffer.byteLength(paragraph);
+    if (size && size + paragraphBytes > maxBytes) { chunks.push(content); content = ''; size = 0; }
+    for (const character of paragraph) {
+      const bytes = Buffer.byteLength(character);
+      if (size + bytes > maxBytes && content) { chunks.push(content); content = ''; size = 0; }
+      content += character;
+      size += bytes;
+    }
   }
-  if (content.trim()) chunks.push(content);
+  if (content) chunks.push(content);
   return chunks;
 }
 
@@ -125,7 +131,7 @@ function scan(options = {}, readContents = true) {
       const identity = process.platform === 'win32' ? path.toLowerCase() : path;
       if (seen.has(identity)) return;
       seen.add(identity);
-      if (info.size > budget.maxFileBytes) { warnings.push({ path, reason: 'Memory file exceeds the file-size limit.' }); return; }
+      if (info.size > budget.maxFileBytes) { warnings.push({ path, reason: `Memory file is ${(info.size / 1048576).toFixed(1)} MiB; the per-file limit is ${budget.maxFileBytes / 1048576} MiB. No content was truncated.` }); return; }
       if (files.length >= budget.maxFiles || bytes + info.size > budget.maxTotalBytes) {
         warnings.push({ path, reason: 'Memory preview reached its file-count or total-size limit.' }); stop = true; return;
       }
@@ -178,8 +184,7 @@ function previewMemorySources(options = {}) {
   return { ...result, files: result.files.map(({ text, ...file }) => ({ ...file, chunks: chunksFor(text).length })) };
 }
 
-function importMemorySources(store, options = {}) {
-  if (!store || typeof store.remember !== 'function') throw new Error('An active central memory store is required.');
+function prepareMemoryImport(options = {}) {
   const result = scan(options);
   if (options.expectedFiles !== undefined) {
     const expected = options.expectedFiles;
@@ -190,26 +195,45 @@ function importMemorySources(store, options = {}) {
     if (changed) throw new Error('Memory sources changed. Preview again before importing.');
   }
   const selected = options.selectedFileIds === undefined ? null : new Set(options.selectedFileIds);
-  let imported = 0;
-  let duplicates = 0;
   let skipped = result.warnings.length;
   const total = result.files.filter(file => !selected || selected.has(file.id)).length;
   let completed = 0;
-  options.onProgress?.({ phase: 'import', completed, total });
+  options.onProgress?.({ phase: 'prepare', completed, total });
+  const files = [];
   for (const file of result.files) {
     if (selected && !selected.has(file.id)) { skipped++; continue; }
     const chunks = chunksFor(file.text);
-    for (let chunk = 0; chunk < chunks.length; chunk++) {
-      const before = store.stats().total;
-      store.remember({ title: `${file.title}${chunks.length > 1 ? ` (${chunk + 1}/${chunks.length})` : ''}`.slice(0, 240),
-        content: chunks[chunk], kind: 'memory', libraryId: options.libraryId, catalogId: options.catalogId,
-        tags: [file.provider, 'imported'], source: { provider: file.provider, path: file.path, chunk, label: file.title } });
-      if (store.stats().total === before) duplicates++; else imported++;
-    }
+    files.push({ provider: file.provider, path: file.path, memories: chunks.map((content, chunk) => ({ title: `${file.title}${chunks.length > 1 ? ` (${chunk + 1}/${chunks.length})` : ''}`.slice(0, 240),
+        content, kind: 'memory', libraryId: options.libraryId, catalogId: options.catalogId,
+        tags: [file.provider, 'imported'], source: { provider: file.provider, path: file.path, chunk, label: file.title, kind: 'imported' } })) });
     completed++;
-    options.onProgress?.({ phase: 'import', completed, total });
+    options.onProgress?.({ phase: 'prepare', completed, total });
   }
-  return { imported, duplicates, skipped, files: result.files.length, sources: result.sources, warnings: result.warnings };
+  return { preparedFiles: files, skipped, files: result.files.length, sources: result.sources, warnings: result.warnings };
 }
 
-module.exports = { discoverMemorySources, previewMemorySources, importMemorySources };
+function applyMemoryImport(store, prepared) {
+  if (!store || typeof store.remember !== 'function') throw new Error('An active Brain store is required.');
+  let imported = 0;
+  let duplicates = 0;
+  for (const file of prepared.preparedFiles) {
+    const ids = [];
+    const apply = () => {
+      for (const memory of file.memories) {
+        const before = store.stats().total;
+        ids.push(store.remember(memory).id);
+        if (store.stats().total === before) duplicates++; else imported++;
+      }
+      store.reconcileImport?.({ provider: file.provider, path: file.path, activeIds: ids });
+    };
+    if (store.batch) store.batch(apply); else apply();
+  }
+  const { preparedFiles, ...result } = prepared;
+  return { ...result, imported, duplicates };
+}
+
+function importMemorySources(store, options = {}) {
+  return applyMemoryImport(store, prepareMemoryImport(options));
+}
+
+module.exports = { discoverMemorySources, previewMemorySources, importMemorySources, prepareMemoryImport, applyMemoryImport };

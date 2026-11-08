@@ -60,12 +60,12 @@ test('preview rejects symlinks, credential files and oversized sources instead o
   const outside = join(home, 'outside');
   write(join(outside, 'private.md'), 'OUTSIDE_MUST_NOT_BE_READ');
   symlinkSync(outside, join(source, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
-  const preview = previewMemorySources({ sources: [{ provider: 'codex', path: source }] });
+  const preview = previewMemorySources({ sources: [{ provider: 'codex', path: source }], maxFileBytes: 256 * 1024 });
   assert.deepEqual(preview.files.map(file => file.name), ['allowed.md']);
   assert(preview.warnings.some(warning => /symbolic/i.test(warning.reason)));
-  assert(preview.warnings.some(warning => /file-size/i.test(warning.reason)));
+  assert(preview.warnings.some(warning => /per-file limit/i.test(warning.reason)));
   assert(preview.warnings.some(warning => /read safely/i.test(warning.reason)));
-  assert.equal(importMemorySources(store, { sources: [{ provider: 'codex', path: source }] }).imported, 1);
+  assert.equal(importMemorySources(store, { sources: [{ provider: 'codex', path: source }], maxFileBytes: 256 * 1024 }).imported, 1);
   assert.equal(store.stats().total, 1);
   assert(!store.list()[0].content.includes('OUTSIDE'));
   assert.equal(previewMemorySources({ sources: [{ provider: 'codex', path: join(codexHome, 'auth.json') }] }).files.length, 0);
@@ -145,4 +145,37 @@ test('import verifies the entire preview snapshot before persisting any added, r
   assert.equal(store.stats().total, 0);
   write(second, '# Second\nReviewed context.');
   assert.equal(importMemorySources(store, { sources, expectedFiles: preview.files }).imported, 2);
+});
+
+test('manual imports accept larger memory files and preserve paragraph boundaries and every UTF-8 byte', t => {
+  const { codexHome, store, write } = setup(t);
+  const source = join(codexHome, 'memories_v2');
+  const content = '# Long memory\r\n\r\n' + ('A revisão em São Paulo 🐕 keeps its source.\r\n\r\n'.repeat(7000));
+  assert(Buffer.byteLength(content) > 256 * 1024);
+  write(join(source, 'long.md'), content);
+  const preview = previewMemorySources({ sources: [{ provider: 'codex', path: source }] });
+  assert.equal(preview.files.length, 1);
+  assert.equal(preview.warnings.length, 0);
+  const result = importMemorySources(store, { sources: preview.sources, expectedFiles: preview.files });
+  assert.equal(result.imported, preview.files[0].chunks);
+  const chunks = store.list({ limit: 100 }).sort((a, b) => a.source.chunk - b.source.chunk).map(node => store.get(node.id).content);
+  assert.equal(chunks.join(''), content);
+  assert(chunks.slice(0, -1).every(chunk => chunk.endsWith('\r\n\r\n')));
+  assert(chunks.every(chunk => Buffer.byteLength(chunk) <= 16000));
+});
+
+test('reimporting a shorter file retires removed chunks while preserving their history', t => {
+  const { codexHome, store, write } = setup(t);
+  const source = join(codexHome, 'memories');
+  const file = join(source, 'shrinking.md');
+  const options = { sources: [{ provider: 'codex', path: source }] };
+  write(file, '# Evolving rules\n\n' + 'Review before release.\n\n'.repeat(1600));
+  const first = importMemorySources(store, options);
+  assert(first.imported > 1);
+  const oldIds = store.list().map(memory => memory.id);
+  write(file, '# Evolving rules\n\nThe current release rule.');
+  assert.equal(importMemorySources(store, options).imported, 1);
+  assert.equal(store.list().length, 1);
+  assert(oldIds.every(id => { const memory = store.get(id); return memory.archivedAt || memory.supersededBy; }));
+  assert.equal(store.stats().total, first.imported + 1);
 });

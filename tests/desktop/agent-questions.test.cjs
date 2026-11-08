@@ -108,7 +108,10 @@ test('autonomous learning and native run provenance apply to ordinary agents and
   const [ordinary, building] = await captured();
   for (const [dispatch, id] of [[ordinary, run.id], [building, builder.id]]) {
     assert(dispatch.prompt.includes('Autonomous harness learning'));
-    assert(dispatch.prompt.includes('Do not wait for a user to fill a library form'));
+    assert(dispatch.prompt.includes('Do not wait for a user to fill a Brain form'));
+    assert(dispatch.prompt.includes('Before substantive work, call memory_search'));
+    assert(dispatch.prompt.includes('inspect memory_graph'));
+    assert(dispatch.prompt.includes('Revalidate stale memories'));
     assert.equal(dispatch.mcpConfig.mcpServers.doxie_library_memory.env.DOXIE_MEMORY_RUN_ID, id);
     assert.equal(dispatch.strictMcp, true);
   }
