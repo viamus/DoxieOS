@@ -2,15 +2,16 @@ const { randomUUID } = require('node:crypto');
 const { join, resolve } = require('node:path');
 const { Worker } = require('node:worker_threads');
 
-function createMemoryImportJobs({ root, emit = () => {} } = {}) {
+function createMemoryImportJobs({ root, store, emit = () => {} } = {}) {
   if (typeof root !== 'string' || !root.trim()) throw new Error('A central memory root is required.');
   root = resolve(root);
   const queue = [];
   let current;
   let closed = false;
   let closing;
+  let cancelling;
   function next() {
-    if (closed || current || !queue.length) return;
+    if (closed || cancelling || current || !queue.length) return;
     const job = queue.shift();
     current = job;
     try {
@@ -18,6 +19,7 @@ function createMemoryImportJobs({ root, emit = () => {} } = {}) {
     } catch (error) {
       current = null;
       job.reject(error);
+      job.finish?.();
       next();
       return;
     }
@@ -30,36 +32,76 @@ function createMemoryImportJobs({ root, emit = () => {} } = {}) {
       }
     });
     job.worker.once('error', error => { job.error = error; });
-    job.worker.once('exit', code => {
+    job.worker.once('exit', async code => {
+      job.worker = null;
+      try {
+        if (job.cancelled) throw new Error('Memory import cancelled because the application is closing.');
+        if (job.error) throw job.error;
+        if (code !== 0 || !job.hasResult) throw new Error(`Memory import worker exited before completing the operation (${code}).`);
+        if (job.action === 'import') {
+          if (!store) throw new Error('The Brain owner must commit imported memories.');
+          const { preparedFiles, ...result } = job.result;
+          let imported = 0;
+          let duplicates = 0;
+          let completed = 0;
+          for (const file of preparedFiles) {
+            const ids = [];
+            for (let offset = 0; offset < file.memories.length; offset += 25) {
+              if (closed || job.cancelled) throw new Error('Memory import cancelled.');
+              const apply = () => {
+                for (const memory of file.memories.slice(offset, offset + 25)) {
+                  const before = store.stats().total;
+                  ids.push(store.remember(memory).id);
+                  if (store.stats().total === before) duplicates++; else imported++;
+                }
+              };
+              if (store.batch) store.batch(apply); else apply();
+              await new Promise(resolve => setImmediate(resolve));
+            }
+            store.reconcileImport?.({ provider: file.provider, path: file.path, activeIds: ids });
+            completed++;
+            if (!closed) emit({ type: 'memory:importProgress', jobId: job.id, action: job.action, phase: 'import', completed, total: preparedFiles.length });
+          }
+          job.resolve({ ...result, imported, duplicates });
+        } else job.resolve(job.result);
+      } catch (error) { job.reject(error); }
       current = null;
-      if (job.cancelled) job.reject(new Error('Memory import cancelled because the application is closing.'));
-      else if (job.error) job.reject(job.error);
-      else if (code !== 0 || !job.hasResult) job.reject(new Error(`Memory import worker exited before completing the operation (${code}).`));
-      else job.resolve(job.result);
+      job.finish?.();
       next();
     });
   }
   function run(action, options = {}) {
     return new Promise((resolveJob, reject) => {
-      if (closed) { reject(new Error('The memory import service is closed.')); return; }
+      if (closed || cancelling) { reject(new Error('The memory import service is closed or resetting.')); return; }
       let copy;
       try { copy = structuredClone(options); }
       catch { reject(new Error('Memory import options must contain only serializable values.')); return; }
-      queue.push({ id: randomUUID(), action, options: copy, resolve: resolveJob, reject });
+      const job = { id: randomUUID(), action, options: copy, resolve: resolveJob, reject };
+      job.finished = new Promise(resolve => { job.finish = resolve; });
+      queue.push(job);
       next();
     });
   }
   function close() {
     if (closing) return closing;
     closed = true;
-    for (const job of queue.splice(0)) job.reject(new Error('The memory import service is closed.'));
-    const job = current;
-    if (job) job.cancelled = true;
-    closing = job?.worker ? job.worker.terminate().then(() => undefined) : Promise.resolve();
+    closing = cancel();
     return closing;
   }
+  function cancel() {
+    if (cancelling) return cancelling;
+    for (const job of queue.splice(0)) {
+      job.reject(new Error('Memory import cancelled.'));
+      job.finish?.();
+    }
+    const job = current;
+    if (job) job.cancelled = true;
+    cancelling = Promise.allSettled([job?.worker?.terminate(), job?.finished]).then(() => undefined)
+      .finally(() => { cancelling = null; next(); });
+    return cancelling;
+  }
   return { discover: options => run('discover', options), preview: options => run('preview', options),
-    import: options => run('import', options), close };
+    import: options => run('import', options), cancel, close };
 }
 
 module.exports = { createMemoryImportJobs };

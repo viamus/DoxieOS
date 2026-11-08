@@ -1,6 +1,6 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, Bell, BookOpen, Bot, CircleDot, Cpu, FolderKanban, GitBranch, History, LayoutDashboard, Menu, Plug, Settings2, Terminal, X } from 'lucide-react';
+import { Activity, Bell, Brain, Bot, CircleDot, Cpu, FolderKanban, GitBranch, History, LayoutDashboard, Menu, Plug, Settings2, Terminal, X } from 'lucide-react';
 import { AppContext, Button, Empty, ErrorNotice, IconButton, Loading, Modal, Status, href, invoke, useText } from './ui.jsx';
 import { Dashboard, HistoryPage, NotificationsPage, SettingsPage } from './overview.jsx';
 import { AgentsPage, AgentPage, BuilderPage, WorkflowsPage } from './automation.jsx';
@@ -19,7 +19,7 @@ const navigation = [
   { to: '/agents', key: 'Nav.Agents', label: 'Agents', icon: Bot },
   { to: '/connectors', key: 'Nav.Connectors', label: 'Connectors', icon: Plug },
   { to: '/workflows', key: 'Nav.Workflows', label: 'Workflows', icon: GitBranch },
-  { to: '/libraries', key: 'Nav.Library', label: 'Library', icon: BookOpen },
+  { to: '/libraries', key: 'Nav.Library', label: 'Brain', icon: Brain },
   { to: '/history', key: 'Nav.History', label: 'History', icon: History },
 ];
 

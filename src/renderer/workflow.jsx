@@ -15,7 +15,7 @@ const connectorTypes = {
   'approval-gate': { name: 'Approval gate', icon: ShieldCheck },
   'if-else': { name: 'If / else', icon: GitBranch },
   'write-to-workspace': { name: 'Write to workspace', icon: ArrowDownToLine },
-  library: { name: 'Library', icon: BookOpen },
+  library: { name: 'Brain', icon: BookOpen },
   'workspace-memory': { name: 'Workspace Memory', icon: BookOpen },
   sandbox: { name: 'Sandbox', icon: Box },
   prompt: { name: 'Prompt', icon: Bot, modelBacked: true },
@@ -176,7 +176,7 @@ function TriggerEditor({ trigger, set }) {
         <Field label="Input ID"><input required pattern="[A-Za-z0-9_\-]+" value={field.id} onChange={(event) => change(index, { id: event.target.value })} /></Field>
         <Field label="Label"><input required value={field.label} onChange={(event) => change(index, { label: event.target.value })} /></Field>
         <Field label="Type"><select value={field.lookup ? `lookup:${field.lookup}` : field.type || 'text'} onChange={(event) => changeType(index, event.target.value)}>
-          <option value="text">Text</option><option value="select">Select</option><option value="lookup:libraries">Library</option><option value="lookup:workspaces">Workspace</option><option value="lookup:agents">Agent in this catalog</option><option value="lookup:workflows">Workflow in this catalog</option>
+          <option value="text">Text</option><option value="select">Select</option><option value="lookup:libraries">Brain</option><option value="lookup:workspaces">Workspace</option><option value="lookup:agents">Agent in this catalog</option><option value="lookup:workflows">Workflow in this catalog</option>
         </select></Field>
         <Field label="Default value"><input value={field.defaultValue || ''} onChange={(event) => change(index, { defaultValue: event.target.value })} /></Field>
         <Field label="Placeholder"><input value={field.placeholder || ''} onChange={(event) => change(index, { placeholder: event.target.value })} /></Field>

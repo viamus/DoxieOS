@@ -1,7 +1,7 @@
 {
   "id": "library",
-  "displayName": "Library",
-  "description": "Retrieve, record and relate verified shared knowledge produced by the execution harness.",
+  "displayName": "Brain",
+  "description": "Query local semantic knowledge, record verified learnings and connect weighted evidence.",
   "kind": "workflow",
   "category": "Tool",
   "modes": {
@@ -16,7 +16,7 @@
         },
         {
           "id": "libraryId",
-          "label": "Library (optional)",
+          "label": "Collection (optional)",
           "lookup": "libraries"
         },
         {
@@ -46,8 +46,18 @@
           "placeholder": "memory, entity or parameter"
         },
         {
+          "id": "origin",
+          "label": "Knowledge origin",
+          "placeholder": "learned or optimized"
+        },
+        {
+          "id": "reviewAfter",
+          "label": "Review after (ISO date)",
+          "placeholder": "2027-01-01T00:00:00Z"
+        },
+        {
           "id": "libraryId",
-          "label": "Library (optional)",
+          "label": "Collection (optional)",
           "lookup": "libraries"
         },
         {
@@ -64,6 +74,23 @@
           "id": "source",
           "label": "Source or provenance label"
         }
+      ]
+    },
+    "graph": {
+      "description": "Explore a local neighborhood and its semantic and evidence weights.",
+      "fields": [
+        { "id": "nodeId", "label": "Center memory ID" },
+        { "id": "query", "label": "Search knowledge" },
+        { "id": "minWeight", "label": "Minimum connection strength (0–1)", "placeholder": "0.5" }
+      ]
+    },
+    "review": {
+      "description": "Revalidate, flag or archive a memory while retaining its history.",
+      "fields": [
+        { "id": "id", "label": "Memory ID", "required": true },
+        { "id": "status", "label": "Review status", "placeholder": "current, stale or archived", "required": true },
+        { "id": "evidence", "label": "Review evidence", "multiline": true, "required": true },
+        { "id": "reviewAfter", "label": "Review after (ISO date)" }
       ]
     },
     "relate": {
@@ -83,6 +110,11 @@
           "id": "type",
           "label": "Relation",
           "placeholder": "supports, contradicts, supersedes, related or mentions"
+        },
+        {
+          "id": "weight",
+          "label": "Connection strength (0–1)",
+          "placeholder": "1"
         }
       ]
     }

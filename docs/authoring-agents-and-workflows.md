@@ -118,9 +118,11 @@ DoxieOS sends request JSON without formatting whitespace. Agent instructions,
 explicit inputs, upstream context, and agent-owned instruction memories remain
 whole. Workspace notes and the shared library are not automatically copied
 into the request. Use the built-in `memory_search`, `memory_get`,
-`memory_remember`, `memory_relate`, and `memory_graph` tools to retrieve relevant
+`memory_remember`, `memory_relate`, `memory_graph`, and `memory_review` tools to retrieve relevant
 knowledge and publish verified learnings. Search responses are bounded rather
-than attaching the entire library. See the [library guide](library-memory.md).
+than attaching the entire Brain. Its connector is mandatory; provider memory
+imports remain manual. Revalidate overdue knowledge before confirming it current.
+See the [Brain guide](library-memory.md).
 
 Builder requests retain the first user requirement and a recent window of
 whole exchanges, normally up to eight turns and 24 KiB. The current message

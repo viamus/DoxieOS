@@ -590,7 +590,7 @@ test('rejects retired library mounts without binding knowledge or changing works
   ], [edge('explicit', 'default-workspace')], { workspaceId: workspace.id }));
   const result = await engine.wait(engine.run(definition.id).id);
   assert.equal(result.status, 'Failed');
-  assert(result.nodeRuns.explicit.logs.some(line => /Library mount has been retired/.test(line)));
+  assert(result.nodeRuns.explicit.logs.some(line => /Brain mount has been retired/.test(line)));
   assert.equal(result.nodeRuns['default-workspace'].status, 'Skipped');
   assert.equal(Object.keys(storage.get('workspaces', workspace.id)).some(key => /^mounted/i.test(key)), false);
   await assert.rejects(readFile(path.join(workspace.path, 'AGENTS.md')), { code: 'ENOENT' });
@@ -600,7 +600,7 @@ test('rejects retired library mounts without binding knowledge or changing works
 
 test('native global memory query runs without a workspace and hands bounded context to a consumer', async t => {
   const definition = workflow([
-    node('knowledge', 'Tool', { toolId: 'library', toolMode: 'query', workspaceId: 'retired-workspace', inputs: { query: 'release checklist', limit: '2' } }),
+    node('knowledge', 'Tool', { toolId: 'brain', toolMode: 'query', workspaceId: 'retired-workspace', inputs: { query: 'release checklist', limit: '2' } }),
     node('consume', 'agent', { agentId: 'consume', workspaceId: 'target' }),
   ], [edge('knowledge', 'consume')]);
   let received;

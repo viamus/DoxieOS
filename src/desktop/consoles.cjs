@@ -1,9 +1,10 @@
 const { randomUUID } = require('node:crypto');
-const { existsSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 const pty = require('node-pty');
 const { executablePath, invocation } = require('./processes.cjs');
 const { definitions, providerFor, providerEnvironment, usesCodex, localProviderArgs, interactiveCodexArgs } = require('./providers.cjs');
+const { nativeInstructions, serverConfig } = require('./memory-tools.cjs');
 
 function size(value, fallback) {
   return Number.isInteger(value) ? Math.max(2, Math.min(500, value)) : fallback;
@@ -27,6 +28,8 @@ function createConsoles({ storage, emit }) {
       ? executablePath('pwsh', env) || executablePath('powershell', env) || env.ComSpec
       : env.SHELL || '/bin/sh');
     const login = options.auth || options.kind === 'auth';
+    const id = randomUUID();
+    let runtimeMcp;
     if (login && provider?.requiresAuth === false) throw new Error(`${provider.name} uses a local endpoint.`);
     let args = windows && executable && !/cmd\.exe$/i.test(executable) ? ['-NoLogo'] : [];
     if (provider && usesCodex(provider)) args = login ? ['login'] : [
@@ -35,14 +38,23 @@ function createConsoles({ storage, emit }) {
     ];
     if (provider?.id === 'claude-code') args = login ? ['auth', 'login'] : ['--dangerously-skip-permissions'];
     const mcpConfig = join(storage.root, '.mcp.json');
-    if (provider?.id === 'claude-code' && !login && existsSync(mcpConfig)) args.push('--mcp-config', mcpConfig);
+    if (provider?.id === 'claude-code' && !login && provider.nativeMemory) {
+      const directory = join(storage.root, '.runtime', 'console-mcp');
+      mkdirSync(directory, { recursive: true });
+      runtimeMcp = join(directory, `${id}.json`);
+      const configured = existsSync(mcpConfig) ? JSON.parse(readFileSync(mcpConfig, 'utf8')).mcpServers || {} : {};
+      writeFileSync(runtimeMcp, JSON.stringify({ mcpServers: { ...configured, [provider.nativeMemory.id]: serverConfig(provider.nativeMemory) } }), { flag: 'wx', mode: 0o600 });
+      args.push('--strict-mcp-config', '--mcp-config', runtimeMcp, '--append-system-prompt', nativeInstructions);
+    } else if (provider?.id === 'claude-code' && !login && existsSync(mcpConfig)) args.push('--mcp-config', mcpConfig);
     if (!executable) throw new Error('No shell executable was found.');
     const command = invocation(executable, args);
     const argv = command.verbatim ? command.args.join(' ') : command.args;
-    const processHandle = pty.spawn(command.executable, argv, {
-      name: 'xterm-256color', cols: size(options.cols, 100), rows: size(options.rows, 28), cwd, env,
-    });
-    const id = randomUUID();
+    let processHandle;
+    try {
+      processHandle = pty.spawn(command.executable, argv, {
+        name: 'xterm-256color', cols: size(options.cols, 100), rows: size(options.rows, 28), cwd, env,
+      });
+    } catch (error) { if (runtimeMcp) rmSync(runtimeMcp, { force: true }); throw error; }
     const title = options.title || (login && provider ? `${provider.name} · Sign in` : provider?.name || workspace?.name || 'Local shell');
     const info = {
       id, kind: login ? 'auth' : provider?.id || 'shell', providerId: provider?.id || null,
@@ -52,6 +64,7 @@ function createConsoles({ storage, emit }) {
     const session = { info, processHandle, output: '', sequence: 0, stopped: false };
     session.completion = new Promise(resolve => {
       processHandle.onExit(({ exitCode }) => {
+        if (runtimeMcp) rmSync(runtimeMcp, { force: true });
         info.status = session.stopped ? 'Cancelled' : exitCode === 0 ? 'Completed' : 'Failed';
         info.exitCode = exitCode;
         info.finishedAt = new Date().toISOString();

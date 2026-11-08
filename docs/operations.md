@@ -87,12 +87,15 @@ Legacy Library creation, `from-files`, `mount` and `from-current` steps report
 an explicit migration error. Use `query` or `remember` for shared knowledge,
 and **Workspace Memory** to supply manual Markdown as execution input.
 
-Open **Library** to inspect agent-produced knowledge and automatic feeds from
-**Codex** and **Claude Code**. The harness synchronizes recognized memory
-outputs on startup and every five minutes while open. It creates local
-knowledge records and never edits the provider's source files. Native memory tools are registered in the
-DoxieOS-managed provider profiles. Optional semantic search downloads its model
-only when enabled. See the [library guide](library-memory.md).
+Open **Brain** to inspect imported, learned, and optimized knowledge, weighted
+relationships, and review dates. **Find import sources**, preview the files,
+and explicitly import the selection to copy **Codex** or **Claude Code** memories.
+There is no startup scan or periodic import. Original provider files stay intact.
+Existing DoxieOS knowledge migrates from `.memory/knowledge.db` into the local
+LadybugDB `.memory/brain.lbdb`, preserving the original database as a backup.
+The mandatory native Brain connector is registered for every model execution.
+Optional semantic search downloads its model only when enabled. See the
+[Brain guide](library-memory.md).
 
 ## Providers and MCP
 

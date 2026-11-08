@@ -10,7 +10,7 @@ This folder is the product documentation entry point.
 
 - [Concepts](concepts.md) describes the product vocabulary and how the pieces relate.
 - [Architecture](architecture.md) covers runtime boundaries, data flow, and provider compatibility.
-- [Central library and memory graph](library-memory.md) covers shared knowledge, imports, native tools, and retrieval.
+- [Brain and semantic graph](library-memory.md) covers local knowledge, manual imports, lifecycle, native tools, and retrieval.
 - [Authoring Agents And Workflows](authoring-agents-and-workflows.md) explains the catalog format.
 - [Operations Guide](operations.md) covers local setup, packaging, MCP, storage, and upgrades.
 - [Release History](release-notes/README.md) preserves previous release notes and illustrations.

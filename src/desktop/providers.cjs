@@ -108,7 +108,7 @@ function providerFor(storage, id, options = {}) {
     mcpServers = existsSync(config) ? toml.parse(readFileSync(config, 'utf8').replace(/^\uFEFF/, '')).mcp_servers : null;
   }
   const nativeMemory = storage.memory ? nativeMemoryServer(storage.root) : null;
-  if (nativeMemory) mcpServers = { ...mcpServers, [nativeMemory.id]: serverConfig(nativeMemory) };
+  if (nativeMemory) mcpServers = { ...mcpServers, [nativeMemory.id]: { ...serverConfig(nativeMemory), enabled: true } };
   const installed = localCodex ? installedCodexSettings(environment.CODEX_HOME) : {};
   const store = installed.cli_auth_credentials_store;
   return { ...provider, executable, model, effort, environment, localCodex, mcpServers, nativeMemory,
@@ -152,7 +152,8 @@ function inlineConfig(value) {
 }
 
 function interactiveCodexArgs(provider) {
-  if (!provider.localCodex) return [];
+  if (!provider.localCodex) return provider.mcpServers && Object.keys(provider.mcpServers).length
+    ? ['-c', `mcp_servers=${inlineConfig(provider.mcpServers)}`] : [];
   // Interactive Codex has no --ignore-user-config switch. Disable installed
   // servers for this invocation, then restore only the DoxieOS tool registry.
   const installed = new Set(provider.installedMcpIds || []);

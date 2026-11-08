@@ -1,12 +1,12 @@
 import { useEffect, useId, useState } from 'react';
-import { Activity, ArrowRight, Bell, BookOpen, Bot, CalendarClock, Check, ChevronRight, CircleCheck, CircleDollarSign, CircleHelp, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Info, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2, TriangleAlert } from 'lucide-react';
+import { Activity, ArrowRight, Bell, BookOpen, Brain, Bot, CalendarClock, Check, ChevronRight, CircleCheck, CircleDollarSign, CircleHelp, Clock3, Code2, Cpu, ExternalLink, FolderKanban, GitBranch, History, Import, Info, Layers3, LayoutDashboard, Plug, Plus, Save, Settings2, Sparkles, Terminal, Trash2, TriangleAlert } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, Field, IconButton, ItemRow, Modal, ModelField, PageHeading, Panel, SearchBox, Status, Tag, active, go, href, invoke, nameOf, part, slug, useApp, useEffortLabel, useText } from './ui.jsx';
 import { Markdown } from './workbench.jsx';
 
 const categories = [
   { key: 'workflows', label: 'Workflows', icon: GitBranch, tone: 'copper' },
   { key: 'agents', label: 'Agents', icon: Bot, tone: 'blue' },
-  { key: 'libraries', label: 'Libraries', icon: BookOpen, tone: 'violet' },
+  { key: 'libraries', label: 'Brain', icon: Brain, tone: 'violet' },
   { key: 'workspaces', label: 'Workspaces', icon: FolderKanban, tone: 'green' },
 ];
 
@@ -50,10 +50,11 @@ export function Dashboard() {
   }, { cost: 0, tokens: 0, reported: false });
   const usage = summarize(tracked);
   const money = (number) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(number);
+  const brainCounts = { memories: Number(state.libraryStats?.memories || 0), entities: Number(state.libraryStats?.entities || 0), parameters: Number(state.libraryStats?.parameters || 0) };
   const figures = {
     workflows: `${state.workflows.filter(({ enabled }) => enabled !== false).length} ${t('Home.Enabled', 'enabled')}`,
     agents: `${state.agentRuns.length} ${t('Home.Runs', 'runs')}`,
-    libraries: `${Number(state.libraryStats?.memories || 0) + Number(state.libraryStats?.entities || 0) + Number(state.libraryStats?.parameters || 0)} ${t('Home.MemoryEntriesTotal', 'memory entries')}`,
+    libraries: `${brainCounts.memories} ${brainCounts.memories === 1 ? t('Home.BrainMemory', 'memory') : t('Home.BrainMemories', 'memories')} · ${brainCounts.entities} ${brainCounts.entities === 1 ? t('Home.BrainEntity', 'entity') : t('Home.BrainEntities', 'entities')} · ${brainCounts.parameters} ${brainCounts.parameters === 1 ? t('Home.BrainParameter', 'parameter') : t('Home.BrainParameters', 'parameters')}`,
     workspaces: `${consoles.length} ${t('Home.LiveConsolesCount', 'live consoles')}`,
   };
 
@@ -68,7 +69,7 @@ export function Dashboard() {
     </section>
     <div className="metrics">{categories.map(({ key, label, icon: Icon, tone }) => <a className={`metric ${tone}`} key={key} href={href(`/${key}`)}>
       <div className="metric-top"><span className="metric-icon"><Icon size={19} strokeWidth={1.65} /></span><ChevronRight size={17} className="row-caret" /></div>
-      <div className="metric-count">{key === 'libraries' ? 1 : state[key].length}<span>{key === 'libraries' ? t('Nav.Library', 'Library') : t(`Home.${label}`, label)}</span></div><p>{figures[key]}</p>
+      <div className="metric-count">{key === 'libraries' ? t('Nav.Library', 'Brain') : <>{state[key].length}<span>{t(`Home.${label}`, label)}</span></>}</div><p>{figures[key]}</p>
     </a>)}</div>
     <div className="dashboard-grid">
       <Panel title={t('Home.LiveNow', 'Live now')} icon={Activity} actions={<Tag>{running.length + consoles.length} active</Tag>}>

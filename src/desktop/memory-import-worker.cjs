@@ -1,8 +1,6 @@
 const { parentPort, workerData } = require('node:worker_threads');
-const { createMemoryStore } = require('./memory-store.cjs');
-const { discoverMemorySources, previewMemorySources, importMemorySources } = require('./memory-import.cjs');
+const { discoverMemorySources, previewMemorySources, prepareMemoryImport } = require('./memory-import.cjs');
 
-let store;
 let lastProgress = 0;
 let lastPhase;
 function onProgress(progress) {
@@ -15,21 +13,17 @@ function onProgress(progress) {
 }
 
 try {
-  const { action, root, options = {} } = workerData;
+  const { action, options = {} } = workerData;
   const input = { ...options, onProgress };
   let result;
   if (action === 'discover') result = discoverMemorySources(input);
   else if (action === 'preview') result = previewMemorySources(input);
   else if (action === 'import') {
-    store = createMemoryStore({ root });
-    result = importMemorySources(store, input);
+    result = prepareMemoryImport(input);
   } else throw new Error('Unknown memory import operation.');
-  store?.close();
-  store = null;
   parentPort.postMessage({ type: 'result', result });
 } catch (error) {
   parentPort.postMessage({ type: 'error', error: { name: error.name, message: error.message } });
 } finally {
-  store?.close();
   parentPort.close();
 }

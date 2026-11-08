@@ -143,7 +143,7 @@ function jsonObject(value, label) {
 }
 
 async function memoryLibrary({ storage, toolMode, inputs, outputDir, provenance = {}, signal }) {
-  if (!storage.memory) throw new Error('The global memory store is unavailable. Restart DoxieOS before using Library memory actions.');
+  if (!storage.memory) throw new Error('Brain is unavailable. Restart DoxieOS before using memory actions.');
   signal?.throwIfAborted();
   const value = name => inputValue(inputs, name);
   const mode = toolMode === 'search' ? 'query' : toolMode;
@@ -156,12 +156,14 @@ async function memoryLibrary({ storage, toolMode, inputs, outputDir, provenance 
       title: String(value('title') || '').trim(), content: value('content') ?? '',
       libraryId: value('libraryId') || undefined, catalogId: value('catalogId') || undefined,
       kind: value('kind') || 'memory',
+      origin: value('origin') || 'learned',
+      ...(value('reviewAfter') ? { reviewAfter: value('reviewAfter') } : {}),
       tags: Array.isArray(value('tags')) ? value('tags') : String(value('tags') || '').split(/[,;\n]/).map(tag => tag.trim()).filter(Boolean),
       parameters: jsonObject(value('parameters') ?? value('parameters_json'), 'Parameters'),
       source: { provider: 'doxie', kind: 'native-library', ...suppliedSource, ...provenance,
         section: suppliedSource?.section || String(value('title') || '').trim() },
     });
-    summary = `Remembered ${result.title || result.id} in the global library`;
+    summary = `Remembered ${result.title || result.id} in Brain`;
   } else if (mode === 'query') {
     const searchOptions = { query: String(value('query') || '').trim(),
       libraryId: value('libraryId') || undefined, catalogId: value('catalogId') || undefined,
@@ -172,10 +174,20 @@ async function memoryLibrary({ storage, toolMode, inputs, outputDir, provenance 
     result = storage.memory.semantic?.search ? await storage.memory.semantic.search(searchOptions) : storage.memory.search(searchOptions);
     summary = `${result.results.length} global memory result(s)`;
   } else if (mode === 'relate') {
-    result = storage.memory.relate({ fromId: value('fromId'), toId: value('toId'), type: value('type') || 'related' });
+    result = storage.memory.relate({ fromId: value('fromId'), toId: value('toId'), type: value('type') || 'related',
+      ...(value('weight') !== undefined && value('weight') !== '' ? { weight: Number(value('weight')) } : {}) });
     summary = `Related global memories (${result.type})`;
+  } else if (mode === 'graph') {
+    result = storage.memory.graph({ ...(value('nodeId') ? { nodeId: value('nodeId') } : {}),
+      ...(value('query') ? { query: value('query') } : {}), ...(value('minWeight') ? { minWeight: Number(value('minWeight')) } : {}) });
+    summary = `${result.nodes.length} Brain nodes with ${result.edges.length} relationships`;
+  } else if (mode === 'review') {
+    if (!String(value('evidence') || '').trim()) throw new Error('A Brain review requires evidence.');
+    result = storage.memory.review({ id: value('id'), status: value('status'), evidence: value('evidence'),
+      ...(value('reviewAfter') ? { reviewAfter: value('reviewAfter') } : {}) });
+    summary = `Reviewed ${result.title || result.id} in Brain`;
   } else {
-    throw new Error(`Unknown library memory action: ${toolMode}`);
+    throw new Error(`Unknown Brain memory action: ${toolMode}`);
   }
   signal?.throwIfAborted();
   const receipt = { schema: 'doxie.native-memory.v1', action: mode, result };
@@ -208,9 +220,9 @@ async function manageSandbox({ toolMode, inputs, outputDir, scratchRoot, signal 
 }
 
 function runNativeUtility(toolId, options) {
-  if (toolId === 'library' && options.toolMode === 'mount') throw new Error('Library mount has been retired. Libraries are global; use Library query to retrieve knowledge or remember to save it. Workspaces hold inputs and outputs only.');
-  if (toolId === 'library' && ['remember', 'query', 'search', 'relate'].includes(options.toolMode)) return memoryLibrary(options);
-  if (toolId === 'library') throw new Error('Manual Library creation and raw-file import have been retired. Use Library remember for verified harness learnings, or Workspace Memory load for explicit Markdown inputs.');
+  if (['library', 'brain'].includes(toolId) && options.toolMode === 'mount') throw new Error('Brain mount has been retired. Brain is global; use Brain query to retrieve knowledge or remember to save it. Workspaces hold inputs and outputs only.');
+  if (['library', 'brain'].includes(toolId) && ['remember', 'query', 'search', 'relate', 'graph', 'review'].includes(options.toolMode)) return memoryLibrary(options);
+  if (['library', 'brain'].includes(toolId)) throw new Error('Manual source registration through the workflow connector has been retired. Use Brain remember for verified harness learnings, or Workspace Memory load for explicit Markdown inputs.');
   if (toolId === 'workspace-memory') return workspaceMemory(options);
   if (toolId === 'sandbox') return manageSandbox(options);
   throw new Error(`Unknown Doxie tool: ${toolId}`);

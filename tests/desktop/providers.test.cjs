@@ -79,7 +79,15 @@ test('saved Codex agents share installed sign-in, preserve Doxie tools and ignor
       const servers = toml.parse(headlessArgs(native).find(value => value.startsWith('mcp_servers='))).mcp_servers;
       assert.equal(servers.doxie_library_memory.command, process.execPath);
       assert.equal(servers.doxie_library_memory.env.ELECTRON_RUN_AS_NODE, '1');
+      assert.equal(servers.doxie_library_memory.enabled, true);
       if (options.mcp === false) assert.deepEqual(Object.keys(servers), ['doxie_library_memory']);
+    }
+    for (const id of ['codex', 'ollama', 'lmstudio']) {
+      const provider = providerFor(storage, id, { model: 'local-model', localCodex: false });
+      const servers = toml.parse(interactiveCodexArgs(provider).find(value => value.startsWith('mcp_servers='))).mcp_servers;
+      assert.equal(servers.doxie_library_memory.command, process.execPath, `${id} consoles must carry Brain explicitly`);
+      assert.equal(servers.doxie_library_memory.enabled, true);
+      assert.equal(provider.nativeMemory.required, true);
     }
   } finally {
     for (const [key, value] of Object.entries(previous)) {

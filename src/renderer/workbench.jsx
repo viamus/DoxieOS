@@ -36,7 +36,7 @@ function WorkspaceEditor({ workspace, close }) {
         </div>
         <small>DoxieOS copies the files into the new workspace in its application data folder.</small>
       </div>}
-      <p className="muted">Workspaces hold run inputs and outputs. Choose the agent or workflow when you run it; reusable knowledge stays in the global library.</p>
+      <p className="muted">Workspaces hold run inputs and outputs. Choose the agent or workflow when you run it; reusable knowledge stays in Brain.</p>
     </div><footer className="modal-footer"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" disabled={pending}>{workspace ? 'Save workspace' : 'Create workspace'}</Button></footer>
   </form></Modal>;
 }
@@ -49,7 +49,7 @@ export function WorkspacesPage() {
   const [remove, setRemove] = useState(null);
   const workspaces = state.workspaces.filter((workspace) => `${nameOf(workspace)} ${workspace.id} ${workspace.description || ''}`.toLowerCase().includes(search.toLowerCase()));
   const newWorkspace = () => setEdit({});
-  return <div className="page"><PageHeading icon={FolderKanban} title={t('Workspaces.Title', 'Workspaces')} subtitle={t('Workspaces.IOSubtitle', 'Folders for run inputs and outputs. Knowledge is shared through the global library.')} actions={<><Button icon={Import} onClick={() => perform('catalog:import', ['workspaces'], 'Workspace imported')}>Import</Button><Button variant="primary" icon={Plus} onClick={newWorkspace}>{t('Workspaces.New', 'New workspace')}</Button></>} />
+  return <div className="page"><PageHeading icon={FolderKanban} title={t('Workspaces.Title', 'Workspaces')} subtitle={t('Workspaces.IOSubtitle', 'Folders for run inputs and outputs. Knowledge is shared through Brain.')} actions={<><Button icon={Import} onClick={() => perform('catalog:import', ['workspaces'], 'Workspace imported')}>Import</Button><Button variant="primary" icon={Plus} onClick={newWorkspace}>{t('Workspaces.New', 'New workspace')}</Button></>} />
     <div className="toolbar"><SearchBox value={search} setValue={setSearch} placeholder={t('Workspaces.SearchPlaceholder', 'Search by name or ID…')} /></div>
     {workspaces.length ? <div className="cards">{workspaces.map((workspace) => <Panel key={workspace.id} title={nameOf(workspace)} icon={FolderKanban} hint={workspace.path} actions={<IconButton icon={Trash2} label="Delete workspace" onClick={() => setRemove(workspace)} />}>
       <div className="panel-body stack"><p>{workspace.description || 'Run inputs and outputs'}</p><div className="actions start"><Tag>Input / output</Tag></div><div className="actions start">
