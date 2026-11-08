@@ -339,8 +339,10 @@ test('extracts typed knowledge locally and clears Brain only after confirmation'
     expect(settings?.parameters).toMatchObject({ retryLimit: 5, maxTokens: 8000, reviewRequired: true });
     expect(settings.source).toMatchObject({ provider: 'doxie-extractor', path: 'memory:' + source.id });
     await page.getByLabel('Memory type', { exact: true }).selectOption('parameter');
-    await expect(page.locator('.memory-result').filter({ hasText: 'Locally extracted' })).toBeVisible();
-    await page.locator('.memory-result').first().click();
+    await expect(page.locator('.memory-result')).toHaveCount(parameters.length);
+    const extractedParameter = page.locator('.memory-result').filter({ hasText: settings.title });
+    await expect(extractedParameter).toContainText('Locally extracted');
+    await extractedParameter.click();
     await expect(page.locator('.memory-details')).toContainText('Locally extracted');
     await page.locator('.memory-details').getByRole('button', { name: 'Open source memory', exact: true }).click();
     await expect(page.locator('.memory-details h3')).toHaveText('Service settings');
