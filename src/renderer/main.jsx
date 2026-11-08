@@ -140,6 +140,9 @@ function Workbench() {
     const navigate = () => setRoute(currentRoute());
     window.addEventListener('hashchange', navigate);
     const unsubscribe = window.doxie?.onEvent((event) => {
+      if (event.type === 'navigate' && typeof event.href === 'string' && /^\/(?:agents|connectors|workflows|history|notifications)(?:[/?]|$)/.test(event.href) && !event.href.includes('\\')) {
+        window.location.hash = event.href;
+      }
       if (event.type === 'console:output' || event.type === 'agent:output') return;
       setLastEvent(event);
       if (event.type === 'notification' && event.notification?.title) notify(event.notification.title);

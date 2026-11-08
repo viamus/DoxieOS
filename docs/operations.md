@@ -135,6 +135,27 @@ download is about 44 MB and is stored under the AppData workbench's
 digest before use. The microphone records up to 60 seconds, then inserts the
 transcript into the current text field for review. Recordings are kept in memory.
 
+## Questions and desktop notifications
+
+When an agent needs a decision, its execution pauses at **Waiting for your
+answer**. Choose a suggested answer or type your own, then select **Send
+answer**. The same execution continues after the response. Workflow questions,
+including questions from loop iterations, appear in a dedicated panel on the
+workflow page. Use **Stop** to cancel a paused run.
+
+New questions, builder replies, and run outcomes are saved under
+**Notifications** and also request a native desktop alert. Clicking an alert
+restores and focuses DoxieOS and opens the source execution or conversation.
+The portable Windows package registers a per-user Start Menu shortcut for its
+notification identity. Windows notification settings and Do Not Disturb control
+whether the popup is displayed. The in-app notification remains available if
+the operating system cannot display it. Answered and cancelled questions are
+marked read and their native alerts are dismissed.
+
+Runs awaiting an answer keep their output files and transient handoffs until
+they finish or are stopped. Closing the application ends active executions;
+builder conversations can be reopened from **Sessions** after restarting.
+
 ## Workflow triggers
 
 | Trigger | Desktop behavior |

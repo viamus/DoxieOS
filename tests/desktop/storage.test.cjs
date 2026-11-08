@@ -63,10 +63,51 @@ test('reads old workspace mounts and preserves hand-authored context files', t =
   assert.deepEqual(saved.mountedLibraryIds, ['policy']);
   assert.deepEqual(saved.mountedAgentIds, ['review']);
   assert.equal(storage.get('libraries', 'policy').memories[0].name, 'Review policy');
-  assert.match(fs.readFileSync(path.join(workspace, 'CLAUDE.md'), 'utf8'), /@.*memory\/review\.md/);
+  assert.match(fs.readFileSync(path.join(workspace, 'CLAUDE.md'), 'utf8'), /Review policy.*Source:.*memory\/review\.md/);
+  assert.doesNotMatch(fs.readFileSync(path.join(workspace, 'CLAUDE.md'), 'utf8'), /@.*memory\/review\.md/);
   assert.equal(fs.readFileSync(path.join(workspace, 'AGENTS.md'), 'utf8'), 'Team instructions\n');
   storage.save('workspaces', { id: 'release', mountedLibraryIds: [] });
   assert.equal(fs.existsSync(path.join(workspace, 'CLAUDE.md')), false);
+});
+
+test('managed workspace context indexes optional library sources and retains mandatory instructions without changing originals', t => {
+  const { open } = setup(t);
+  const storage = open({ managed: true });
+  storage.save('libraries', { id: 'policy', name: 'Team Policy' });
+  const low = '---\nname: Historical examples\ndescription: Examples for incident reviews\npriority: Low\n---\n\n' + 'LARGE_OPTIONAL_REFERENCE_BODY '.repeat(5000);
+  const medium = '---\nname: Reference guide\npriority: Medium\n---\n\nMEDIUM_REFERENCE_BODY';
+  const high = '---\nname: Required review\npriority: High\n---\n\nNever publish without a human review.\n';
+  storage.writeFile('libraries', 'policy', 'memory/low.md', low);
+  storage.writeFile('libraries', 'policy', 'memory/medium.md', medium);
+  storage.writeFile('libraries', 'policy', 'memory/high.md', high);
+  const workspace = storage.save('workspaces', { id: 'release', name: 'Release' });
+  const notes = '# Project rules\n\nPreserve the customer interface.\n';
+  storage.writeFile('workspaces', workspace.id, 'WORKSPACE.md', notes);
+  storage.save('workspaces', { id: workspace.id, mountedLibraryIds: ['policy'] });
+  const codex = fs.readFileSync(path.join(workspace.path, 'AGENTS.md'), 'utf8');
+  const claude = fs.readFileSync(path.join(workspace.path, 'CLAUDE.md'), 'utf8');
+  assert(codex.includes(notes));
+  assert(codex.includes(high));
+  assert.match(claude, /^@WORKSPACE\.md$/m);
+  assert.match(claude, /^@.*memory\/high\.md$/m);
+  for (const text of [codex, claude]) {
+    assert.match(text, /Historical examples — Examples for incident reviews\. Source:.*memory\/low\.md/);
+    assert.match(text, /Reference guide\. Source:.*memory\/medium\.md/);
+    assert.doesNotMatch(text, /LARGE_OPTIONAL_REFERENCE_BODY|MEDIUM_REFERENCE_BODY/);
+    assert.doesNotMatch(text, /^@.*memory\/(?:low|medium)\.md$/m);
+    assert(Buffer.byteLength(text) < 3000);
+  }
+  assert.equal(storage.readFile('libraries', 'policy', 'memory/low.md').content, low);
+  assert.equal(storage.readFile('libraries', 'policy', 'memory/high.md').content, high);
+  assert.equal(storage.readFile('workspaces', workspace.id, 'WORKSPACE.md').content, notes);
+  storage.save('workspaces', { id: workspace.id, description: 'Updated metadata' });
+  assert.equal(fs.readFileSync(path.join(workspace.path, 'AGENTS.md'), 'utf8'), codex);
+  assert.equal(fs.readFileSync(path.join(workspace.path, 'CLAUDE.md'), 'utf8'), claude);
+
+  const custom = storage.save('workspaces', { id: 'custom', name: 'Custom' });
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) storage.writeFile('workspaces', custom.id, name, `# Custom ${name}\nKeep exactly.\n`);
+  storage.save('workspaces', { id: custom.id, mountedLibraryIds: ['policy'] });
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(fs.readFileSync(path.join(custom.path, name), 'utf8'), `# Custom ${name}\nKeep exactly.\n`);
 });
 
 test('confines workspace file operations and identifies binary previews', t => {

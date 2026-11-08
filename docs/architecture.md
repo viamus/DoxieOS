@@ -71,6 +71,9 @@ stateDiagram-v2
     [*] --> Queued
     Queued --> Running
     Running --> AwaitingApproval
+    Running --> AwaitingInput
+    AwaitingInput --> Running: User answers
+    AwaitingInput --> Cancelled: Stopped or application closes
     AwaitingApproval --> Running: Approved
     AwaitingApproval --> Cancelled: Rejected or previous session ended
     Running --> Succeeded
@@ -80,6 +83,13 @@ stateDiagram-v2
     Failed --> [*]
     Cancelled --> [*]
 ```
+
+Agent questions are validated JSON files from a completed provider turn.
+The run remains active while waiting; the next provider turn receives the
+original request and exact question/answer history under the same run ID.
+Workflow node state preserves the pending question and owning agent run, so
+parallel steps and loop iterations can wait independently. Native Electron
+notifications bring the window to the source run when clicked.
 
 ## Storage Model
 

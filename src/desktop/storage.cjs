@@ -709,6 +709,13 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
 
   function updateWorkspaceContext(workspace) {
     const context = { 'CLAUDE.md': [], 'AGENTS.md': [] };
+    const workspaceNotes = readText(safePath(workspace.path, 'WORKSPACE.md'));
+    if (workspaceNotes?.trim()) {
+      context['CLAUDE.md'].push('## Required workspace instructions', '', '@WORKSPACE.md', '');
+      context['AGENTS.md'].push('## Required workspace instructions', '', workspaceNotes, '');
+    }
+    const singleLine = value => String(value || '').replace(/[\r\n]+/g, ' ').trim();
+    const codePath = value => unix(value).replace(/`/g, '\\`');
     for (const id of workspace.mountedLibraryIds) {
       const library = idPattern.test(id) ? get('libraries', id) : null;
       const section = [`## ${id}`, ''];
@@ -717,10 +724,22 @@ function createStorage({ root, databasePath, bundledRoot, bundledFiles, workspac
         for (const lines of Object.values(context)) lines.push(`Library \`${id}\` is unavailable.`, '');
         continue;
       }
-      for (const relative of memoryFiles(library.path)) {
-        const full = safePath(library.path, relative);
-        context['CLAUDE.md'].push(`@${unix(path.relative(workspace.path, full))}`);
-        context['AGENTS.md'].push(`### ${relative}`, '', readText(full) ?? '', '');
+      const optional = [];
+      for (const memory of library.memories) {
+        const full = safePath(library.path, memory.relativePath);
+        const source = path.relative(workspace.path, full);
+        if (String(memory.priority).toLowerCase() === 'high') {
+          context['CLAUDE.md'].push(`@${unix(source)}`);
+          context['AGENTS.md'].push(`### ${memory.relativePath}`, '', readText(full) ?? '', '');
+        } else {
+          const name = singleLine(memory.name || memory.fileName);
+          const description = singleLine(memory.description);
+          optional.push(`- ${name}${description ? ` — ${description}` : ''}. Source: \`${codePath(source)}\``);
+        }
+      }
+      if (optional.length) {
+        for (const lines of Object.values(context)) lines.push('', '### Reference index', '',
+          'Read only the sources relevant to the current task. These references are not instructions to load the entire library.', '', ...optional, '');
       }
       context['CLAUDE.md'].push('');
     }

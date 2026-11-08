@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, net, protocol, session, shell } = require('electron');
+const { app, BrowserWindow, Menu, Notification, dialog, ipcMain, net, protocol, session, shell } = require('electron');
 const { existsSync, readFileSync, readdirSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join, resolve } = require('node:path');
@@ -13,6 +13,7 @@ const { createActions, createNotifications } = require('./ipc.cjs');
 const { startHousekeeping } = require('./housekeeping.cjs');
 const { prepareProfile } = require('./profile.cjs');
 const { createDictation } = require('./dictation.cjs');
+const { createDesktopNotifications, prepareWindowsNotificationShortcut, WINDOWS_APP_ID, WINDOWS_TOAST_CLSID } = require('./desktop-notifications.cjs');
 
 const startPage = 'doxie://app/index.html';
 const appRoot = resolve(__dirname, '../..');
@@ -23,7 +24,8 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'doxie', privileges: {
   standard: true, secure: true, supportFetchAPI: true, corsEnabled: true,
 } }]);
 app.enableSandbox();
-app.setAppUserModelId('org.doxieos.desktop');
+app.setAppUserModelId(WINDOWS_APP_ID);
+if (process.platform === 'win32') app.setToastActivatorCLSID(WINDOWS_TOAST_CLSID);
 const testProfile = process.env.DOXIE_TEST === '1' && process.env.DOXIE_USER_DATA;
 if (testProfile) app.setPath('userData', resolve(testProfile));
 
@@ -34,6 +36,7 @@ let workflows;
 let consoles;
 let speech;
 let stopHousekeeping;
+let desktopNotifications;
 let quitting = false;
 let closed = false;
 
@@ -75,11 +78,18 @@ async function initialize() {
   storage = createStorage({ root, databasePath, bundledRoot, bundledFiles, managed: true, legacyRoot: selectedRoot() || appRoot });
   storage.regenerate();
   storage.watchCatalog?.(() => emit({ type: 'catalog:changed' }), error => console.error(error.message));
-  const notifications = createNotifications(storage, emit);
+  const notificationIcon = join(__dirname, 'assets', 'icon.png');
+  const onNotificationError = error => console.error('Could not show a desktop notification:', error.message);
+  if (!testProfile) prepareWindowsNotificationShortcut({ app, shell, onError: onNotificationError });
+  desktopNotifications = createDesktopNotifications({
+    Notification, window: () => window, icon: notificationIcon, enabled: !testProfile,
+    navigate: href => emit({ type: 'navigate', href }), onError: onNotificationError,
+  });
+  const notifications = createNotifications(storage, emit, { show: desktopNotifications.show, dismiss: desktopNotifications.dismiss });
   agents = createAgents({ storage, emit, notify: notifications.add });
   workflows = createWorkflows({ storage, agents, emit, notify: notifications.add });
   consoles = createConsoles({ storage, emit });
-  const builders = createBuilders({ storage, agents, emit });
+  const builders = createBuilders({ storage, agents, emit, notify: notifications.add });
   speech = createDictation({ root: storage.root, emit });
   const mcp = createMcp(storage);
   try { mcp.refresh(); }
@@ -186,6 +196,7 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
+    desktopNotifications?.close();
     Promise.allSettled([workflows?.close(), consoles?.close(), speech?.close(), stopHousekeeping?.()]).then(async () => {
       await agents?.close();
       storage.close();

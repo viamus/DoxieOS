@@ -262,6 +262,25 @@ svg { flex: 0 0 auto; }
 .agent-output-details > .log-output { border-bottom: 0; border-radius: 0 0 8px 8px; }
 .agent-output-raw { margin: 10px; }
 .agent-output-raw > summary { padding-bottom: 8px; color: var(--muted); font-size: 12px; }
+.user-question { min-width: 0; padding: 16px; border: 1px solid #88654a; border-radius: 10px; background: #30271e; }
+.user-question-heading { display: flex; align-items: center; gap: 8px; color: var(--accent-strong); }
+.user-question-heading svg { flex: none; }
+.user-question-text { line-height: 1.6; overflow-wrap: anywhere; }
+.user-question-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.user-question-options .button { height: auto; min-height: 34px; max-width: 100%; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.user-question-options .button[aria-pressed="true"] { color: var(--accent-strong); border-color: var(--accent); background: #493327; }
+.user-question textarea { min-height: 88px; }
+.question-history { padding: 12px; }
+.question-history article + article { border-top: 1px solid var(--line-soft); padding-top: 12px; }
+.question-history article > div > strong { display: block; margin-bottom: 5px; color: var(--muted); font-size: 11px; }
+.context-metrics-body { padding: 0 12px 12px; font-size: 12px; }
+.context-metrics-body dl { display: grid; gap: 8px; margin: 0; }
+.context-metrics-body dl > div { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.context-metrics-body dt { color: var(--muted); }
+.context-metrics-body dd { margin: 0; }
+.context-metrics-body p { font-size: 11px; line-height: 1.5; }
+.builder-context-metrics { padding: 0 14px 14px; }
+.workflow-questions > .panel-body > section + section { padding-top: 14px; border-top: 1px solid var(--line-soft); }
 .guidance { align-items: stretch; }
 .chat { min-height: 265px; max-height: 58vh; overflow-y: auto; padding: 12px; display: grid; align-content: start; gap: 10px; }
 .chat-message { width: min(94%, 700px); border: 1px solid var(--line); border-radius: 11px; background: #242620; padding: 9px 11px; }

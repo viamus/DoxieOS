@@ -44,7 +44,11 @@ if (args[0] === 'login') {
   }
   assert.equal(args[args.indexOf('--model') + 1], 'doxie/builder-fixture');
   const request = input.split('\n\n')
-    .find(section => section.startsWith('{\n  "schema": "doxie.builder-request.v1"'));
+    .find(section => {
+      try { return JSON.parse(section)?.schema === 'doxie.builder-request.v1'; }
+      catch { return false; }
+    });
+  assert.ok(request, 'The builder must send an explicit JSON request.');
   const parsed = JSON.parse(request);
   assert.equal(parsed.schema, 'doxie.builder-request.v1');
   assert.equal(parsed.omittedTurns, 0);

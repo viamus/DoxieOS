@@ -29,6 +29,8 @@ entry points have been retired.
 | Agent editing | Edit instructions, metadata, provider, model, and reasoning effort directly. Ordinary runs use the agent's saved execution settings. |
 | AI builders | Create agents and workflows through conversations, preview drafts, and save them to the catalog. Resume saved sessions after navigation or restart. |
 | Run results | Read the final response as Markdown, including tables and links. Expand Activity, Diagnostics, or Full log for execution details. |
+| Questions and alerts | Agents pause for your clarification, then continue with your answer. Native Windows alerts open the source run or builder conversation. |
+| Context efficiency | Compact requests and bounded builder history reduce repeated text. Required instructions stay whole, with optional memories available on demand. |
 | Providers | Discover models from installed providers, share the installed Codex CLI's ChatGPT sign-in, and configure MCP servers in Settings. |
 | Voice input | Dictate locally with Whisper Tiny on the CPU and review the transcript before sending. The first use downloads the model. |
 | Packaging | Run a portable Windows app with an embedded Electron and Node.js runtime. |

@@ -25,25 +25,36 @@ function validatedEnvironment(environment = {}, perRun = false) {
   return environment;
 }
 
-function createNotifications(storage, emit) {
+function createNotifications(storage, emit, { show = () => {}, dismiss = () => {} } = {}) {
   const notifications = jsonSetting(storage, 'desktop.notifications', []);
   const persist = () => storage.setSetting('desktop.notifications', notifications);
+  function read(id) {
+    for (const item of notifications) {
+      if (!id || item.id === id) {
+        item.readAt ??= new Date().toISOString();
+        try { dismiss(item.id); } catch {}
+      }
+    }
+    persist();
+    return true;
+  }
   return {
     list: () => notifications,
     add(data) {
+      if (data.kind === 'question-resolved') {
+        for (const item of notifications) if (item.kind === 'question' && item.runId === data.runId && !item.readAt) read(item.id);
+        return null;
+      }
       const notification = { ...data, id: randomUUID(), timestamp: new Date().toISOString(), body: data.body || data.message || '' };
       notifications.unshift(notification);
       notifications.length = Math.min(notifications.length, 250);
       persist();
       emit({ type: 'notification', notification });
+      try { show(notification); }
+      catch (error) { console.error('Could not show desktop notification:', error.message); }
+      return notification;
     },
-    read(id) {
-      for (const item of notifications) {
-        if (!id || item.id === id) item.readAt ??= new Date().toISOString();
-      }
-      persist();
-      return true;
-    },
+    read,
   };
 }
 
@@ -153,6 +164,9 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
 
   return {
     bootstrap() {
+      for (const item of notifications.list()) {
+        if (item.kind === 'question' && !item.readAt && agents.getRunSummary(item.runId)?.pendingQuestion?.id !== item.questionId) notifications.read(item.id);
+      }
       const catalog = Object.fromEntries(['agents', 'workflows', 'workspaces', 'libraries', 'tools'].map(kind => [kind, storage.list(kind)]));
       const { skills, legacySkills, ...publicRoots } = storage.roots;
       catalog.workflows = catalog.workflows.map(workflow => {
@@ -320,6 +334,13 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'agent:run': (id) => agents.getRun(id),
     'agent:stop': (id) => agents.stop(id),
     'agent:guide': (id, text) => agents.addHint(id, text),
+    'agent:answer': (id, questionId, text) => {
+      const result = agents.answer(id, questionId, text);
+      for (const item of notifications.list()) {
+        if (item.runId === id && item.questionId === questionId) notifications.read(item.id);
+      }
+      return result;
+    },
     'workflow:start': (id, input) => workflows.run(id, input),
     'workflow:run': (id) => workflows.getRun(id),
     'workflow:approve': (id, node, decision) => workflows.approve(id, node, decision),

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, ArrowDownToLine, ArrowRight, BookOpen, Bot, Box, Check, Clock3, GitBranch, Grip, Layers3, Link2, Move, Pencil, Play, Plus, RotateCcw, Save, ShieldCheck, Square, Terminal, Trash2, Workflow, Wrench, X } from 'lucide-react';
+import { Activity, ArrowDownToLine, ArrowRight, BookOpen, Bot, Box, Check, Clock3, GitBranch, Grip, Layers3, Link2, MessageSquare, Move, Pencil, Play, Plus, RotateCcw, Save, ShieldCheck, Square, Terminal, Trash2, Workflow, Wrench, X } from 'lucide-react';
 import { Button, Confirm, DateTime, Empty, ErrorNotice, ExecutionFields, Field, FieldInput, IconButton, ItemRow, Loading, Modal, PageHeading, Panel, Status, Tag, active, go, invoke, nameOf, part, selectModes, slug, split, useApp, useAsync, useEffortLabel } from './ui.jsx';
-import { Guidance, LogOutput, recordRoute } from './automation.jsx';
+import { ContextMetrics, Guidance, LogOutput, UserQuestion, recordRoute } from './automation.jsx';
 import { FilesBrowser } from './workbench.jsx';
 
 const nodeKinds = ['Trigger', 'Agent', 'Aggregate', 'Output', 'Loop', 'Decision', 'Tool'];
@@ -300,6 +300,13 @@ export function WorkflowPage({ id, catalogId, runId }) {
   const [decision, setDecision] = useState(null);
   const node = nodes.find((item) => item.id === selectedNode) || nodes[0];
   const nodeRuns = Array.isArray(run?.nodeRuns) ? Object.fromEntries(run.nodeRuns.map((item) => [item.nodeId, item])) : run?.nodeRuns || {};
+  const questions = Object.values(nodeRuns).filter((entry) => entry.pendingQuestion && entry.agentRunId);
+  const questionPanel = questions.length > 0 && <Panel title={questions.length === 1 ? 'Your answer is needed' : 'Your answers are needed'} icon={MessageSquare} className="workflow-questions"><div className="panel-body stack">{questions.map((entry) => {
+    const [nodeId, iteration] = entry.nodeId.split('#iter-');
+    const definition = nodes.find((item) => item.id === nodeId);
+    const label = definition?.label || (definition?.agentId && nameOf(state.agents.find((item) => item.id === definition.agentId))) || 'Workflow step';
+    return <section className="stack" key={`${entry.agentRunId}/${entry.pendingQuestion.id}`}><h3>{label}{iteration !== undefined && ` · Item ${Number(iteration) + 1}`}</h3><UserQuestion runId={entry.agentRunId} question={entry.pendingQuestion} /></section>;
+  })}</div></Panel>;
   const nodeRun = nodeRuns[node?.id];
   const showApproval = nodeRun?.status === 'AwaitingApproval';
   const start = async (input) => {
@@ -307,11 +314,12 @@ export function WorkflowPage({ id, catalogId, runId }) {
     if (started?.id) go(recordRoute('workflows', workflow, '', started.id));
     return started;
   };
-  if (!workflow) return <div className="page"><PageHeading title="Workflow not found" icon={Workflow} back={{ to: '/workflows', label: 'Workflows' }} />{run && <Panel title={`Run ${run.id}`} icon={Terminal}>{Object.values(nodeRuns).map((entry) => <div key={entry.nodeId} className="panel-body"><h3>{entry.nodeId}</h3><LogOutput lines={entry.logs} /></div>)}</Panel>}</div>;
+  if (!workflow) return <div className="page"><PageHeading title="Workflow not found" icon={Workflow} back={{ to: '/workflows', label: 'Workflows' }} />{questionPanel}{run && <Panel title={`Run ${run.id}`} icon={Terminal}>{Object.values(nodeRuns).map((entry) => <div key={entry.nodeId} className="panel-body"><h3>{entry.nodeId}</h3><LogOutput lines={entry.logs} /></div>)}</Panel>}</div>;
   return <div className="page"><PageHeading title={nameOf(workflow)} icon={Workflow} subtitle={workflow.description} back={{ to: '/workflows', label: 'Workflows' }} actions={<>
     <Button icon={ArrowDownToLine} onClick={() => perform('catalog:export', ['workflows', id, workflow.catalogId])}>Export</Button><Button to={recordRoute('workflows', workflow, 'edit')} icon={Pencil}>Edit</Button><Button to={`/workflows/new/chat?edit=${part(id)}&catalog=${part(workflow.catalogId || 'default')}`} icon={Pencil}>Edit with AI</Button><Button icon={Play} variant="primary" disabled={workflow.enabled === false} onClick={() => workflow.trigger?.inputs?.length ? setShowRun(true) : start({})}>Run workflow</Button>
   </>} />
   <div className="toolbar"><Status status={workflow.enabled === false ? 'Disabled' : 'Enabled'} /><Tag>{triggerKind(workflow.trigger?.kind)}</Tag>{workflow.trigger?.cronExpression && <Tag>{workflow.trigger.cronExpression}</Tag>}<Tag>{workflow.category || 'Other'}</Tag><label className="check"><input type="checkbox" checked={workflow.enabled !== false} onChange={(event) => perform('catalog:save', ['workflows', { ...workflow, enabled: event.target.checked }])} /> Enable workflow</label><IconButton icon={Trash2} label="Delete workflow" onClick={() => setConfirm(true)} /></div>
+  {questionPanel}
   <Panel title="Workflow graph" icon={GitBranch} actions={<Tag>{nodes.length} nodes</Tag>}><Graph nodes={nodes} edges={edges} selected={node?.id} select={setSelectedNode} nodeRuns={nodeRuns} /></Panel>
   <div className="dashboard-grid detail-grid"><Panel title="Run timeline" icon={Activity} actions={run && <><Status status={run.status} />{active(run.status) && <Button icon={Square} onClick={() => perform('workflow:stop', [run.id])}>Stop</Button>}</>}>
     {run ? <><div className="panel-body execution-meta"><DateTime value={run.startedAt} />{run.triggeredBy && <Tag>{run.triggeredBy}</Tag>}</div><div className="row-list">{nodes.map((item) => {
@@ -320,10 +328,11 @@ export function WorkflowPage({ id, catalogId, runId }) {
       const detail = [nodeType(item), nameOf(provider) || step?.providerId, step?.model, step?.effort && effortLabel(step.effort)].filter(Boolean).join(' · ');
       return <ItemRow key={item.id} title={item.label || item.id} detail={detail} icon={nodeIcon(item)} onClick={() => setSelectedNode(item.id)}><Status status={step?.status || 'Pending'} /></ItemRow>;
     })}</div>
-      {active(run.status) && <div className="panel-body"><Guidance title="Guide the running workflow…" submit={(text) => perform('workflow:guide', [run.id, text], 'Guidance sent')} /></div>}
+      {active(run.status) && run.status !== 'AwaitingInput' && !questions.length && <div className="panel-body"><Guidance title="Guide the running workflow…" submit={(text) => perform('workflow:guide', [run.id, text], 'Guidance sent')} /></div>}
     </> : result.loading && selectedRun ? <Loading /> : <Empty title="No run selected" icon={Activity} />}
   </Panel><Panel title={node?.label || 'Node output'} icon={Terminal} actions={nodeRun && <>{nodeRun.hasTransientContext && <Tag>Transient handoff</Tag>}<Status status={nodeRun.status} /></>}>
     {nodeRun ? <><LogOutput lines={nodeRun.logs} />{nodeRun.outputSummary && <div className="panel-body"><pre>{typeof nodeRun.outputSummary === 'string' ? nodeRun.outputSummary : JSON.stringify(nodeRun.outputSummary, null, 2)}</pre></div>}
+      {nodeRun.contextMetrics && <div className="panel-body"><ContextMetrics metrics={nodeRun.contextMetrics} /></div>}
       {showApproval && <div className="panel-body stack"><strong>Awaiting your decision</strong><div className="actions start"><Button icon={Check} variant="primary" onClick={() => setDecision({ approval: true, node })}>Approve</Button><Button icon={X} variant="danger" onClick={() => setDecision({ approval: false, node })}>Reject</Button></div></div>}
       {!active(run.status) && <div className="panel-body"><Button icon={RotateCcw} onClick={() => setRerun(true)}>Rerun from this node</Button></div>}
     </> : <Empty compact title="No node output yet" icon={Terminal} />}

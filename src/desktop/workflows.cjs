@@ -7,8 +7,8 @@ const { safePath } = require('./storage.cjs');
 const { runNativeUtility } = require('./native-tools.cjs');
 
 const logSeparator = '\x1e';
-const runKinds = ['Queued', 'Running', 'Succeeded', 'Failed', 'Cancelled', 'AwaitingApproval'];
-const nodeStatuses = ['Pending', 'Running', 'Succeeded', 'Failed', 'Skipped', 'AwaitingApproval'];
+const runKinds = ['Queued', 'Running', 'Succeeded', 'Failed', 'Cancelled', 'AwaitingApproval', 'AwaitingInput'];
+const nodeStatuses = ['Pending', 'Running', 'Succeeded', 'Failed', 'Skipped', 'AwaitingApproval', 'AwaitingInput'];
 const nodeKinds = ['trigger', 'agent', 'aggregate', 'output', 'loop', 'decision', 'tool'];
 const triggerKinds = ['manual', 'cron', 'event', 'webhook'];
 const terminal = new Set(['Succeeded', 'Failed', 'Cancelled']);
@@ -54,6 +54,9 @@ function initializeRunStore(db) {
   if (!nodeColumns.has('model')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN model TEXT NULL');
   if (!nodeColumns.has('effort')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN effort TEXT NULL');
   if (!nodeColumns.has('has_transient_context')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN has_transient_context INTEGER NOT NULL DEFAULT 0');
+  if (!nodeColumns.has('pending_question')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN pending_question TEXT NULL');
+  if (!nodeColumns.has('agent_run_id')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN agent_run_id TEXT NULL');
+  if (!nodeColumns.has('context_metrics')) db.exec('ALTER TABLE workflow_node_runs ADD COLUMN context_metrics TEXT NULL');
 
   const updateRun = db.prepare(`
     INSERT INTO workflow_runs (id, workflow_id, triggered_by, started_at, finished_at, status, trigger_inputs, catalog_id)
@@ -62,11 +65,12 @@ function initializeRunStore(db) {
       trigger_inputs=excluded.trigger_inputs, catalog_id=excluded.catalog_id
   `);
   const updateNode = db.prepare(`
-    INSERT INTO workflow_node_runs (run_id, node_id, status, started_at, finished_at, output_summary, logs, provider_id, model, effort, has_transient_context)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO workflow_node_runs (run_id, node_id, status, started_at, finished_at, output_summary, logs, provider_id, model, effort, has_transient_context, pending_question, agent_run_id, context_metrics)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (run_id, node_id) DO UPDATE SET status=excluded.status, started_at=excluded.started_at,
       finished_at=excluded.finished_at, output_summary=excluded.output_summary, logs=excluded.logs,
-      provider_id=excluded.provider_id, model=excluded.model, effort=excluded.effort, has_transient_context=excluded.has_transient_context
+      provider_id=excluded.provider_id, model=excluded.model, effort=excluded.effort, has_transient_context=excluded.has_transient_context,
+      pending_question=excluded.pending_question, agent_run_id=excluded.agent_run_id, context_metrics=excluded.context_metrics
   `);
 
   const runs = new Map(db.prepare('SELECT * FROM workflow_runs').all().map(row => [row.id, {
@@ -93,6 +97,9 @@ function initializeRunStore(db) {
       model: row.model,
       effort: row.effort,
       hasTransientContext: Boolean(row.has_transient_context),
+      pendingQuestion: row.pending_question ? readInputs(row.pending_question) : null,
+      agentRunId: row.agent_run_id,
+      contextMetrics: row.context_metrics ? readInputs(row.context_metrics) : null,
       logs: row.logs ? row.logs.split(logSeparator) : [],
     };
   }
@@ -104,7 +111,9 @@ function initializeRunStore(db) {
         run.status, JSON.stringify(run.triggerInputs), run.catalogId);
       for (const node of nodes) {
         updateNode.run(run.id, node.nodeId, node.status, node.startedAt, node.finishedAt,
-          node.outputSummary, node.logs.join(logSeparator), node.providerId, node.model, node.effort, Number(node.hasTransientContext));
+          node.outputSummary, node.logs.join(logSeparator), node.providerId, node.model, node.effort, Number(node.hasTransientContext),
+          node.pendingQuestion ? JSON.stringify(node.pendingQuestion) : null, node.agentRunId ?? null,
+          node.contextMetrics ? JSON.stringify(node.contextMetrics) : null);
       }
       db.exec('COMMIT');
     } catch (error) {
@@ -151,7 +160,7 @@ function readInputs(value) {
 }
 
 function createNodeRun(nodeId) {
-  return { nodeId, status: 'Pending', startedAt: null, finishedAt: null, outputSummary: null, providerId: null, model: null, effort: null, hasTransientContext: false, logs: [] };
+  return { nodeId, status: 'Pending', startedAt: null, finishedAt: null, outputSummary: null, providerId: null, model: null, effort: null, hasTransientContext: false, pendingQuestion: null, agentRunId: null, contextMetrics: null, logs: [] };
 }
 
 function safeId(value, label) {
@@ -705,8 +714,9 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     run.status = 'Cancelled';
     run.finishedAt = now();
     for (const node of Object.values(run.nodeRuns)) {
-      if (!['Pending', 'Running', 'AwaitingApproval'].includes(node.status)) continue;
+      if (!['Pending', 'Running', 'AwaitingApproval', 'AwaitingInput'].includes(node.status)) continue;
       node.status = 'Skipped';
+      node.pendingQuestion = null;
       node.finishedAt = run.finishedAt;
       node.logs.push('[skipped - previous DoxieOS session ended]');
     }
@@ -721,6 +731,13 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
   function update(run, nodes) {
     store.save(run, nodes);
     publish(run);
+  }
+
+  function refreshWaitingStatus(context) {
+    const { run, controller, approvals } = context;
+    if (controller.signal.aborted || terminal.has(run.status)) return;
+    run.status = Object.values(run.nodeRuns).some(record => record.status === 'AwaitingInput')
+      ? 'AwaitingInput' : approvals.size ? 'AwaitingApproval' : 'Running';
   }
 
   function getRun(id) {
@@ -747,7 +764,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       throw new Error('Workflow guidance is limited to 4 KiB per message and 64 KiB per run.');
     }
     context.hints.push(hint);
-    const targets = Object.values(context.run.nodeRuns).filter(node => ['Running', 'AwaitingApproval'].includes(node.status));
+    const targets = Object.values(context.run.nodeRuns).filter(node => ['Running', 'AwaitingApproval', 'AwaitingInput'].includes(node.status));
     for (const node of targets) node.logs.push('[operator hint] transient guidance received');
     const sendAgentHint = agents.addHint ?? agents.addOperatorHint;
     for (const [nodeId, agentId] of context.agentRuns) {
@@ -848,7 +865,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       }
       await executeGraph(context, scope, definition.mainNodes, definition.mainEdges, replay);
     } catch (error) {
-      const pending = Object.values(run.nodeRuns).find(node => node.status === 'Pending' || node.status === 'Running');
+      const pending = Object.values(run.nodeRuns).find(node => ['Pending', 'Running', 'AwaitingInput', 'AwaitingApproval'].includes(node.status));
       if (pending) {
         pending.status = 'Failed';
         pending.finishedAt = now();
@@ -857,9 +874,10 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       if (!controller.signal.aborted) run.status = 'Failed';
     } finally {
       await clearTransient(run.id);
-      const unfinished = Object.values(run.nodeRuns).filter(node => ['Pending', 'Running'].includes(node.status));
+      const unfinished = Object.values(run.nodeRuns).filter(node => ['Pending', 'Running', 'AwaitingInput', 'AwaitingApproval'].includes(node.status));
       for (const node of unfinished) {
         node.status = 'Skipped';
+        node.pendingQuestion = null;
         node.finishedAt = now();
         node.logs.push(controller.signal.aborted ? '[skipped - run cancelled]' : '[skipped - owner did not run]');
       }
@@ -985,6 +1003,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     record.providerId = original.providerId;
     record.model = original.model;
     record.effort = original.effort;
+    record.contextMetrics = original.contextMetrics ?? null;
     record.hasTransientContext = original.hasTransientContext;
     record.logs.push(`[rerun-from] reused artifacts from run ${replay.previous.id}, node ${node.id}`);
     update(context.run, [record]);
@@ -1122,9 +1141,19 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       arguments: args, inputs, mode: modeId, modeId, keepSessionAlive: mode?.keepSessionAlive ?? false,
       workspaceId: workspace?.id, workspacePath: workspace?.path, cwd: workspace?.path, env, catalogId: agent.catalogId,
       providerId, model, effort, handoff, guidance: [...context.hints], contextOutputPath: safePath(transport, 'context.json'), workflowRunId: run.id, onOutput,
+      onQuestion(question, agentRunId) {
+        if (scope.signal.aborted) return;
+        record.agentRunId = agentRunId ?? record.agentRunId;
+        record.contextMetrics = agents.getRunSummary?.(record.agentRunId)?.contextMetrics ?? record.contextMetrics;
+        record.pendingQuestion = question ? structuredClone(question) : null;
+        record.status = question ? 'AwaitingInput' : 'Running';
+        refreshWaitingStatus(context);
+        update(run, [record]);
+      },
     });
     const agentRunId = typeof started === 'string' ? started : started?.id;
     if (!agentRunId) throw new Error(`${role} '${agentId}' did not return a run id`);
+    record.agentRunId = agentRunId;
     context.agentRuns.set(record.nodeId, agentRunId);
     const cancelAgent = () => {
       Promise.resolve().then(() => agents.stop(agentRunId)).catch(error => record.logs.push(`[warning] ${error.message}`));
@@ -1135,11 +1164,13 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       record.providerId = started?.providerId ?? null;
       record.model = started?.model ?? null;
       record.effort = started?.effort ?? null;
+      record.contextMetrics = started?.contextMetrics ?? record.contextMetrics;
       update(run, [record]);
       const result = await agents.wait(agentRunId);
       record.providerId = result?.providerId ?? record.providerId;
       record.model = result?.model ?? record.model;
       record.effort = result?.effort ?? record.effort;
+      record.contextMetrics = result?.contextMetrics ?? record.contextMetrics;
       for (const line of (result?.output ?? []).slice(mirrored)) onOutput(line);
       scope.signal.throwIfAborted();
       if (!['completed', 'succeeded'].includes(lower(result?.status))) {
@@ -1168,6 +1199,9 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     } finally {
       scope.signal.removeEventListener('abort', cancelAgent);
       context.agentRuns.delete(record.nodeId);
+      record.pendingQuestion = null;
+      if (record.status === 'AwaitingInput') record.status = 'Running';
+      refreshWaitingStatus(context);
     }
   }
 
@@ -1302,7 +1336,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     record.status = 'AwaitingApproval';
     record.logs.push('[approval-gate] paused - waiting for human decision');
     if (inputs.prompt?.trim()) record.logs.push(`[approval-gate] prompt: ${inputs.prompt}`);
-    run.status = 'AwaitingApproval';
+    refreshWaitingStatus(context);
     let result;
     try {
       update(run, [record]);
@@ -1316,7 +1350,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       scope.signal.removeEventListener('abort', onAbort);
       context.approvals.delete(key);
     }
-    run.status = context.approvals.size ? 'AwaitingApproval' : 'Running';
+    refreshWaitingStatus(context);
     if (!result.approved) {
       const reason = result.comment || '(no reason given)';
       record.outputSummary = `rejected: ${reason}`;
