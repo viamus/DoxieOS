@@ -185,6 +185,7 @@ function createMemoryStore({ root, databasePath } = {}) {
     if (kind === 'parameter' && parameters === null) throw new Error('A parameter memory needs typed parameters.');
     if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 40 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 100))) throw new Error('Memory tags must be a short text list.');
     const tags = [...new Set((input.tags || []).map(tag => tag.trim()).filter(Boolean))];
+    if ([title, content, ...tags].some(value => credentialValue.test(value))) throw new Error('Credentials cannot be saved in memory text or tags.');
     const libraryId = scopeValue(input.libraryId);
     const catalogId = scopeValue(input.catalogId);
     const { source, identity } = normalizedSource(input.source, title);

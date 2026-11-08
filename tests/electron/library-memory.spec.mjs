@@ -114,17 +114,49 @@ test('observes autonomous agent learnings, revision history and harness-managed 
     await expect(page.locator('.memory-details')).toContainText(firstRunId);
     for (const name of ['New memory', 'New library', 'Revise memory', 'Archive memory', 'Connect']) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
     const draggable = page.getByRole('button', { name: 'Open memory Canary rollout', exact: true });
+    await expect(draggable).toBeVisible();
+    const graphNode = await draggable.elementHandle();
+    expect(graphNode).not.toBeNull();
     const initialPosition = await draggable.getAttribute('transform');
-    const bounds = await draggable.boundingBox();
+    const refreshLibrary = () => application.evaluate(async ({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      for (let index = 0; index < 8; index++) {
+        contents.send('doxie:event', { type: 'memory:changed' });
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    });
+    await refreshLibrary();
+    expect(await graphNode.evaluate(node => node.isConnected)).toBe(true);
+    await expect(draggable).toHaveAttribute('transform', initialPosition);
+    await expect(draggable).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.memory-details').getByRole('heading', { name: 'Canary rollout', exact: true })).toBeVisible();
+    await draggable.scrollIntoViewIfNeeded();
+    let bounds;
+    await expect.poll(async () => {
+      bounds = await draggable.boundingBox();
+      return Boolean(bounds?.width && bounds?.height);
+    }).toBe(true);
     await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     await page.mouse.down();
     await page.mouse.move(bounds.x + bounds.width / 2 + 38, bounds.y + bounds.height / 2 + 24, { steps: 5 });
     await page.mouse.up();
     await expect(draggable).not.toHaveAttribute('transform', initialPosition);
+    const draggedPosition = await draggable.getAttribute('transform');
     await page.getByRole('button', { name: 'Zoom in memory map', exact: true }).click();
+    await expect(page.locator('.memory-map-scale')).toHaveText('120%');
+    await refreshLibrary();
+    expect(await graphNode.evaluate(node => node.isConnected)).toBe(true);
+    await expect(draggable).toHaveAttribute('transform', draggedPosition);
     await expect(page.locator('.memory-map-scale')).toHaveText('120%');
     await page.getByRole('button', { name: 'Reset memory map', exact: true }).click();
     await expect(page.locator('.memory-map-scale')).toHaveText('100%');
+    await page.getByRole('searchbox', { name: 'Search memories…', exact: true }).fill('x'.repeat(513));
+    await expect(page.getByRole('alert').filter({ hasText: '512' })).toBeVisible();
+    await expect(page.getByText('Showing the last available view.', { exact: true })).toBeVisible();
+    expect(await graphNode.evaluate(node => node.isConnected)).toBe(true);
+    await expect(draggable).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('searchbox', { name: 'Search memories…', exact: true }).fill('');
+    await expect(page.getByRole('alert').filter({ hasText: '512' })).toHaveCount(0);
     await page.getByRole('searchbox', { name: 'Search memories…', exact: true }).fill('canary');
     await expect(page.locator('.memory-result')).toHaveCount(1);
     await page.getByLabel('Memory type', { exact: true }).selectOption('entity');

@@ -64,6 +64,29 @@ function layout(nodes, edges) {
 const kindLabel = kind => kind === 'parameter' ? 'Parameter' : kind === 'entity' ? 'Entity' : 'Memory';
 const shortLabel = value => value.length > 20 ? `${value.slice(0, 19)}…` : value;
 
+function retainPositions(nodes, initial, previous) {
+  const positions = Object.fromEntries(nodes.filter(node => previous[node.id]).map(node => [node.id, previous[node.id]]));
+  for (const node of nodes) {
+    if (positions[node.id]) continue;
+    const preferred = initial[node.id];
+    const candidates = [preferred];
+    for (let x = 94; x <= width - 94; x += 24) for (let y = 48; y <= height - 48; y += 24) candidates.push({ x, y });
+    let best;
+    let bestOverlap = Infinity;
+    let bestDistance = Infinity;
+    for (const candidate of candidates) {
+      const overlap = Object.values(positions).reduce((total, position) => total
+        + Math.max(0, 180 - Math.abs(candidate.x - position.x)) * Math.max(0, 72 - Math.abs(candidate.y - position.y)), 0);
+      const distance = Math.hypot(candidate.x - preferred.x, candidate.y - preferred.y);
+      if (overlap < bestOverlap || (overlap === bestOverlap && distance < bestDistance)) {
+        best = candidate; bestOverlap = overlap; bestDistance = distance;
+      }
+    }
+    positions[node.id] = best;
+  }
+  return positions;
+}
+
 export function MemoryGraph({ graph, selectedId, onSelect }) {
   const nodes = graph?.nodes || [];
   const edges = graph?.edges || [];
@@ -74,7 +97,9 @@ export function MemoryGraph({ graph, selectedId, onSelect }) {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const drag = useRef(null);
   const marker = useId().replace(/:/g, '');
-  useEffect(() => { setPositions(initial); setZoom(1); setPan({ x: 0, y: 0 }); }, [initial]);
+  useEffect(() => {
+    setPositions(previous => retainPositions(nodes, initial, previous));
+  }, [initial]);
   const fit = () => { setPositions(initial); setZoom(1); setPan({ x: 0, y: 0 }); };
   if (!nodes.length) return <Empty title="Your agents' memory map starts here" detail="Agents record reusable knowledge as they work. Existing Codex and Claude memories are synced automatically by the harness." />;
   return <div className="memory-map">

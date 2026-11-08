@@ -92,6 +92,31 @@ test('learned parameters reject credential keys, concrete secret values and non-
   assert.equal(store.get(saved.id).parameters.maxTokens, 8000);
 });
 
+test('credential material in memory titles, content and tags is rejected without persisting or changing an existing revision', t => {
+  const { store } = setup(t);
+  const values = [
+    'sk' + '-' + 'x'.repeat(24),
+    'gh' + 'p_' + 'x'.repeat(24),
+    'ey' + 'J' + 'x'.repeat(12) + '.' + 'x'.repeat(12) + '.signature',
+    '-----BEGIN ' + 'PRIVATE KEY-----\nfixture\n-----END ' + 'PRIVATE KEY-----',
+    'https://' + 'fixture-user:fixture-password@example.invalid',
+  ];
+  for (const value of values) {
+    for (const fields of [{ title: value }, { content: `Unverified material: ${value}` }, { tags: [value] }]) {
+      assert.throws(() => store.remember({ title: 'Candidate learning', content: 'A verified non-secret fact.', ...fields }), /Credentials/);
+      assert.equal(store.stats().total, 0);
+      assert.deepEqual(store.sources(), []);
+    }
+  }
+  const saved = store.remember({ title: 'Credential handling guidance',
+    content: 'Do not store API keys or passwords. Keep references to credentials instead.', tags: ['credential-guidance'] });
+  assert.throws(() => store.remember({ ...saved, content: values[0] }), /Credentials/);
+  assert.equal(store.stats().total, 1);
+  assert.equal(store.get(saved.id).content, saved.content);
+  assert.equal(store.get(saved.id).supersededBy, null);
+  assert.equal(store.search({ query: 'credential guidance' }).results[0].id, saved.id);
+});
+
 test('catalog synchronization copies central knowledge idempotently and revisions remain searchable', t => {
   const { store } = setup(t);
   const library = { id: 'global', name: 'Global library', catalogId: 'team', path: 'catalog/global', memories: [
