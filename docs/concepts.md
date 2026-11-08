@@ -10,8 +10,8 @@ these concepts define the product model.
 | Agent | A model-driven unit of work with instructions, inputs, an optional execution preference, and an output contract. | `.doxie/agents/<id>/` |
 | Connector | A built-in operation such as Approval, Loop, Aggregate, Library, or the model-backed Prompt. | `.doxie/tools/<id>/` |
 | Workflow | A graph of agent and connector nodes with explicit dependencies. | `.doxie/workflows/<id>/workflow.json` |
-| Library | A reusable memory pack mounted into workspaces or dispatched agents. | `.doxie/libraries/<id>/` |
-| Workspace | A persistent project folder where agents can read context and write artifacts. | `.workspace/` by default |
+| Library | Shared memories, entities, evidence relationships, and learned parameters, with optional source collections. | `.memory/knowledge.db`; source collections under `.doxie/libraries/<id>/` |
+| Workspace | A persistent input/output folder selected for an agent, workflow, or console execution. | `.workspace/` by default |
 | Catalog | A root folder containing Doxie agents, workflows, and libraries. | `.doxie/` or custom catalog folders |
 | Provider | A CLI-backed execution target such as Claude Code or OpenAI Codex. | App settings and provider config |
 | Run | A persisted execution record for an agent or workflow. | SQLite state and run output folders |
@@ -68,30 +68,38 @@ flowchart LR
 
 ## Workspaces
 
-Workspaces make agent work less generic. They can hold project context,
-workspace memories, mounted libraries, generated outputs, and handoff artifacts.
-
-When a workspace is selected, DoxieOS can inject:
-
-- `WORKSPACE.md`;
-- workspace `memory/*.md`;
-- mounted library memories;
-- operator hints collected during a run.
+Workspaces contain input files, generated outputs, and handoff artifacts.
+Choose the workspace when running an agent, workflow, or console. Agents and
+libraries are not mounted to it. DoxieOS does not inject `WORKSPACE.md` or
+workspace memory folders into model requests. Existing files remain available
+as inputs, and manually authored provider instruction files remain owned by
+their author.
 
 ## Libraries
 
-Libraries are reusable memory packs. They are useful for standards, design
-systems, delivery playbooks, privacy rules, vendor integration notes, and team
-ways of working.
+The library is a central knowledge base owned exclusively by the agent harness.
+Its interface is for inspection, without manual registration. Memories describe verified facts,
+entities, or typed parameters. Evidence relationships connect supporting,
+conflicting, related, and superseding records. Source paths, providers and run
+IDs retain provenance; revision history remains available after updates.
+
+All model executions can record verified learnings autonomously. Manual
+Markdown files stay in a workspace and enter an execution through the native
+Workspace Memory connector. Loading them does not directly register library
+knowledge.
 
 ```mermaid
 flowchart TD
-    Library["Library"] --> Manifest["library.json"]
-    Library --> Memories["memory markdown files"]
-    Workspace["Workspace"] --> Mount["Mounted library"]
-    Mount --> Dispatch["Agent dispatch context"]
-    Memories --> Dispatch
+    Sources["Codex / Claude Code / source collections"] --> Library["Central library"]
+    Library --> Graph["Memories and evidence graph"]
+    Library --> Search["Text and optional semantic retrieval"]
+    Agent["Agent / Workflow"] -->|Native memory tools| Search
+    Agent -->|Verified learnings| Graph
+    Agent --> Workspace["Input / Output workspace"]
 ```
+
+Learning adds knowledge records and relationships; it does not train or change
+the provider's model weights. See the [library guide](library-memory.md).
 
 ## Providers
 

@@ -142,13 +142,15 @@ test('keeps concurrent questions visible when another question or native approva
   const started = engine.run(definition.id);
   await until(() => Object.values(engine.getRun(started.id).nodeRuns).filter(record => record.status === 'AwaitingInput').length === 2);
   assert.equal(engine.getRun(started.id).nodeRuns.review.status, 'AwaitingApproval');
-  replies.get('1')();
+  const firstAgentRunId = engine.getRun(started.id).nodeRuns.first.agentRunId;
+  const secondAgentRunId = engine.getRun(started.id).nodeRuns.second.agentRunId;
+  replies.get(firstAgentRunId)();
   await until(() => engine.getRun(started.id).nodeRuns.first.status === 'Succeeded');
   assert.equal(engine.getRun(started.id).status, 'AwaitingInput');
   assert.equal(engine.approve(started.id, 'review', true), true);
   await until(() => engine.getRun(started.id).nodeRuns.review.status === 'Succeeded');
   assert.equal(engine.getRun(started.id).status, 'AwaitingInput');
-  replies.get('2')();
+  replies.get(secondAgentRunId)();
   assert.equal((await engine.wait(started.id)).status, 'Succeeded');
 
   const another = engine.run(definition.id);
@@ -571,7 +573,7 @@ test('dispatches model-backed Prompt connectors and their legacy agent aliases w
   assert.equal(launched.length, 2);
 });
 
-test('mounts a library through a native connector and keeps repeated mounts idempotent', async t => {
+test('rejects retired library mounts without binding knowledge or changing workspace files', async t => {
   const root = await mkdtemp(path.join(tmpdir(), 'doxie-mount-'));
   const storage = createStorage({ root, databasePath: ':memory:', managed: true });
   const engine = createWorkflows({ storage, agents: { start() { assert.fail('Mount must run without a provider'); } } });
@@ -587,11 +589,75 @@ test('mounts a library through a native connector and keeps repeated mounts idem
     node('default-workspace', 'Tool', { toolId: 'library', toolMode: 'mount', inputs: { libraryId: 'release' } }),
   ], [edge('explicit', 'default-workspace')], { workspaceId: workspace.id }));
   const result = await engine.wait(engine.run(definition.id).id);
-  assert.equal(result.status, 'Succeeded');
-  assert.deepEqual(storage.get('workspaces', workspace.id).mountedLibraryIds, ['release']);
-  const workspaceContext = await readFile(path.join(workspace.path, 'AGENTS.md'), 'utf8');
-  assert.match(workspaceContext, /Source: `.*release\/memory\/check\.md`/);
-  assert.doesNotMatch(workspaceContext, /Read the checklist/);
+  assert.equal(result.status, 'Failed');
+  assert(result.nodeRuns.explicit.logs.some(line => /Library mount has been retired/.test(line)));
+  assert.equal(result.nodeRuns['default-workspace'].status, 'Skipped');
+  assert.equal(Object.keys(storage.get('workspaces', workspace.id)).some(key => /^mounted/i.test(key)), false);
+  await assert.rejects(readFile(path.join(workspace.path, 'AGENTS.md')), { code: 'ENOENT' });
   assert.equal(await readFile(path.join(library.path, 'memory', 'check.md'), 'utf8'), 'Read the checklist.');
   assert.equal(result.nodeRuns['default-workspace'].providerId, null);
+});
+
+test('native global memory query runs without a workspace and hands bounded context to a consumer', async t => {
+  const definition = workflow([
+    node('knowledge', 'Tool', { toolId: 'library', toolMode: 'query', workspaceId: 'retired-workspace', inputs: { query: 'release checklist', limit: '2' } }),
+    node('consume', 'agent', { agentId: 'consume', workspaceId: 'target' }),
+  ], [edge('knowledge', 'consume')]);
+  let received;
+  const { engine, storage, runs } = await fixture(t, definition, async (id, params) => {
+    received = JSON.parse(params.handoff.sources[0].contextJson);
+    assert.equal(received.schema, 'doxie.native-memory.v1');
+    assert.equal(received.action, 'query');
+    assert.equal(received.result.results[0].content, 'Review the release checklist.');
+  });
+  storage.memory = { search(options) {
+    assert.equal(options.query, 'release checklist');
+    assert.equal(options.limit, 2);
+    return { query: options.query, results: [{ id: 'knowledge-1', content: 'Review the release checklist.' }], truncated: false, bytes: 29 };
+  } };
+  const result = await engine.wait(engine.run(definition.id).id);
+  assert.equal(result.status, 'Succeeded');
+  assert.equal(result.nodeRuns.knowledge.hasTransientContext, true);
+  assert.equal(result.nodeRuns.knowledge.providerId, null);
+  const receipt = JSON.parse(await readFile(path.join(runs, result.id, 'knowledge', 'library.json'), 'utf8'));
+  assert.deepEqual(receipt, received);
+  assert(!JSON.stringify(result).includes('Review the release checklist.'), 'retrieved payload stays in handoff/artifact rather than logs');
+});
+
+test('native global memory context enforces the 64 KiB handoff limit', async t => {
+  const definition = workflow([node('knowledge', 'Tool', { toolId: 'library', toolMode: 'query', inputs: { query: 'large' } })], []);
+  const { engine, storage } = await fixture(t, definition);
+  storage.memory = { search: () => ({ results: [{ content: 'x'.repeat(65536) }] }) };
+  const result = await engine.wait(engine.run(definition.id).id);
+  assert.equal(result.status, 'Failed');
+  assert(result.nodeRuns.knowledge.logs.some(line => /64 KiB/.test(line)));
+  assert.equal(result.nodeRuns.knowledge.hasTransientContext, false);
+});
+
+test('explicit Workspace Memory inputs reach only downstream agents while raw documents never enter the central library', async t => {
+  const definition = workflow([
+    node('load-manual', 'Tool', { toolId: 'workspace-memory', toolMode: 'load', workspaceId: 'target', inputs: { paths: ['manual/source.md'] } }),
+    node('consume', 'Agent', { agentId: 'consumer', workspaceId: 'target' }),
+  ], [edge('load-manual', 'consume')]);
+  const original = '# Manual source\r\n  Preserve spacing and revisão 🐕.\n';
+  let received;
+  const { engine, storage, workspace, launched, runs } = await fixture(t, definition, async (id, params) => {
+    assert.equal(id, 'consumer');
+    received = JSON.parse(params.handoff.sources[0].contextJson);
+    assert.equal(received.schema, 'doxie.workspace-memory.v1');
+    assert.equal(received.sources[0].path, 'manual/source.md');
+    assert.equal(received.sources[0].content, original);
+    assert.equal(received.sources[0].bytes, Buffer.byteLength(original));
+  });
+  storage.memory = { remember() { assert.fail('A manual source is not a verified learning'); }, importText() { assert.fail('Raw Markdown must not be imported'); } };
+  await mkdir(path.join(workspace.path, 'manual'));
+  await writeFile(path.join(workspace.path, 'manual', 'source.md'), original, 'utf8');
+  const result = await engine.wait(engine.run(definition.id).id);
+  assert.equal(result.status, 'Succeeded', JSON.stringify(result.nodeRuns));
+  assert.deepEqual(launched.map(item => item.id), ['consumer']);
+  assert.equal(result.nodeRuns['load-manual'].providerId, null);
+  assert.equal(result.nodeRuns['load-manual'].hasTransientContext, true);
+  assert.equal(await readFile(path.join(workspace.path, 'manual', 'source.md'), 'utf8'), original);
+  assert.deepEqual(JSON.parse(await readFile(path.join(runs, result.id, 'load-manual', 'workspace-memory.json'), 'utf8')), received);
+  assert(!JSON.stringify(result).includes('Preserve spacing'), 'document text is delivered as context rather than diagnostics');
 });

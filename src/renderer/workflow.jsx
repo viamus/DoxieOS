@@ -16,6 +16,7 @@ const connectorTypes = {
   'if-else': { name: 'If / else', icon: GitBranch },
   'write-to-workspace': { name: 'Write to workspace', icon: ArrowDownToLine },
   library: { name: 'Library', icon: BookOpen },
+  'workspace-memory': { name: 'Workspace Memory', icon: BookOpen },
   sandbox: { name: 'Sandbox', icon: Box },
   prompt: { name: 'Prompt', icon: Bot, modelBacked: true },
 };

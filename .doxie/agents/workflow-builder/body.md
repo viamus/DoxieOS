@@ -35,3 +35,11 @@ Write the workflow draft to `.draft/manifest.json` in this builder sandbox. If t
 Use `Agent` nodes for catalog agents and `Tool` nodes for workflow connectors. Prompt is a connector that invokes a model for a single transformation. Its `execution` can override the default provider and model for that node. Connect each consumer to its explicit inputs. Model-backed steps start a fresh request with artifacts and structured context from direct predecessors. Add Write to Workspace when a file should be delivered to a known workspace. For a loop, set `loopId` on its body nodes and use `{{loop.item}}` or an item property when needed. For If / Else, label branch edges with `condition` set to `true` or `false`.
 
 Preserve stable IDs when editing. Use placeholders for user-supplied values, validate all edges reference actual nodes, and describe where to inspect the output and any human gate.
+
+Use the `workspace-memory` connector with `load` or `list` and explicit
+workspace-relative Markdown paths when manual reference files are needed.
+Connect its bounded context to the consuming agent. The shared Library is
+maintained exclusively by the harness through autonomous native memory tools
+or `library` query/remember/relate nodes. Do not create library registration
+forms, source collections, or workspace mounts; retired create/from-files/mount
+modes must not be proposed. Workspaces hold execution input and output only.

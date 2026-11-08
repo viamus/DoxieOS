@@ -3,7 +3,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const catalogKinds = ['agents', 'skills', 'workflows', 'libraries'];
-const connectorIds = new Set(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'prompt', 'sandbox', 'write-to-workspace']);
+const connectorIds = new Set(['aggregate', 'approval-gate', 'if-else', 'library', 'loop', 'prompt', 'sandbox', 'workspace-memory', 'write-to-workspace']);
 const connectorFiles = ['manifest.json', 'body.md', 'run.md'];
 const excludedNames = new Set(['.git', '.private', '.mcp.json', '.claude', '.claude.json', '.codex', '.agents', '.providers', 'node_modules']);
 const emptyCounts = () => ({ agents: 0, skills: 0, workflows: 0, libraries: 0, workspaces: 0, files: 0, skipped: 0 });

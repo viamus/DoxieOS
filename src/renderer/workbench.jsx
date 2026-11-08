@@ -11,12 +11,11 @@ const fileRoute = (id, path = '') => `/workspaces/${part(id)}/files${path ? `/${
 const entityKey = (item) => `${item.catalogId || 'default'}/${item.id}`;
 
 function WorkspaceEditor({ workspace, close }) {
-  const { state, perform } = useApp();
+  const { perform } = useApp();
   const t = useText();
-  const [draft, setDraft] = useState(workspace || { id: '', name: '', description: '', mountedLibraryIds: [], mountedAgentIds: [] });
+  const [draft, setDraft] = useState({ id: workspace?.id || '', name: workspace?.name || '', description: workspace?.description || '' });
   const [pending, setPending] = useState(false);
   const set = (key, value) => setDraft((previous) => ({ ...previous, [key]: value }));
-  const toggle = (key, id, checked) => set(key, checked ? [...new Set([...(draft[key] || []), id])] : (draft[key] || []).filter((value) => value !== id));
   const submit = async (event) => {
     event.preventDefault();
     setPending(true);
@@ -37,8 +36,7 @@ function WorkspaceEditor({ workspace, close }) {
         </div>
         <small>DoxieOS copies the files into the new workspace in its application data folder.</small>
       </div>}
-      <details open={!!workspace}><summary>{t('Workspaces.MountedLibraries', 'Mounted libraries')}</summary><div className="check-grid">{state.libraries.length ? state.libraries.map((library) => <label key={entityKey(library)} className="check"><input type="checkbox" checked={draft.mountedLibraryIds?.includes(library.id) || false} onChange={(event) => toggle('mountedLibraryIds', library.id, event.target.checked)} />{nameOf(library)}</label>) : <small>No libraries in the catalog.</small>}</div></details>
-      <details><summary>Mounted agents</summary><div className="check-grid">{state.agents.map((agent) => <label key={entityKey(agent)} className="check"><input type="checkbox" checked={draft.mountedAgentIds?.includes(agent.id) || false} onChange={(event) => toggle('mountedAgentIds', agent.id, event.target.checked)} />{nameOf(agent)}</label>)}</div></details>
+      <p className="muted">Workspaces hold run inputs and outputs. Choose the agent or workflow when you run it; reusable knowledge stays in the global library.</p>
     </div><footer className="modal-footer"><Button onClick={close}>Cancel</Button><Button type="submit" variant="primary" disabled={pending}>{workspace ? 'Save workspace' : 'Create workspace'}</Button></footer>
   </form></Modal>;
 }
@@ -51,13 +49,13 @@ export function WorkspacesPage() {
   const [remove, setRemove] = useState(null);
   const workspaces = state.workspaces.filter((workspace) => `${nameOf(workspace)} ${workspace.id} ${workspace.description || ''}`.toLowerCase().includes(search.toLowerCase()));
   const newWorkspace = () => setEdit({});
-  return <div className="page"><PageHeading icon={FolderKanban} title={t('Workspaces.Title', 'Workspaces')} subtitle={t('Workspaces.Subtitle', 'Persistent project folders with mounted libraries and agent access.')} actions={<><Button icon={Import} onClick={() => perform('catalog:import', ['workspaces'], 'Workspace imported')}>Import</Button><Button variant="primary" icon={Plus} onClick={newWorkspace}>{t('Workspaces.New', 'New workspace')}</Button></>} />
+  return <div className="page"><PageHeading icon={FolderKanban} title={t('Workspaces.Title', 'Workspaces')} subtitle={t('Workspaces.IOSubtitle', 'Folders for run inputs and outputs. Knowledge is shared through the global library.')} actions={<><Button icon={Import} onClick={() => perform('catalog:import', ['workspaces'], 'Workspace imported')}>Import</Button><Button variant="primary" icon={Plus} onClick={newWorkspace}>{t('Workspaces.New', 'New workspace')}</Button></>} />
     <div className="toolbar"><SearchBox value={search} setValue={setSearch} placeholder={t('Workspaces.SearchPlaceholder', 'Search by name or ID…')} /></div>
     {workspaces.length ? <div className="cards">{workspaces.map((workspace) => <Panel key={workspace.id} title={nameOf(workspace)} icon={FolderKanban} hint={workspace.path} actions={<IconButton icon={Trash2} label="Delete workspace" onClick={() => setRemove(workspace)} />}>
-      <div className="panel-body stack"><p>{workspace.description || 'Project workspace'}</p><div className="actions start"><Tag>{workspace.mountedLibraryIds?.length || 0} libraries</Tag><Tag>{workspace.mountedAgentIds?.length || 0} agents</Tag></div><div className="actions start">
+      <div className="panel-body stack"><p>{workspace.description || 'Run inputs and outputs'}</p><div className="actions start"><Tag>Input / output</Tag></div><div className="actions start">
         <Button to={fileRoute(workspace.id)} icon={Folder}>Files</Button><Button icon={Terminal} onClick={async () => { const session = await perform('console:start', [{ workspaceId: workspace.id }]); if (session?.id) go(`/consoles?session=${part(session.id)}`); }}>Console</Button><Button icon={ExternalLink} onClick={() => perform('workspace:open', [workspace.id])}>Folder</Button><IconButton icon={Code2} label="Open in editor" onClick={() => perform('workspace:open', [workspace.id, 'editor'])} /><IconButton icon={Download} label="Export workspace" onClick={() => perform('catalog:export', ['workspaces', workspace.id])} /><Button onClick={() => setEdit(workspace)}>Edit</Button>
       </div></div>
-    </Panel>)}</div> : <Panel><Empty icon={search ? Search : FolderKanban} title={search ? 'No matching workspaces' : 'No workspaces yet'} detail={t('Workspaces.Empty', 'Create a workspace for your project and mount reusable context.')} action={!search && <Button icon={Plus} onClick={newWorkspace}>Create workspace</Button>} /></Panel>}
+    </Panel>)}</div> : <Panel><Empty icon={search ? Search : FolderKanban} title={search ? 'No matching workspaces' : 'No workspaces yet'} detail={t('Workspaces.IOEmpty', 'Create a folder for the files your runs read and produce.')} action={!search && <Button icon={Plus} onClick={newWorkspace}>Create workspace</Button>} /></Panel>}
     {edit && <WorkspaceEditor workspace={edit.id ? edit : null} close={() => setEdit(null)} />}
     {remove && <Confirm title="Delete workspace" detail={`Remove ${nameOf(remove)} from DoxieOS?`} close={() => setRemove(null)} confirm={async () => { const result = await perform('catalog:remove', ['workspaces', remove.id], 'Workspace removed'); if (result !== false) setRemove(null); }} />}
   </div>;
@@ -196,108 +194,6 @@ export function WorkspaceFilesPage({ id, path }) {
   const workspace = state.workspaces.find((item) => item.id === id);
   return <div className="page"><PageHeading title={nameOf(workspace) || id} icon={FolderKanban} subtitle={workspace?.path} back={{ to: '/workspaces', label: 'Workspaces' }} actions={<Button icon={ExternalLink} onClick={() => perform('workspace:open', [id])}>Open folder</Button>} />
     {workspace ? <FilesBrowser id={id} path={path} navigate={(next) => go(fileRoute(id, next))} /> : <Panel><Empty title="Workspace not found" icon={Folder} /></Panel>}
-  </div>;
-}
-
-function LibraryCreator({ catalogId, close, created }) {
-  const { state, refresh } = useApp();
-  const [draft, setDraft] = useState({ id: '', name: '', description: '', catalogId: catalogId || 'default' });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const set = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
-  const catalogs = state.catalogs || state.settings.catalogs || [];
-  const submit = async (event) => {
-    event.preventDefault();
-    setError('');
-    const id = draft.id || slug(draft.name);
-    if (!id) { setError('Enter a name or a valid library ID.'); return; }
-    if (state.libraries.some((item) => item.id === id && (item.catalogId || 'default') === draft.catalogId)) { setError('A library with this ID already exists in the selected catalog.'); return; }
-    setSaving(true);
-    try {
-      const library = await invoke('libraries:create', { ...draft, id });
-      await refresh();
-      created(library);
-    } catch (problem) { setError(problem.message); }
-    finally { setSaving(false); }
-  };
-  return <Modal title="New library" icon={BookOpen} close={() => { if (!saving) close(); }}><form onSubmit={submit}>
-    <div className="modal-body stack">
-      <div className="form-grid"><Field label="Name"><input required value={draft.name} onChange={(event) => set('name', event.target.value)} /></Field><Field label="Library ID"><input value={draft.id} pattern="[a-z0-9]+(\x2d[a-z0-9]+)*" placeholder={slug(draft.name) || 'my-library'} onChange={(event) => set('id', event.target.value)} /></Field></div>
-      <Field label="Description"><textarea rows={3} value={draft.description} onChange={(event) => set('description', event.target.value)} /></Field>
-      <Field label="Catalog"><select value={draft.catalogId} onChange={(event) => set('catalogId', event.target.value)}>{!catalogs.some(({ id }) => id === 'default') && <option value="default">Default catalog</option>}{catalogs.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}</select></Field>
-      <ErrorNotice error={error} />
-    </div><footer className="modal-footer"><Button onClick={close} disabled={saving}>Cancel</Button><Button type="submit" icon={Save} variant="primary" disabled={saving}>Create library</Button></footer>
-  </form></Modal>;
-}
-
-function MemoryEditor({ library, memory, close, saved }) {
-  const { refresh } = useApp();
-  const source = useAsync(() => memory && invoke('library-files:read', library.id, memory.relativePath, library.catalogId), [library.id, library.catalogId, memory?.relativePath]);
-  const [name, setName] = useState('');
-  const [content, setContent] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const blocked = memory && (source.loading || source.error || source.value?.truncated || source.value?.isBinary);
-  const markdown = content ?? source.value?.content ?? '';
-  const submit = async (event) => {
-    event.preventDefault();
-    if (blocked) return;
-    setError('');
-    const id = slug(name);
-    if (!memory && (!id || ['memory', 'readme'].includes(id))) { setError('Choose a name that gives the memory a unique ID.'); return; }
-    const file = memory?.relativePath || `memories/${id}.md`;
-    if (!memory && library.files?.some(({ relativePath }) => relativePath.toLowerCase() === file)) { setError('A memory with this ID already exists.'); return; }
-    const text = memory ? markdown : `---\nname: ${JSON.stringify(name.trim())}\n---\n\n${markdown}`;
-    setSaving(true);
-    try {
-      await invoke('library-files:write', library.id, file, text, library.catalogId, { create: !memory });
-      await refresh();
-      saved();
-    } catch (problem) { setError(problem.message); }
-    finally { setSaving(false); }
-  };
-  return <Modal title={memory ? `Edit ${nameOf(memory)}` : 'New memory'} icon={FileText} close={() => { if (!saving) close(); }} wide><form onSubmit={submit}>
-    <div className="modal-body stack">
-      {!memory && <Field label="Name"><input required value={name} onChange={(event) => setName(event.target.value)} /></Field>}
-      {memory && source.loading ? <Loading /> : <Field label="Markdown" hint={memory ? 'The source includes the memory’s metadata.' : undefined}><textarea className="monospace" spellCheck={false} disabled={!!blocked} rows={14} value={markdown} onChange={(event) => setContent(event.target.value)} /></Field>}
-      <ErrorNotice error={error || source.error || (memory && (source.value?.truncated || source.value?.isBinary) ? 'Open this file in its native application to edit it in full.' : null)} />
-    </div><footer className="modal-footer"><Button onClick={close} disabled={saving}>Cancel</Button><Button type="submit" icon={Save} variant="primary" disabled={saving || !!blocked}>Save memory</Button></footer>
-  </form></Modal>;
-}
-
-export function LibrariesPage() {
-  const { state, perform, notify } = useApp();
-  const t = useText();
-  const [search, setSearch] = useState('');
-  const [catalog, setCatalog] = useState('');
-  const [selected, setSelected] = useState('');
-  const [remove, setRemove] = useState(null);
-  const [create, setCreate] = useState(false);
-  const [editMemory, setEditMemory] = useState(null);
-  const [removeMemory, setRemoveMemory] = useState(null);
-  const [fileRevision, setFileRevision] = useState(0);
-  const catalogOptions = state.catalogs || state.settings.catalogs || [];
-  const libraries = state.libraries.filter((library) => (!catalog || library.catalogId === catalog) && `${nameOf(library)} ${library.description || ''} ${library.memories?.map((memory) => nameOf(memory)).join(' ') || ''} ${library.files?.map((file) => file.name).join(' ') || ''}`.toLowerCase().includes(search.toLowerCase()));
-  return <div className="page"><PageHeading icon={BookOpen} title={t('Libraries.Title', 'Libraries')} subtitle={t('Libraries.Subtitle', 'Reusable memory and reference files for agent context.')} actions={<><Button icon={Import} onClick={() => perform('catalog:import', ['libraries', catalog || undefined], 'Library imported')}>{t('Libraries.Import', 'Import library')}</Button><Button variant="primary" icon={Plus} onClick={() => setCreate(true)}>New library</Button></>} />
-    <div className="toolbar"><SearchBox value={search} setValue={setSearch} placeholder={t('Libraries.SearchPlaceholder', 'Search libraries, memories or files…')} /><select aria-label="Catalog" value={catalog} onChange={(event) => setCatalog(event.target.value)}><option value="">All catalogs</option>{catalogOptions.map((item) => <option key={item.id} value={item.id}>{nameOf(item)}</option>)}</select></div>
-    {libraries.length ? <div className="stack">{libraries.map((library) => {
-      const key = entityKey(library);
-      const show = selected === key;
-      const memories = library.memories || [];
-      return <Panel key={key} title={nameOf(library)} icon={BookOpen} hint={library.description || library.id} actions={<><Tag>{memories.length} memories</Tag><IconButton icon={Download} label="Export library" onClick={() => perform('catalog:export', ['libraries', library.id, library.catalogId])} /><IconButton icon={Trash2} label="Delete library" onClick={() => setRemove(library)} /><IconButton icon={show ? ChevronDown : ChevronRight} label={show ? 'Collapse library' : 'Explore library'} aria-expanded={show} onClick={() => setSelected(show ? '' : key)} /></>}>
-        {show && <div className="panel-body stack"><div className="actions start"><Button icon={Plus} onClick={() => setEditMemory({ library })}>New memory</Button></div>{memories.length > 0 && <div className="memory-list">{memories.map((memory) => <details key={memory.id || memory.relativePath} className="memory"><summary><FileText size={15} />{nameOf(memory)} {memory.type && <Tag>{memory.type}</Tag>}</summary><Markdown>{memory.content}</Markdown><div className="actions start"><Button icon={Copy} onClick={async () => { try { await navigator.clipboard.writeText(memory.content || ''); notify('Memory copied'); } catch (error) { notify(error.message, 'error'); } }}>Copy</Button>{memory.relativePath && <><Button icon={Pencil} onClick={() => setEditMemory({ library, memory })}>Edit</Button><Button icon={Download} onClick={() => perform('library-files:download', [library.id, memory.relativePath, library.catalogId])}>Download</Button><IconButton icon={Trash2} label="Delete memory" onClick={() => setRemoveMemory({ library, memory })} /></>}</div></details>)}</div>}
-          <FilesBrowser key={fileRevision} compact api="library-files" id={library.id} catalogId={library.catalogId} />
-        </div>}
-      </Panel>;
-    })}</div> : <Panel><Empty icon={BookOpen} title={search ? 'No matching libraries' : 'No libraries yet'} detail={t('Libraries.Empty', 'Create or import a memory pack to share reusable context with agents.')} /></Panel>}
-    {create && <LibraryCreator catalogId={catalog} close={() => setCreate(false)} created={(library) => { setCreate(false); setSearch(''); setCatalog(''); setSelected(entityKey(library)); notify('Library created'); }} />}
-    {editMemory && <MemoryEditor {...editMemory} close={() => setEditMemory(null)} saved={() => { setEditMemory(null); setFileRevision((current) => current + 1); notify('Memory saved'); }} />}
-    {removeMemory && <Confirm title="Delete memory" detail={`Delete ${nameOf(removeMemory.memory)} from ${nameOf(removeMemory.library)}?`} close={() => setRemoveMemory(null)} confirm={async () => {
-      const { library, memory } = removeMemory;
-      const result = await perform('library-files:delete', [library.id, memory.relativePath, library.catalogId], 'Memory removed');
-      if (result !== false) { setRemoveMemory(null); setFileRevision((current) => current + 1); }
-    }} />}
-    {remove && <Confirm title="Delete library" detail={`Delete ${nameOf(remove)} from its catalog?`} close={() => setRemove(null)} confirm={async () => { const result = await perform('catalog:remove', ['libraries', remove.id, remove.catalogId], 'Library removed'); if (result !== false) setRemove(null); }} />}
   </div>;
 }
 

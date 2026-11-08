@@ -43,7 +43,7 @@ separate directories within the same user data directory.
 | Workbench path | Purpose |
 | --- | --- |
 | `.doxie/` | Canonical agents, native tool definitions, workflows, and libraries. |
-| `.workspace/` | Workspace folders, mounts, notes, and durable output. |
+| `.workspace/` | Workspace input files and durable output. |
 | `.runs/` | Durable run artifacts and active-workflow transport removed at completion. |
 | `.sandbox/` | Builder sessions and scratch folders. |
 | `.private/` | User-owned private content. |
@@ -70,8 +70,29 @@ files are eligible. **Settings** reports the number of removed folders.
 
 The desktop app also reads DoxieOS 1.x ZIP archives. Transfer an agent,
 workflow, workspace, or library through its catalog page. Workflow and
-workspace bundles can carry related agents. The import dialog requests a
+legacy workspace bundles can carry related agents; workspace mounts are ignored.
+The import dialog requests a
 choice when an existing item differs from its archived counterpart.
+
+## Upgrade from 2.0
+
+Version 2.1 introduces a shared memory database maintained by the agent harness.
+Legacy source library files are preserved without automatic registration.
+Workspace mount fields are removed during normalization. DoxieOS
+removes only its own generated `AGENTS.md` and `CLAUDE.md` workspace context
+files. Manually authored files, `WORKSPACE.md`, and legacy memory folders are
+preserved as input files. New workspaces do not create memory scaffolding.
+
+Legacy Library creation, `from-files`, `mount` and `from-current` steps report
+an explicit migration error. Use `query` or `remember` for shared knowledge,
+and **Workspace Memory** to supply manual Markdown as execution input.
+
+Open **Library** to inspect agent-produced knowledge and automatic feeds from
+**Codex** and **Claude Code**. The harness synchronizes recognized memory
+outputs on startup and every five minutes while open. It creates local
+knowledge records and never edits the provider's source files. Native memory tools are registered in the
+DoxieOS-managed provider profiles. Optional semantic search downloads its model
+only when enabled. See the [library guide](library-memory.md).
 
 ## Providers and MCP
 

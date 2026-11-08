@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Menu, Notification, dialog, ipcMain, net, protocol, session, shell } = require('electron');
-const { existsSync, readFileSync, readdirSync } = require('node:fs');
+const { existsSync, readFileSync, readdirSync, watch } = require('node:fs');
 const { homedir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -14,6 +14,11 @@ const { startHousekeeping } = require('./housekeeping.cjs');
 const { prepareProfile } = require('./profile.cjs');
 const { createDictation } = require('./dictation.cjs');
 const { createDesktopNotifications, prepareWindowsNotificationShortcut, WINDOWS_APP_ID, WINDOWS_TOAST_CLSID } = require('./desktop-notifications.cjs');
+const { createMemoryStore } = require('./memory-store.cjs');
+const { nativeMemoryServer } = require('./memory-tools.cjs');
+const { createMemoryImportJobs } = require('./memory-import-jobs.cjs');
+const { createSemanticMemory } = require('./semantic-memory.cjs');
+const { createMemoryFeed } = require('./memory-feed.cjs');
 
 const startPage = 'doxie://app/index.html';
 const appRoot = resolve(__dirname, '../..');
@@ -37,6 +42,11 @@ let consoles;
 let speech;
 let stopHousekeeping;
 let desktopNotifications;
+let memory;
+let memoryWatch;
+let memoryTimer;
+let memoryImports;
+let memoryFeed;
 let quitting = false;
 let closed = false;
 
@@ -77,7 +87,29 @@ async function initialize() {
   const bundledFiles = app.isPackaged ? undefined : existsSync(seedManifest) ? JSON.parse(readFileSync(seedManifest, 'utf8')) : [];
   storage = createStorage({ root, databasePath, bundledRoot, bundledFiles, managed: true, legacyRoot: selectedRoot() || appRoot });
   storage.regenerate();
+  memory = createMemoryStore({ root });
+  storage.memory = memory;
+  memory.semantic = createSemanticMemory({ root, store: memory, emit });
+  memoryImports = createMemoryImportJobs({ root, emit });
+  storage.memoryImports = memoryImports;
+  memoryFeed = createMemoryFeed({ imports: memoryImports, emit, enabled: process.env.DOXIE_TEST !== '1',
+    codexHome: process.env.CODEX_HOME, claudeHome: process.env.CLAUDE_CONFIG_DIR });
+  storage.memoryFeed = memoryFeed;
+  memoryFeed.start();
+  const indexAvailableMemories = async () => {
+    const status = await memory.semantic.status();
+    if (status.state === 'ready' && status.pending) await memory.semantic.reindex();
+  };
+  void indexAvailableMemories().catch(error => console.error('Could not index library meaning:', error.message));
   storage.watchCatalog?.(() => emit({ type: 'catalog:changed' }), error => console.error(error.message));
+  memoryWatch = watch(join(root, '.memory'), () => {
+    clearTimeout(memoryTimer);
+    memoryTimer = setTimeout(() => {
+      emit({ type: 'memory:changed' });
+      void indexAvailableMemories().catch(error => console.error('Could not index new library memories:', error.message));
+    }, 200);
+  });
+  memoryWatch.on('error', error => console.error('Could not watch central library changes:', error.message));
   const notificationIcon = join(__dirname, 'assets', 'icon.png');
   const onNotificationError = error => console.error('Could not show a desktop notification:', error.message);
   if (!testProfile) prepareWindowsNotificationShortcut({ app, shell, onError: onNotificationError });
@@ -91,7 +123,7 @@ async function initialize() {
   consoles = createConsoles({ storage, emit });
   const builders = createBuilders({ storage, agents, emit, notify: notifications.add });
   speech = createDictation({ root: storage.root, emit });
-  const mcp = createMcp(storage);
+  const mcp = createMcp(storage, { nativeServers: [nativeMemoryServer(root)] });
   try { mcp.refresh(); }
   catch (error) { console.error('Could not regenerate DoxieOS provider configuration:', error.message); }
   const actions = createActions({ app, dialog, shell, window: () => window, storage, agents, workflows, consoles, builders, speech, notifications, mcp, emit, releaseNotes: releaseNotes() });
@@ -196,9 +228,13 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
+    memoryFeed?.close();
     desktopNotifications?.close();
-    Promise.allSettled([workflows?.close(), consoles?.close(), speech?.close(), stopHousekeeping?.()]).then(async () => {
+    memoryWatch?.close();
+    clearTimeout(memoryTimer);
+    Promise.allSettled([workflows?.close(), consoles?.close(), speech?.close(), stopHousekeeping?.(), memoryImports?.close(), memory?.semantic?.close()]).then(async () => {
       await agents?.close();
+      memory?.close();
       storage.close();
     }).catch(error => console.error(error)).finally(() => {
       closed = true;

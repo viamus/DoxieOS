@@ -18,6 +18,10 @@ workspace_*/
 
 # Local private directory for user-owned files and experiments.
 .private/
+/.memory/
+/.models/
+/.providers/
+/.runtime/
 
 # Local dependencies, desktop bundles and test artifacts
 node_modules/
@@ -53,6 +57,7 @@ test-results/
 !.doxie/tools/prompt/
 !.doxie/tools/sandbox/
 !.doxie/tools/write-to-workspace/
+!.doxie/tools/workspace-memory/
 .doxie/tools/*/*
 !.doxie/tools/*/body.md
 !.doxie/tools/*/manifest.json

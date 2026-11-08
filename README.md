@@ -2,10 +2,10 @@
   <img src="docs/assets/doxie-face.svg" alt="DoxieOS icon" width="112" height="112" />
 </p>
 
-# DoxieOS 2.0
+# DoxieOS 2.1
 
 [![Electron CI](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml/badge.svg)](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-2.0.0-CC785C)](docs/release-notes/v2.0.0.md)
+[![Version](https://img.shields.io/badge/version-2.1.0-CC785C)](docs/release-notes/v2.1.0.md)
 [![Electron](https://img.shields.io/badge/Desktop-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -17,15 +17,18 @@ Bring your project folders, reusable knowledge, and installed AI providers.
 DoxieOS keeps the catalog, execution history, conversations, and artifacts on
 your machine. Provider requests go to the cloud or local model you select.
 
-## What's new in 2.0
+## What's new in 2.1
 
-Version 2.0 moves the workbench, workflow engine, SQLite storage, and terminals
-into the desktop app. The 1.x .NET server, HTTP API, SignalR, and Docker launch
-entry points have been retired.
+Version 2.1 makes the library a shared knowledge base with search, a visible
+memory graph, provenance, revisions, and typed learned parameters. Agents and
+workflows use it independently of their input/output workspace. The desktop
+workbench, workflow engine, SQLite storage, and terminals run together in Electron.
 
 | Area | Desktop experience |
 | --- | --- |
 | Workbench | React navigation for workspaces, consoles, agents, connectors, workflows, libraries, and history, with native folder access. |
+| Agent-owned library | Inspect knowledge, provenance, relationships, revisions and parameters learned autonomously by the harness. Existing Codex and Claude Code memories are synchronized in the background. |
+| Semantic retrieval | Enable a local multilingual embedding model to search by meaning. Text search works immediately without a model download. |
 | Agent editing | Edit instructions, metadata, provider, model, and reasoning effort directly. Ordinary runs use the agent's saved execution settings. |
 | AI builders | Create agents and workflows through conversations, preview drafts, and save them to the catalog. Resume saved sessions after navigation or restart. |
 | Run results | Read the final response as Markdown, including tables and links. Expand Activity, Diagnostics, or Full log for execution details. |
@@ -35,12 +38,12 @@ entry points have been retired.
 | Voice input | Dictate locally with Whisper Tiny on the CPU and review the transcript before sending. The first use downloads the model. |
 | Packaging | Run a portable Windows app with an embedded Electron and Node.js runtime. |
 
-See the [2.0 release notes](docs/release-notes/v2.0.0.md) and
-[upgrade guide](docs/operations.md#upgrade-from-doxieos-1x).
+See the [2.1 release notes](docs/release-notes/v2.1.0.md),
+[library guide](docs/library-memory.md), and [upgrade guide](docs/operations.md#upgrade-from-20).
 
 ## Start on Windows
 
-1. Download the `DoxieOS-win32-x64` artifact from a successful [Electron CI run](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml) for the 2.0 branch or a commit that includes it.
+1. Download the `DoxieOS-win32-x64` artifact from a successful [Electron CI run](https://github.com/viamus/DoxieOS/actions/workflows/ci.yml) that includes version 2.1.
 2. Extract the artifact and the enclosed `DoxieOS-win32-x64.zip`. Keep the application folder and its resources together.
 3. Open `run.bat` or `DoxieOS.exe` inside the extracted application folder.
 4. In **Settings → Agent CLI providers**, configure and authenticate an installed provider.
@@ -64,17 +67,20 @@ uses them. See [provider setup](docs/operations.md#providers-and-mcp) for detail
 
 ## Work with agents and workflows
 
-1. Create a **Workspace** for project files and context. Choosing an existing project folder copies its files into the managed workspace. Mount **Libraries** to share reusable knowledge and standards.
+1. Create a **Workspace** for input and output files. Choosing an existing project folder copies its files into the managed workspace. Put manual Markdown there and use **Workspace Memory** to supply it explicitly to an execution.
 2. Choose a catalog agent, edit it directly, or select **Build agent**, choose the session settings, and select **Start session**. Review the AI builder's draft and select **Save to catalog**.
 3. Run the agent with its saved settings and inspect its response, artifacts, and history. Use **Consoles** for interactive provider sessions.
 4. Use the visual **Workflow** editor or AI builder to connect agents and native connectors for approvals, conditions, loops, aggregation, and workspace output.
 
 Workflow edges carry transient context and isolated copies of declared
-artifacts. Workspaces keep durable output and memory. Run workflows manually
+artifacts. Workspaces keep durable input and output files. The harness maintains
+one shared **Library** autonomously; its page is for inspection, not manual
+knowledge registration. Run workflows manually
 or on enabled cron schedules while the app is open; cron uses UTC. Event and
 webhook definitions are retained for compatibility and do not trigger runs.
 
-Agents, workflows, workspaces, and libraries can be transferred as ZIP bundles.
+Agents, workflows, and workspaces support ZIP transfer.
+The central knowledge database and optional semantic model live in the app profile.
 Learn more in [concepts](docs/concepts.md) and the
 [authoring guide](docs/authoring-agents-and-workflows.md).
 
@@ -96,7 +102,8 @@ flowchart TD
     Main --> Catalog[".doxie/ catalog"]
     Main --> Runner["Agent and Workflow Runner"]
     Main --> State["SQLite State"]
-    Runner --> Workspace["Workspace Context"]
+    Runner --> Workspace["Workspace Input / Output"]
+    Runner <-->|Native memory tools| Memory["Shared knowledge graph"]
     Runner --> Providers["Provider Adapters"]
     Providers --> Claude["Claude Code CLI"]
     Providers --> Codex["OpenAI Codex CLI"]
@@ -166,6 +173,7 @@ Start with the [documentation index](docs/README.md).
 
 - [Concepts](docs/concepts.md)
 - [Architecture](docs/architecture.md)
+- [Central library and memory graph](docs/library-memory.md)
 - [Authoring Agents And Workflows](docs/authoring-agents-and-workflows.md)
 - [Operations Guide](docs/operations.md)
 - [Release History](docs/release-notes/README.md)

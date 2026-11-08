@@ -1,101 +1,186 @@
 const { randomUUID } = require('node:crypto');
-const { mkdir, readFile, readdir, stat, writeFile } = require('node:fs/promises');
-const { basename, extname, isAbsolute, relative, resolve, sep } = require('node:path');
+const { constants } = require('node:fs');
+const { lstat, mkdir, open, readdir, writeFile } = require('node:fs/promises');
+const { extname, isAbsolute, relative, resolve, sep, win32 } = require('node:path');
 const { safePath } = require('./storage.cjs');
 
 const slug = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const maxFiles = 256;
-const maxBytes = 16 * 1024 * 1024;
-
-function scopedPath(root, value) {
-  const item = relative(root, resolve(root, value));
-  if (item === '..' || item.startsWith(`..${sep}`) || isAbsolute(item)) throw new Error('Library sources must be inside the selected workspace.');
-  return item.split(sep).join('/');
-}
-
-function sourcePaths(value) {
-  if (Array.isArray(value)) return value.map(String).filter(item => item.trim());
-  return String(value ?? '').split(/[\r\n;]+/).map(item => item.trim().replace(/^(['"])(.*)\1$/, '$2')).filter(Boolean);
-}
+const defaultWorkspaceBytes = 16 * 1024;
+const maxWorkspaceBytes = 64 * 1024;
 
 async function writeReceipt(outputDir, name, data) {
   await writeFile(safePath(outputDir, name), JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
-async function createLibrary({ storage, toolMode, inputs, workspace, sourceDirectories = [], outputDir, catalogId, signal }) {
-  const mode = toolMode || 'create';
-  if (!['create', 'interactive', 'from-files', 'from-current'].includes(mode)) throw new Error(`Unknown library action: ${mode}`);
-  const id = String(inputs.id || inputs.libraryId || '').trim();
-  if (!slug.test(id)) throw new Error('Enter a kebab-case library ID.');
-  const name = String(inputs.name || id).trim();
-  const description = String(inputs.description || inputs.context || '');
-  const memories = [];
-  let bytes = 0;
+function workspacePaths(value) {
+  let paths = value;
+  if (typeof value === 'string') {
+    if (value.trim().startsWith('[')) {
+      try { paths = JSON.parse(value); } catch { throw new Error('Workspace memory paths must be relative paths, one per line, or a JSON list.'); }
+    } else paths = value.split(/\r?\n/).map(item => item.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(paths) || !paths.length || paths.length > maxFiles || paths.some(item => typeof item !== 'string' || !item.trim())) throw new Error('Select explicit workspace-relative Markdown paths or folders.');
+  return paths.map(value => {
+    const path = value.trim();
+    if (path.length > 4096 || isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]/).includes('..')) throw new Error('Workspace memory paths must be relative and stay inside the selected workspace.');
+    return path;
+  });
+}
 
-  async function collect(root, relativePath, prefix) {
+async function workspaceMemory({ toolMode = 'load', inputs, workspace, outputDir, signal }) {
+  if (!workspace) throw new Error('Select a workspace for Workspace Memory.');
+  if (!['list', 'load'].includes(toolMode)) throw new Error(`Unknown workspace memory action: ${toolMode}`);
+  const paths = workspacePaths(inputValue(inputs, 'paths'));
+  const requested = inputValue(inputs, 'maxBytes');
+  const budget = requested === undefined || requested === '' ? defaultWorkspaceBytes : Number(requested);
+  if (!Number.isSafeInteger(budget) || budget < 1024 || budget > maxWorkspaceBytes) throw new Error('Workspace memory context must use a budget between 1024 and 65536 bytes.');
+  const files = [];
+  const seen = new Set();
+  let scanned = 0;
+  let scanTruncated = false;
+  async function collect(relativePath, depth = 0, explicit = false) {
     signal?.throwIfAborted();
-    const candidate = safePath(root, relativePath);
-    const info = await stat(candidate);
+    if (depth > 12 || ++scanned > 4096 || files.length >= maxFiles) { scanTruncated = true; return; }
+    const absolute = safePath(workspace.path, relativePath);
+    const info = await lstat(absolute);
+    if (info.isSymbolicLink()) throw new Error('Symbolic links cannot be loaded as workspace memory.');
     if (info.isDirectory()) {
-      const entries = await readdir(candidate, { withFileTypes: true });
-      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
-        if (entry.name.startsWith('.') || (!entry.isFile() && !entry.isDirectory())) continue;
-        await collect(root, [relativePath, entry.name].filter(Boolean).join('/'), prefix);
+      for (const entry of (await readdir(absolute, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
+        if (entry.name.startsWith('.')) continue;
+        await collect([relativePath, entry.name].filter(Boolean).join('/'), depth + 1);
+        if (files.length >= maxFiles || scanned >= 4096) { scanTruncated = true; break; }
       }
       return;
     }
-    const extension = extname(candidate).toLowerCase();
-    if (!info.isFile() || !['.md', '.txt'].includes(extension)) return;
-    if (memories.length >= maxFiles || bytes + info.size > maxBytes) throw new Error('Library sources exceed 256 text files or 16 MiB.');
-    let outputName = (relativePath || basename(candidate)).replace(/\.txt$/i, '.md');
-    if (/^(memory|readme)\.md$/i.test(basename(outputName))) outputName = outputName.replace(/([^/]+)$/, 'source-$1');
-    let target = `memories/${prefix}/${outputName}`;
-    const original = target;
-    for (let suffix = 2; memories.some(file => file.relativePath.toLowerCase() === target.toLowerCase()); suffix++) {
-      target = original.replace(/\.md$/i, `-${suffix}.md`);
+    if (!info.isFile() || extname(absolute).toLowerCase() !== '.md') {
+      if (explicit) throw new Error('Workspace Memory accepts only Markdown files or folders.');
+      return;
     }
-    const content = await readFile(candidate);
-    if (bytes + content.length > maxBytes) throw new Error('Library sources exceed 16 MiB.');
-    memories.push({ relativePath: target, content });
-    bytes += content.length;
+    const identity = process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    files.push({ path: relativePath, absolute, bytes: info.size });
   }
-
-  if (mode === 'from-current') {
-    if (!workspace) throw new Error('Select a workspace to copy its memories.');
-    for (const directory of ['memory', 'memories']) {
-      try { await collect(workspace.path, directory, 'workspace'); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
+  for (const item of paths) {
+    const path = relative(workspace.path, resolve(workspace.path, item)).split(sep).join('/');
+    await collect(path, 0, true);
+  }
+  if (toolMode === 'load' && !files.length) throw new Error('The selected paths contain no Markdown files.');
+  const receipt = { schema: 'doxie.workspace-memory.v1', action: toolMode,
+    workspace: { id: workspace.id, path: workspace.path }, sources: [], bytesLoaded: 0, truncated: scanTruncated, omittedSources: files.length };
+  const size = () => Buffer.byteLength(JSON.stringify(receipt));
+  if (size() > budget) throw new Error('The selected workspace metadata exceeds this context budget.');
+  for (const file of files) {
+    signal?.throwIfAborted();
+    const source = { path: file.path, bytes: file.bytes, loadedBytes: 0, truncated: false };
+    if (toolMode === 'load') {
+      const handle = await open(safePath(workspace.path, file.path), constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+      try {
+        const info = await handle.stat();
+        if (!info.isFile()) throw new Error('Workspace memory source is not a regular file.');
+        source.bytes = info.size;
+        const buffer = Buffer.alloc(Math.min(info.size, budget) + 1);
+        const read = await handle.read(buffer, 0, buffer.length, 0);
+        const partial = read.bytesRead < info.size;
+        source.content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, read.bytesRead), { stream: partial });
+        source.loadedBytes = Buffer.byteLength(source.content);
+        source.truncated = source.loadedBytes < info.size;
+      } finally { await handle.close(); }
     }
-  } else if (mode === 'from-files') {
-    const paths = sourcePaths(inputs.paths);
-    if (paths.length && !workspace) throw new Error('Select a workspace to read the source paths.');
-    for (const [index, path] of paths.entries()) await collect(workspace.path, scopedPath(workspace.path, path), `workspace-${index + 1}`);
-    for (const [index, directory] of sourceDirectories.entries()) await collect(directory, '', `upstream-${index + 1}`);
+    receipt.sources.push(source);
+    receipt.omittedSources--;
+    receipt.bytesLoaded += source.loadedBytes;
+    if (size() > budget && toolMode === 'load') {
+      const original = source.content;
+      const originalBytes = source.loadedBytes;
+      source.truncated = true;
+      receipt.bytesLoaded -= originalBytes;
+      const precedingBytes = receipt.bytesLoaded;
+      const characters = Array.from(original);
+      let minimum = 0;
+      let maximum = characters.length;
+      let selected = '';
+      while (minimum <= maximum) {
+        const midpoint = Math.floor((minimum + maximum) / 2);
+        source.content = characters.slice(0, midpoint).join('');
+        source.loadedBytes = Buffer.byteLength(source.content);
+        receipt.bytesLoaded = precedingBytes + source.loadedBytes;
+        if (size() <= budget) { selected = source.content; minimum = midpoint + 1; }
+        else maximum = midpoint - 1;
+      }
+      source.content = selected;
+      source.loadedBytes = Buffer.byteLength(selected);
+      receipt.bytesLoaded = precedingBytes + source.loadedBytes;
+    }
+    if (size() > budget) {
+      receipt.sources.pop();
+      receipt.omittedSources++;
+      receipt.bytesLoaded -= source.loadedBytes;
+      receipt.truncated = true;
+      break;
+    }
+    if (source.truncated) receipt.truncated = true;
   }
-  if (['from-files', 'from-current'].includes(mode) && !memories.length) throw new Error('The selected sources contain no Markdown or text files.');
   signal?.throwIfAborted();
-  const library = storage.createLibrary({ id, name, description, catalogId, memories });
-  const files = memories.map(memory => memory.relativePath);
-  await writeReceipt(outputDir, 'library.json', { schema: 'doxie.native-library.v1', id, name, catalogId: library.catalogId, files });
-  return { summary: `Library ${id} · ${memories.length} memories` };
+  await writeReceipt(outputDir, 'workspace-memory.json', receipt);
+  return { summary: `${toolMode === 'load' ? 'Loaded' : 'Listed'} ${receipt.sources.length} workspace Markdown source(s)${receipt.truncated ? ' (bounded context)' : ''}`, contextJson: receipt };
 }
 
-async function mountLibrary({ storage, inputs, workspace, outputDir, signal }) {
-  const libraryId = String(inputs.libraryid ?? inputs.libraryId ?? '').trim();
-  const library = libraryId ? storage.get('libraries', libraryId) : null;
-  if (!library) throw new Error('Select an existing library to mount.');
-  const workspaceId = String(inputs.workspace || workspace?.id || '').trim();
-  const target = workspaceId ? storage.get('workspaces', workspaceId) : null;
-  if (!target) throw new Error('Select an existing workspace to mount the library.');
-  signal?.throwIfAborted();
-  const mountedLibraryIds = target.mountedLibraryIds || [];
-  if (!mountedLibraryIds.some(id => id.toLowerCase() === library.id.toLowerCase())) {
-    storage.save('workspaces', { id: target.id, mountedLibraryIds: [...mountedLibraryIds, library.id] });
+function inputValue(inputs, name) {
+  const key = Object.keys(inputs).find(key => key.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : inputs[key];
+}
+
+function jsonObject(value, label) {
+  if (value === undefined || value === '') return undefined;
+  let parsed = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { throw new Error(`${label} must be valid JSON.`); }
   }
-  await writeReceipt(outputDir, 'library.json', {
-    schema: 'doxie.native-library-mount.v1', libraryId: library.id, workspaceId: target.id,
-  });
-  return { summary: `Mounted library ${library.id} in ${target.id}` };
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(`${label} must be a JSON object.`);
+  return parsed;
+}
+
+async function memoryLibrary({ storage, toolMode, inputs, outputDir, provenance = {}, signal }) {
+  if (!storage.memory) throw new Error('The global memory store is unavailable. Restart DoxieOS before using Library memory actions.');
+  signal?.throwIfAborted();
+  const value = name => inputValue(inputs, name);
+  const mode = toolMode === 'search' ? 'query' : toolMode;
+  let result;
+  let summary;
+  if (mode === 'remember') {
+    const source = value('source');
+    const suppliedSource = typeof source === 'string' && !source.trim().startsWith('{') ? { label: source } : jsonObject(source, 'Source');
+    result = storage.memory.remember({
+      title: String(value('title') || '').trim(), content: value('content') ?? '',
+      libraryId: value('libraryId') || undefined, catalogId: value('catalogId') || undefined,
+      kind: value('kind') || 'memory',
+      tags: Array.isArray(value('tags')) ? value('tags') : String(value('tags') || '').split(/[,;\n]/).map(tag => tag.trim()).filter(Boolean),
+      parameters: jsonObject(value('parameters') ?? value('parameters_json'), 'Parameters'),
+      source: { provider: 'doxie', kind: 'native-library', ...suppliedSource, ...provenance,
+        section: suppliedSource?.section || String(value('title') || '').trim() },
+    });
+    summary = `Remembered ${result.title || result.id} in the global library`;
+  } else if (mode === 'query') {
+    const searchOptions = { query: String(value('query') || '').trim(),
+      libraryId: value('libraryId') || undefined, catalogId: value('catalogId') || undefined,
+      kind: value('kind') || undefined,
+      ...(value('limit') ? { limit: Number(value('limit')) } : {}),
+      ...(value('maxBytes') ? { maxBytes: Number(value('maxBytes')) } : {}),
+    };
+    result = storage.memory.semantic?.search ? await storage.memory.semantic.search(searchOptions) : storage.memory.search(searchOptions);
+    summary = `${result.results.length} global memory result(s)`;
+  } else if (mode === 'relate') {
+    result = storage.memory.relate({ fromId: value('fromId'), toId: value('toId'), type: value('type') || 'related' });
+    summary = `Related global memories (${result.type})`;
+  } else {
+    throw new Error(`Unknown library memory action: ${toolMode}`);
+  }
+  signal?.throwIfAborted();
+  const receipt = { schema: 'doxie.native-memory.v1', action: mode, result };
+  await writeReceipt(outputDir, 'library.json', receipt);
+  return { summary, contextJson: receipt };
 }
 
 async function manageSandbox({ toolMode, inputs, outputDir, scratchRoot, signal }) {
@@ -123,8 +208,10 @@ async function manageSandbox({ toolMode, inputs, outputDir, scratchRoot, signal 
 }
 
 function runNativeUtility(toolId, options) {
-  if (toolId === 'library' && options.toolMode === 'mount') return mountLibrary(options);
-  if (toolId === 'library') return createLibrary(options);
+  if (toolId === 'library' && options.toolMode === 'mount') throw new Error('Library mount has been retired. Libraries are global; use Library query to retrieve knowledge or remember to save it. Workspaces hold inputs and outputs only.');
+  if (toolId === 'library' && ['remember', 'query', 'search', 'relate'].includes(options.toolMode)) return memoryLibrary(options);
+  if (toolId === 'library') throw new Error('Manual Library creation and raw-file import have been retired. Use Library remember for verified harness learnings, or Workspace Memory load for explicit Markdown inputs.');
+  if (toolId === 'workspace-memory') return workspaceMemory(options);
   if (toolId === 'sandbox') return manageSandbox(options);
   throw new Error(`Unknown Doxie tool: ${toolId}`);
 }
