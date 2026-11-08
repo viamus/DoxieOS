@@ -15,6 +15,9 @@ const properties = {
 const schema = (fields, required = []) => ({ type: 'object', properties: fields, required, additionalProperties: false });
 const readAnnotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
 const memoryTools = [
+  { name: 'memory_associations', description: 'Discover indirect associations across concepts, entities and parameter patterns. Returns hypotheses with two- or three-hop evidence paths; these are suggestions for investigation, not verified conclusions.', inputSchema: schema({
+    nodeId: { type: 'string' }, limit: properties.limit, maxBytes: properties.maxBytes, includeStale: properties.includeStale,
+  }, ['nodeId']), annotations: readAnnotations },
   { name: 'memory_search', description: 'Search central memories and learned parameters with source provenance; returns bounded relevant excerpts.', inputSchema: schema(properties, ['query']), annotations: readAnnotations },
   { name: 'memory_get', description: 'Read a memory by ID, including its source and learned parameters.', inputSchema: schema({ id: { type: 'string' }, maxBytes: properties.maxBytes }, ['id']), annotations: readAnnotations },
   { name: 'memory_remember', description: 'Record a verified learning, entity or typed parameter. Preserve a source and use id to revise an existing memory without deleting history.', inputSchema: schema({
@@ -77,6 +80,7 @@ async function callMemoryTool(store, name, args = {}, source = {}) {
     if (rule.format === 'date-time' && !Number.isFinite(Date.parse(value))) throw new Error(`Invalid ${key}.`);
   }
   if (name === 'memory_search') return store.semantic ? store.semantic.search(args) : store.search(args);
+  if (name === 'memory_associations') return store.associations(args);
   if (name === 'memory_get') return boundedNode(store.get(args.id), args.maxBytes);
   if (name === 'memory_remember') {
     const { evidence, ...memory } = args;
@@ -88,4 +92,6 @@ async function callMemoryTool(store, name, args = {}, source = {}) {
   throw new Error('Unknown memory tool.');
 }
 
-module.exports = { memoryServerId, nativeInstructions, memoryTools, nativeMemoryServer, serverConfig, callMemoryTool, boundedNode };
+module.exports = { memoryServerId,
+  nativeInstructions: `${nativeInstructions} For cross-domain ideas, use memory_associations to investigate indirect paths through concepts, entities and parameter patterns. Treat its results as hypotheses and inspect the explanatory path and source evidence before accepting a conclusion.`,
+  memoryTools, nativeMemoryServer, serverConfig, callMemoryTool, boundedNode };

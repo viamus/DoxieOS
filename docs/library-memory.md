@@ -28,6 +28,47 @@ at least 0.62. Undirected pairs are deduplicated; incoming neighbors can add
 more connections. New embeddings update affected neighborhoods; **Reindex
 memories** also refreshes existing links.
 
+## Extract entities and parameters locally
+
+Brain derives entities and learned parameters from knowledge already in its
+database on startup and after changes. **Extract knowledge** runs the same
+local pass explicitly. This does not discover or import provider files.
+
+The extractor uses deterministic local code with no model download or network
+request. It recognizes explicitly named organizations/projects/tools,
+repositories, packages, URLs, paths, JSON settings, assignments, and Markdown
+parameter tables. Capitalization alone does not establish an entity. Values
+retain their JSON types, and credential keys/values are excluded.
+
+Derived records retain the original memory ID, exact excerpts and character/
+line spans. They are labelled **Locally extracted**; extraction does not
+independently verify the statement. Canonical entities and identical parameter
+facts share provenance across sources. Conflicting values remain separate.
+Source revisions withdraw unsupported derived records, preserving shared facts
+while another active source still contains them. Unchanged passes write nothing.
+
+## Explore indirect associations
+
+Open **Unexpected connections** in a memory's details and choose **Explore
+associations**. Brain explores two- and three-hop paths through concepts,
+entities, learned parameter patterns and semantic connections. It discounts
+generic hubs and preserves the relation types and weights along each path.
+
+Results are explicitly labelled **Hypothesis**, with clickable paths explaining
+why a connection was proposed. These are suggestions for investigation; Brain
+does not turn the path into a verified conclusion or a supporting fact. Agent
+tools expose the same bounded exploration through `memory_associations`.
+
+## Start over
+
+**Clear Brain** opens a confirmation explaining the scope. Confirming removes
+all memories, entities, parameters, provenance, history, connections and stored
+vectors. The local model, provider originals, workspaces, agents and execution
+history remain intact. Pending imports, extraction and semantic work are
+quiesced before reset so they cannot restore old results afterward. The legacy
+migration marker is retained so the SQLite backup does not repopulate Brain
+on restart. A new import requires an explicit selection again.
+
 ## Import provider memories manually
 
 Provider memory files are never scanned or imported on startup or on a timer.
@@ -105,6 +146,7 @@ depends on the selected model.
 | `memory_remember` | Retain a learning, optimized revision, entity, or typed parameter. |
 | `memory_relate` | Record explicit weighted evidence relationships. |
 | `memory_graph` | Explore a bounded neighborhood and its scores. |
+| `memory_associations` | Discover indirect hypotheses with explanatory graph paths. |
 | `memory_review` | Revalidate, flag, or archive knowledge with evidence. |
 
 The **Brain** workflow connector retains internal ID `library` for existing

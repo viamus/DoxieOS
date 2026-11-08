@@ -9,8 +9,9 @@ function createMemoryImportJobs({ root, store, emit = () => {} } = {}) {
   let current;
   let closed = false;
   let closing;
+  let cancelling;
   function next() {
-    if (closed || current || !queue.length) return;
+    if (closed || cancelling || current || !queue.length) return;
     const job = queue.shift();
     current = job;
     try {
@@ -46,7 +47,7 @@ function createMemoryImportJobs({ root, store, emit = () => {} } = {}) {
           for (const file of preparedFiles) {
             const ids = [];
             for (let offset = 0; offset < file.memories.length; offset += 25) {
-              if (closed) throw new Error('Memory import cancelled because the application is closing.');
+              if (closed || job.cancelled) throw new Error('Memory import cancelled.');
               const apply = () => {
                 for (const memory of file.memories.slice(offset, offset + 25)) {
                   const before = store.stats().total;
@@ -71,7 +72,7 @@ function createMemoryImportJobs({ root, store, emit = () => {} } = {}) {
   }
   function run(action, options = {}) {
     return new Promise((resolveJob, reject) => {
-      if (closed) { reject(new Error('The memory import service is closed.')); return; }
+      if (closed || cancelling) { reject(new Error('The memory import service is closed or resetting.')); return; }
       let copy;
       try { copy = structuredClone(options); }
       catch { reject(new Error('Memory import options must contain only serializable values.')); return; }
@@ -84,14 +85,23 @@ function createMemoryImportJobs({ root, store, emit = () => {} } = {}) {
   function close() {
     if (closing) return closing;
     closed = true;
-    for (const job of queue.splice(0)) job.reject(new Error('The memory import service is closed.'));
-    const job = current;
-    if (job) job.cancelled = true;
-    closing = job ? Promise.allSettled([job.worker?.terminate(), job.finished]).then(() => undefined) : Promise.resolve();
+    closing = cancel();
     return closing;
   }
+  function cancel() {
+    if (cancelling) return cancelling;
+    for (const job of queue.splice(0)) {
+      job.reject(new Error('Memory import cancelled.'));
+      job.finish?.();
+    }
+    const job = current;
+    if (job) job.cancelled = true;
+    cancelling = Promise.allSettled([job?.worker?.terminate(), job?.finished]).then(() => undefined)
+      .finally(() => { cancelling = null; next(); });
+    return cancelling;
+  }
   return { discover: options => run('discover', options), preview: options => run('preview', options),
-    import: options => run('import', options), close };
+    import: options => run('import', options), cancel, close };
 }
 
 module.exports = { createMemoryImportJobs };

@@ -20,6 +20,7 @@ const { nativeMemoryServer } = require('./memory-tools.cjs');
 const { createMemoryImportJobs } = require('./memory-import-jobs.cjs');
 const { createSemanticMemory } = require('./semantic-memory.cjs');
 const { createMemoryService } = require('./memory-service.cjs');
+const { createKnowledgeExtraction } = require('./knowledge-extraction-jobs.cjs');
 
 const startPage = 'doxie://app/index.html';
 const appRoot = resolve(__dirname, '../..');
@@ -48,6 +49,7 @@ let memoryWatch;
 let memoryTimer;
 let memoryImports;
 let memoryService;
+let memoryExtraction;
 let quitting = false;
 let closed = false;
 
@@ -95,21 +97,53 @@ async function initialize() {
   memoryService = await createMemoryService({ root, store: memory });
   memoryImports = createMemoryImportJobs({ root, store: memory, emit });
   storage.memoryImports = memoryImports;
+  memoryExtraction = createKnowledgeExtraction({ store: memory, emit });
+  storage.memoryExtraction = memoryExtraction;
   let graphPrepared = false;
   const indexAvailableMemories = async () => {
+    if (quitting || storage.brainResetting) return;
     const status = await memory.semantic.status();
     if (status.state === 'ready' && (status.pending || !graphPrepared)) {
       graphPrepared = true;
       await memory.semantic.reindex();
     }
   };
-  void indexAvailableMemories().catch(error => console.error('Could not index Brain meaning:', error.message));
+  const enrichBrain = async () => {
+    if (quitting || storage.brainResetting) return;
+    await memoryExtraction.run();
+    if (!quitting && !storage.brainResetting) await indexAvailableMemories();
+  };
+  storage.resetBrain = async () => {
+    if (storage.brainResetting) throw new Error('Brain is resetting.');
+    storage.brainResetting = true;
+    clearTimeout(memoryTimer);
+    const stopping = Promise.all([memoryImports.cancel(), memoryExtraction.cancel(), memory.semantic.close()]);
+    try {
+      return await memoryService.exclusive(async () => {
+        await stopping;
+        const result = memory.reset();
+        graphPrepared = false;
+        return result;
+      });
+    } finally {
+      await stopping.catch(() => {});
+      memory.semantic = createSemanticMemory({ root, store: memory, emit });
+      await memoryExtraction.close();
+      memoryExtraction = createKnowledgeExtraction({ store: memory, emit });
+      storage.memoryExtraction = memoryExtraction;
+      storage.brainResetting = false;
+      emit({ type: 'memory:extractionChanged', status: memoryExtraction.status() });
+      emit({ type: 'memory:changed' });
+      emit({ type: 'memory:semanticChanged', status: await memory.semantic.status() });
+    }
+  };
+  void enrichBrain().catch(error => console.error('Could not enrich Brain:', error.message));
   storage.watchCatalog?.(() => emit({ type: 'catalog:changed' }), error => console.error(error.message));
   memoryWatch = watch(join(root, '.memory'), () => {
     clearTimeout(memoryTimer);
     memoryTimer = setTimeout(() => {
       emit({ type: 'memory:changed' });
-      void indexAvailableMemories().catch(error => console.error('Could not index new Brain memories:', error.message));
+      void enrichBrain().catch(error => console.error('Could not enrich new Brain memories:', error.message));
     }, 200);
   });
   memoryWatch.on('error', error => console.error('Could not watch Brain changes:', error.message));
@@ -234,7 +268,7 @@ if (!app.requestSingleInstanceLock()) {
     desktopNotifications?.close();
     memoryWatch?.close();
     clearTimeout(memoryTimer);
-    Promise.allSettled([workflows?.close(), consoles?.close(), speech?.close(), stopHousekeeping?.(), memoryImports?.close(), memory?.semantic?.close()]).then(async () => {
+    Promise.allSettled([workflows?.close(), consoles?.close(), speech?.close(), stopHousekeeping?.(), memoryImports?.close(), memoryExtraction?.close(), memory?.semantic?.close()]).then(async () => {
       await agents?.close();
       await memoryService?.close();
       memory?.close();

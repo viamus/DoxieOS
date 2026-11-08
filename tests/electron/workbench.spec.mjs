@@ -43,6 +43,10 @@ test('runs the workbench, a local terminal and a persisted approval workflow in 
     const pageErrors = [];
     page.on('pageerror', error => pageErrors.push(error.message));
     await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    const brainMetric = page.locator('.metric[href="#/libraries"]');
+    await expect(brainMetric.locator('.metric-count')).toHaveText('Brain');
+    await expect(brainMetric).toContainText('0 memories');
+    await expect(brainMetric).toContainText('0 entities');
     if (process.env.DOXIE_TEST_SCREENSHOT) await page.screenshot({ path: process.env.DOXIE_TEST_SCREENSHOT });
     expect(new URL(page.url()).protocol).toBe('doxie:');
     expect(await page.evaluate(() => typeof window.require)).toBe('undefined');

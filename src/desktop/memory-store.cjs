@@ -71,6 +71,25 @@ function normalizedSource(source, title) {
     if (!Number.isSafeInteger(source.chunk) || source.chunk < 0) throw new Error('Invalid memory source chunk.');
     result.chunk = source.chunk;
   }
+  if (source?.evidence !== undefined) {
+    const evidence = source.evidence;
+    if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)
+      || typeof evidence.memoryId !== 'string' || evidence.memoryId.length > 200
+      || typeof evidence.excerpt !== 'string' || evidence.excerpt.length > 2000 || credentialValue.test(evidence.excerpt)
+      || ['start', 'end', 'startLine', 'endLine'].some(key => !Number.isSafeInteger(evidence[key]) || evidence[key] < 0)
+      || evidence.end < evidence.start || evidence.endLine < evidence.startLine) throw new Error('Invalid extraction evidence.');
+    result.evidence = { memoryId: evidence.memoryId, start: evidence.start, end: evidence.end,
+      startLine: evidence.startLine, endLine: evidence.endLine, excerpt: evidence.excerpt };
+    if (evidence.spans !== undefined) {
+      if (!Array.isArray(evidence.spans) || evidence.spans.length > 8) throw new Error('Invalid extraction evidence spans.');
+      result.evidence.spans = evidence.spans.map(span => {
+        if (!span || span.memoryId !== evidence.memoryId || typeof span.excerpt !== 'string' || span.excerpt.length > 2000
+          || credentialValue.test(span.excerpt) || ['start', 'end', 'startLine', 'endLine'].some(key => !Number.isSafeInteger(span[key]) || span[key] < 0)
+          || span.end < span.start || span.endLine < span.startLine) throw new Error('Invalid extraction evidence span.');
+        return { memoryId: span.memoryId, start: span.start, end: span.end, startLine: span.startLine, endLine: span.endLine, excerpt: span.excerpt };
+      });
+    }
+  }
   result.provider ||= 'doxie';
   if (result.provider === 'claude') result.provider = 'claude-code';
   const location = result.path || result.runId || result.label || `manual:${title}`;
@@ -308,6 +327,10 @@ function createMemoryStore({ root, databasePath } = {}) {
           4000,
         ),
       );
+  }
+  // Internal background jobs need complete content, never renderer excerpts.
+  function records(options = {}) {
+    return [...rows.values()].filter(row => matches(row, options)).map(row => node(row));
   }
   function edge(row, fromId, toId) {
     const result = {
@@ -641,6 +664,57 @@ function createMemoryStore({ root, databasePath } = {}) {
       database: file,
       vectorSearch: 'exact-cosine',
     };
+  }
+  function associations({ nodeId, limit = 8, maxBytes = 16000, includeStale = false } = {}) {
+    const source = rows.get(String(nodeId));
+    if (!source || !matches(source, { includeStale })) throw new Error('Select a current Brain memory to explore associations.');
+    const count = limitValue(limit, 8, 20);
+    const budget = limitValue(maxBytes, 16000, 24000);
+    const maximumEdges = 50000;
+    const edges = query(`MATCH (a:BrainMemory)-[r:BrainLink]->(b:BrainMemory)
+      WHERE r.type <> 'supersedes' RETURN a.id AS fromId,b.id AS toId,r.type AS type,r.weight AS weight,r.inferred AS inferred
+      ORDER BY r.weight DESC LIMIT ${maximumEdges + 1}`);
+    const adjacent = new Map();
+    for (const edge of edges.slice(0, maximumEdges)) {
+      if (!matches(rows.get(edge.fromId), { includeStale }) || !matches(rows.get(edge.toId), { includeStale })) continue;
+      for (const [from, to] of [[edge.fromId, edge.toId], [edge.toId, edge.fromId]]) {
+        if (!adjacent.has(from)) adjacent.set(from, []);
+        adjacent.get(from).push({ id: to, type: edge.type, weight: edge.weight ?? 1, inferred: Boolean(edge.inferred) });
+      }
+    }
+    const direct = new Set((adjacent.get(source.id) || []).map(edge => edge.id));
+    const candidates = new Map();
+    const queue = [{ id: source.id, path: [source.id], relations: [], strength: 1 }];
+    let explored = 0;
+    while (queue.length && explored++ < 2500) {
+      const current = queue.shift();
+      if (current.path.length >= 4) continue;
+      for (const edge of (adjacent.get(current.id) || []).slice(0, 40)) {
+        if (current.path.includes(edge.id)) continue;
+        const path = [...current.path, edge.id];
+        const relations = [...current.relations, { type: edge.type, weight: edge.weight, inferred: edge.inferred }];
+        const hubPenalty = current.id === source.id ? 1 : 1 / Math.sqrt(Math.max(1, Math.log2((adjacent.get(current.id)?.length || 1) + 1)));
+        const strength = current.strength * edge.weight * hubPenalty;
+        const candidate = rows.get(edge.id);
+        if (path.length > 2 && candidate.kind === 'memory' && !direct.has(candidate.id)) {
+          const score = strength * (path.length === 3 ? 1 : 0.85);
+          if (!candidates.has(candidate.id) || candidates.get(candidate.id).score < score) {
+            const bridges = path.slice(1, -1).map(id => rows.get(id));
+            candidates.set(candidate.id, { id: candidate.id, title: shorten(candidate.title, 240), kind: candidate.kind,
+              score, hypothesis: true, reason: `Indirect association through ${bridges.map(node => shorten(node.title, 100)).join(' → ')}. Inspect the source evidence before drawing a conclusion.`,
+              path: path.map(id => ({ id, title: shorten(rows.get(id).title, 180), kind: rows.get(id).kind })), relations });
+          }
+        }
+        if (path.length < 4 && strength > 0.02) queue.push({ id: edge.id, path, relations, strength });
+      }
+    }
+    const ranked = [...candidates.values()].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+    const result = { nodeId: source.id, results: [], truncated: edges.length > maximumEdges || queue.length > 0 || ranked.length > count };
+    for (const candidate of ranked.slice(0, count)) {
+      if (byteLength({ ...result, results: [...result.results, candidate] }) > budget) { result.truncated = true; break; }
+      result.results.push(candidate);
+    }
+    return result;
   }
   function sources() {
     return query(
@@ -1033,9 +1107,28 @@ function createMemoryStore({ root, databasePath } = {}) {
     connection.closeSync();
     database.closeSync();
   }
+  function reset() {
+    const before = stats();
+    return write(() => {
+      query('MATCH ()-[r:BrainLink]->() DELETE r');
+      query('MATCH (n:BrainOrigin) DELETE n');
+      query('MATCH (n:BrainEmbedding) DELETE n');
+      query('MATCH (n:BrainMemory) DELETE n');
+      // Retain the legacy migration marker so a restart cannot resurrect the
+      // SQLite backup after the user has explicitly chosen to start over.
+      query("MERGE (n:BrainMeta {id:'sqlite-migration-v1'}) SET n.value=$value", {
+        value: JSON.stringify({ at: now(), reset: true }),
+      });
+      rows.clear();
+      postings.clear();
+      return { cleared: true, deleted: { memories: before.memories, entities: before.entities, parameters: before.parameters,
+        relations: before.relations, total: before.total } };
+    });
+  }
   return {
     stats,
     list,
+    records,
     get,
     remember,
     archive,
@@ -1043,6 +1136,7 @@ function createMemoryStore({ root, databasePath } = {}) {
     search,
     relate,
     graph,
+    associations,
     sources,
     importText,
     syncCatalog,
@@ -1056,6 +1150,7 @@ function createMemoryStore({ root, databasePath } = {}) {
     rebuildSemanticRelationsAsync,
     batch: write,
     close,
+    reset,
   };
 }
 module.exports = { createMemoryStore };

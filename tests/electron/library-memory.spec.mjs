@@ -1,6 +1,6 @@
 import { expect, test, _electron as electron } from '@playwright/test';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -184,8 +184,10 @@ test('observes Brain learning, lifecycle, weighted links and explicit provider i
     await expect(page.locator('.memory-result')).toHaveCount(2);
 
     await page.getByRole('button', { name: 'Open memory Canary rollout', exact: true }).click();
+    await page.locator('.memory-details .memory-history-controls > summary').click();
     await page.getByRole('button', { name: 'Flag for review', exact: true }).click();
     await expect(page.locator('.memory-details .memory-lifecycle')).toHaveText('Needs review');
+    await page.getByText('History filters', { exact: true }).click();
     await page.getByLabel('Memory lifecycle', { exact: true }).selectOption('stale');
     await expect(page.locator('.memory-result')).toHaveCount(1);
     await page.getByRole('button', { name: 'Confirm current', exact: true }).click();
@@ -252,9 +254,11 @@ test('explores weighted semantic neighborhoods and preserves their provenance', 
     const retries = add('Retry policy', 'Use five retries for transient deployment failures.', { kind: 'parameter', parameters: { maxRetries: 5 }, tags: ['deployment'] });
     const oldPolicy = add('Earlier retry policy', 'An earlier record suggested unlimited deployment retries.', { origin: 'imported', source: { provider: 'codex', path: 'synthetic/retries.md' } });
     const production = add('Production environment', 'Production receives verified canary deployments.', { kind: 'entity', tags: ['release'] });
+    const owner = add('Release ownership', 'The release owner coordinates production promotion.');
     store.relate({ fromId: review.id, toId: rollout.id, type: 'supports', weight: 0.94 });
     store.relate({ fromId: retries.id, toId: oldPolicy.id, type: 'contradicts', weight: 0.82 });
     store.relate({ fromId: rollout.id, toId: production.id, type: 'mentions', weight: 0.88 });
+    store.relate({ fromId: production.id, toId: owner.id, type: 'mentions', weight: 0.84 });
     store.review({ id: oldPolicy.id, status: 'stale', evidence: 'Synthetic record requires another review.' });
     for (const [memory, vector] of [[rollout, [1, 0.1, 0]], [review, [0.9, 0.2, 0.1]], [retries, [0.8, 0.3, 0.1]], [oldPolicy, [0.7, 0.4, 0.1]], [production, [0.85, 0.1, 0.3]]]) store.setEmbedding(memory.id, vector, { model: 'synthetic-local-fixture' });
     await store.rebuildSemanticRelations({ model: 'synthetic-local-fixture', threshold: 0.65, neighbors: 3 });
@@ -263,12 +267,16 @@ test('explores weighted semantic neighborhoods and preserves their provenance', 
     application = await electron.launch({ ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }), env: { ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1', CODEX_HOME: join(directory, 'empty-codex'), CLAUDE_CONFIG_DIR: join(directory, 'empty-claude') } });
     const page = await application.firstWindow();
     await page.getByRole('link', { name: 'Brain', exact: true }).first().click();
-    await expect(page.locator('.memory-map-node')).toHaveCount(5);
+    await expect(page.locator('.memory-map-node')).toHaveCount(6);
     await expect.poll(() => page.locator('.memory-map-edge.inferred').count()).toBeGreaterThan(0);
     await expect(page.locator('.memory-map-edge.conflict')).toHaveCount(1);
     await page.getByRole('button', { name: 'Open memory Independent verification', exact: true }).click();
     await expect(page.locator('.memory-details')).toContainText('Optimized knowledge');
     await expect(page.locator('.memory-details')).toContainText('94% strength');
+    await page.getByText('Unexpected connections', { exact: true }).click();
+    await page.getByRole('button', { name: 'Explore associations', exact: true }).click();
+    await expect(page.locator('.memory-association').first()).toContainText('Hypothesis');
+    await expect(page.locator('.memory-association-path')).not.toHaveCount(0);
     await page.getByLabel('Graph relationships', { exact: true }).selectOption('semantic');
     await expect(page.locator('.memory-map-edge:not(.inferred)')).toHaveCount(0);
     await page.getByLabel('Graph relationships', { exact: true }).selectOption('conflicts');
@@ -279,6 +287,88 @@ test('explores weighted semantic neighborhoods and preserves their provenance', 
     await store?.close();
     await application?.close().catch(() => {});
     if (dirname(resolve(directory)) !== resolve(tmpdir()) || !basename(directory).startsWith('doxie-brain-map-')) throw new Error('Refusing cleanup outside the Brain test directory.');
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
+  }
+});
+
+
+test('extracts typed knowledge locally and clears Brain only after confirmation', async ({}, testInfo) => {
+  const directory = await mkdtemp(join(tmpdir(), 'doxie-brain-extract-'));
+  const profile = join(directory, 'app-data');
+  const root = join(profile, 'workbench');
+  const codexHome = join(directory, 'codex-fixture');
+  const providerFile = join(codexHome, 'memories_v2', 'service.md');
+  const modelFile = join(root, '.models', 'semantic', 'preserved-model.txt');
+  const content = '# Service settings\n\nRepository: https://github.com/example/service\n\n' + String.fromCharCode(96).repeat(3) + 'json\n{"retryLimit":5,"maxTokens":8000,"reviewRequired":true}\n' + String.fromCharCode(96).repeat(3);
+  const require = createRequire(import.meta.url);
+  const { createMemoryStore } = require('../../src/desktop/memory-store.cjs');
+  let store;
+  let application;
+  try {
+    await mkdir(dirname(providerFile), { recursive: true });
+    await writeFile(providerFile, content);
+    await mkdir(dirname(modelFile), { recursive: true });
+    await writeFile(modelFile, 'Retain downloaded models when knowledge is cleared.');
+    await require('../../src/desktop/brain-runtime.cjs').initializeMemoryRuntime();
+    store = createMemoryStore({ root });
+    const source = store.remember({ title: 'Service settings', content, origin: 'imported', source: { provider: 'codex', path: providerFile } });
+    await store.close(); store = null;
+    const executablePath = process.env.DOXIE_TEST_EXECUTABLE;
+    application = await electron.launch({ ...(executablePath ? { executablePath, args: [] } : { args: ['.'] }), env: { ...process.env, DOXIE_USER_DATA: profile, DOXIE_TEST: '1', CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: join(directory, 'empty-claude') } });
+    const page = await application.firstWindow();
+    const dashboardBrain = page.locator('.metric[href="#/libraries"]');
+    await expect(dashboardBrain.locator('.metric-count')).toHaveText('Brain');
+    await expect(dashboardBrain).toContainText('1 memory');
+    await expect.poll(async () => (await page.evaluate(() => window.doxie.invoke('memory:extractionStatus'))).state).toBe('ready');
+    const automaticallyExtracted = await page.evaluate(() => window.doxie.invoke('memory:stats'));
+    expect(automaticallyExtracted.entities).toBeGreaterThan(0);
+    expect(automaticallyExtracted.parameters).toBeGreaterThan(0);
+    await expect(dashboardBrain).toContainText(`${automaticallyExtracted.entities} ${automaticallyExtracted.entities === 1 ? 'entity' : 'entities'}`);
+    await page.getByRole('link', { name: 'Brain', exact: true }).first().click();
+    await expect(page.locator('.memory-stats .memory-stat')).toHaveCount(4);
+    await expect(page.getByText('Need review', { exact: true })).toHaveCount(0);
+    const extraction = page.getByRole('region', { name: 'Extract knowledge', exact: true });
+    await extraction.getByRole('button', { name: 'Extract knowledge', exact: true }).click();
+    await expect(extraction.getByRole('status')).toContainText('memories processed');
+    const extracted = await page.evaluate(() => window.doxie.invoke('memory:stats'));
+    expect(extracted.entities).toBeGreaterThan(0);
+    expect(extracted.parameters).toBeGreaterThan(0);
+    expect(extracted.total).toBe(automaticallyExtracted.total);
+    const parameters = await page.evaluate(() => window.doxie.invoke('memory:list', { kind: 'parameter' }));
+    const settings = parameters.find(memory => memory.parameters?.retryLimit === 5);
+    expect(settings?.parameters).toMatchObject({ retryLimit: 5, maxTokens: 8000, reviewRequired: true });
+    expect(settings.source).toMatchObject({ provider: 'doxie-extractor', path: 'memory:' + source.id });
+    await page.getByLabel('Memory type', { exact: true }).selectOption('parameter');
+    await expect(page.locator('.memory-result').filter({ hasText: 'Locally extracted' })).toBeVisible();
+    await page.locator('.memory-result').first().click();
+    await expect(page.locator('.memory-details')).toContainText('Locally extracted');
+    await page.locator('.memory-details').getByRole('button', { name: 'Open source memory', exact: true }).click();
+    await expect(page.locator('.memory-details h3')).toHaveText('Service settings');
+    await extraction.getByRole('button', { name: 'Extract knowledge', exact: true }).click();
+    await expect(extraction.getByRole('button', { name: 'Extract knowledge', exact: true })).toBeEnabled();
+    expect((await page.evaluate(() => window.doxie.invoke('memory:stats'))).total).toBe(extracted.total);
+    await page.getByRole('button', { name: 'Clear Brain', exact: true }).click();
+    const confirmation = page.getByRole('dialog');
+    await expect(confirmation).toContainText('Original provider files and downloaded models are preserved');
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect((await page.evaluate(() => window.doxie.invoke('memory:stats'))).total).toBe(extracted.total);
+    await page.getByLabel('Memory type', { exact: true }).selectOption('');
+    await page.screenshot({ path: testInfo.outputPath('brain-extracted-knowledge.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Clear Brain', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Clear Brain', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByText('No agent learnings yet', { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => window.doxie.invoke('memory:stats'))).toMatchObject({ total: 0, memories: 0, entities: 0, parameters: 0, relations: 0 });
+    expect(await readFile(providerFile, 'utf8')).toBe(content);
+    expect(await readFile(modelFile, 'utf8')).toContain('Retain downloaded models');
+    await page.getByRole('link', { name: 'Dashboard', exact: true }).first().click();
+    await expect(dashboardBrain.locator('.metric-count')).toHaveText('Brain');
+    await expect(dashboardBrain).toContainText('0 memories');
+    await expect(dashboardBrain).toContainText('0 entities');
+  } finally {
+    await store?.close();
+    await application?.close().catch(() => {});
+    if (dirname(resolve(directory)) !== resolve(tmpdir()) || !basename(directory).startsWith('doxie-brain-extract-')) throw new Error('Refusing cleanup outside the Brain extraction test directory.');
     await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 150 });
   }
 });

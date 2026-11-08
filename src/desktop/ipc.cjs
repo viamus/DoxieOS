@@ -93,11 +93,13 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
   const importPreviews = new Map();
   const importLimits = { maxFiles: 4096, maxFileBytes: 16 * 1024 * 1024, maxTotalBytes: 64 * 1024 * 1024 };
   function importJobs() {
+    if (storage.brainResetting) throw new Error('Brain is resetting.');
     if (!storage.memoryImports) throw new Error('Memory import is unavailable.');
     return storage.memoryImports;
   }
   const harnessOwnedLibrary = () => { throw new Error('The library is maintained by the agent harness. Put manual Markdown in a workspace and use Workspace Memory to supply it to an execution.'); };
   function centralMemory() {
+    if (storage.brainResetting) throw new Error('Brain is resetting.');
     if (!storage.memory) throw new Error('Brain is unavailable.');
     return storage.memory;
   }
@@ -290,6 +292,21 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
       return result;
     },
     'memory:graph': (options = {}) => centralMemory().graph(options),
+    'memory:associations': (options = {}) => centralMemory().associations(options),
+    'memory:extractionStatus': () => storage.memoryExtraction?.status() || { state: 'idle', processed: 0, entities: 0, parameters: 0 },
+    'memory:extract': () => {
+      centralMemory();
+      if (!storage.memoryExtraction) throw new Error('Local knowledge extraction is unavailable.');
+      return storage.memoryExtraction.run();
+    },
+    'memory:clear': async (input = {}) => {
+      if (input?.confirmation !== 'CLEAR BRAIN') throw new Error('Confirm clearing Brain before deleting its knowledge.');
+      if (storage.brainResetting) throw new Error('Brain is resetting.');
+      if (!storage.resetBrain) throw new Error('Restart DoxieOS before clearing Brain.');
+      importPreviews.clear();
+      importSources.clear();
+      return storage.resetBrain();
+    },
     'memory:sources': () => centralMemory().sources(),
     'memory:semanticStatus': () => centralMemory().semantic?.status() || { state: 'missing', model: 'Multilingual semantic search', totalBytes: 135392488, receivedBytes: 0 },
     'memory:semanticInstall': () => {

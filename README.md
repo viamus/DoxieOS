@@ -29,6 +29,7 @@ workbench, workflow engine, SQLite storage, and terminals run together in Electr
 | Workbench | React navigation for workspaces, consoles, agents, connectors, workflows, libraries, and history, with native folder access. |
 | Brain | Explore a local LadybugDB knowledge graph, weighted semantic connections, origins, revisions, and memory obsolescence. Import Codex and Claude Code memories manually through preview and selection. |
 | Semantic retrieval | Enable a local multilingual embedding model to search by meaning. Text search works immediately without a model download. |
+| Knowledge extraction | Local code derives entities and typed parameters with literal source evidence. Explore indirect associations as hypotheses, or clear Brain explicitly to start over. |
 | Agent editing | Edit instructions, metadata, provider, model, and reasoning effort directly. Ordinary runs use the agent's saved execution settings. |
 | AI builders | Create agents and workflows through conversations, preview drafts, and save them to the catalog. Resume saved sessions after navigation or restart. |
 | Run results | Read the final response as Markdown, including tables and links. Expand Activity, Diagnostics, or Full log for execution details. |

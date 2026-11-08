@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Brain, Check, CircleDot, Clock3, FileText, FolderOpen, GitBranch, Link2, Network, RefreshCw, Settings2, Sparkles } from 'lucide-react';
-import { Button, DateTime, Empty, ErrorNotice, Loading, PageHeading, Panel, SearchBox, Tag, invoke } from './ui.jsx';
+import { Brain, Check, CircleDot, Clock3, FileText, FolderOpen, GitBranch, Link2, Network, RefreshCw, Settings2, Sparkles, Trash2 } from 'lucide-react';
+import { Button, Confirm, DateTime, Empty, ErrorNotice, Loading, PageHeading, Panel, SearchBox, Tag, invoke } from './ui.jsx';
 import { Markdown } from './workbench.jsx';
 import { MemoryGraph } from './memory-graph.jsx';
 import './memory.css';
@@ -14,7 +14,7 @@ const lifecycleOf = memory => memory.lifecycle?.status || (memory.archivedAt ? '
 const lifecycleLabels = { current: 'Current', stale: 'Needs review', superseded: 'Previous version', archived: 'Archived' };
 const originOf = memory => memory.origin || memory.source?.kind || (['codex', 'claude', 'claude-code'].includes(memory.source?.provider) ? 'imported' : 'learned');
 const originLabels = { imported: 'Imported memory', learned: 'Agent learning', optimized: 'Optimized knowledge', derived: 'Derived knowledge' };
-const originLabel = memory => originLabels[originOf(memory)] || 'Constructed knowledge';
+const originLabel = memory => memory.source?.provider === 'doxie-extractor' ? 'Locally extracted' : originLabels[originOf(memory)] || 'Constructed knowledge';
 const lifecycleMatches = (memory, scope) => !scope || (scope === 'history' ? ['archived', 'superseded'].includes(lifecycleOf(memory)) : lifecycleOf(memory) === scope);
 
 // Background learning must not remove the view the user is reading or dragging.
@@ -62,6 +62,29 @@ function SemanticSearch() {
   }}>{preparing || busy ? 'Preparing search…' : ready ? 'Reindex memories' : 'Enable semantic search'}</Button></section>;
 }
 
+function ExtractKnowledge() {
+  const [status, setStatus] = useState({ state: 'idle' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const update = useCallback(async () => {
+    try { setStatus(await invoke('memory:extractionStatus')); }
+    catch (problem) { setError(problem.message); }
+  }, []);
+  useEffect(() => {
+    update();
+    return window.doxie.onEvent(event => {
+      if (event.type === 'memory:extractionChanged' && event.status) setStatus(event.status);
+      else if (['memory:changed', 'memory:extractionChanged'].includes(event.type)) update();
+    });
+  }, [update]);
+  const running = busy || status.state === 'running';
+  return <section className="memory-extraction" aria-label="Extract knowledge"><Network size={21} /><div className="memory-extraction-copy"><strong>Build entities & learned parameters</strong><p>Find entities and explicit settings in existing Brain memories locally. Evidence stays connected to the source memory.</p>{running && <small role="status">Extracting knowledge · {status.processed || 0} memories processed</small>}{status.state === 'ready' && !running && <small role="status">{status.processed || 0} memories processed · {status.entities || 0} entities · {status.parameters || 0} parameters</small>}{(error || status.error) && <ErrorNotice error={error || status.error} />}</div><Button icon={Sparkles} disabled={running} onClick={async () => {
+    setBusy(true); setError('');
+    try { await invoke('memory:extract'); await update(); }
+    catch (problem) { setError(problem.message); } finally { setBusy(false); }
+  }}>{running ? 'Extracting knowledge…' : 'Extract knowledge'}</Button></section>;
+}
+
 function ImportMemories() {
   const [sources, setSources] = useState([]);
   const [sourceIds, setSourceIds] = useState(new Set());
@@ -100,11 +123,11 @@ function ImportMemories() {
 function SourceDetails({ memory, onSelect }) {
   const origins = Array.isArray(memory.provenance) ? memory.provenance : [];
   const source = typeof memory.source === 'string' ? { path: memory.source } : memory.source || origins[0] || {};
-  const providerLabel = provider => provider === 'codex' ? 'Codex' : ['claude-code', 'claude'].includes(provider) ? 'Claude' : provider === 'catalog' ? 'Knowledge catalog' : provider === 'doxie-agent' ? 'Agent run' : provider === 'doxie' || !provider ? 'DoxieOS' : readable(provider);
+  const providerLabel = provider => provider === 'codex' ? 'Codex' : ['claude-code', 'claude'].includes(provider) ? 'Claude' : provider === 'catalog' ? 'Knowledge catalog' : provider === 'doxie-extractor' ? 'Local extraction' : provider === 'doxie-agent' ? 'Agent run' : provider === 'doxie' || !provider ? 'DoxieOS' : readable(provider);
   const path = source.path || source.sourcePath;
   const previous = path?.startsWith('memory:') ? path.slice(7) : null;
   const learnedAt = source.importedAt || memory.createdAt;
-  return <div className="memory-detail-section"><h4>Origin & evidence</h4><dl className="memory-provenance"><div><dt>Built through</dt><dd>{originLabel(memory)}</dd></div><div><dt>Provider</dt><dd>{providerLabel(source.provider)}</dd></div>{path && <div><dt>{previous ? 'Based on' : 'Source file'}</dt><dd className="memory-source-path">{previous ? <Button variant="ghost" onClick={() => onSelect(previous)}>Open source version</Button> : path}</dd></div>}{source.label && <div><dt>Evidence</dt><dd>{source.label}</dd></div>}{source.runId && <div><dt>Run</dt><dd className="memory-source-path">{source.runId}</dd></div>}{learnedAt && <div><dt>Remembered</dt><dd><DateTime value={learnedAt} /></dd></div>}{memory.updatedAt && memory.updatedAt !== memory.createdAt && <div><dt>Updated</dt><dd><DateTime value={memory.updatedAt} /></dd></div>}</dl>{origins.length > 1 && <details><summary>{origins.length} source records</summary><div className="stack">{origins.map((origin, index) => <dl className="memory-provenance" key={`${origin.path}/${index}`}><div><dt>From</dt><dd>{providerLabel(origin.provider)}</dd></div>{origin.path && <div><dt>Source</dt><dd className="memory-source-path">{origin.path}</dd></div>}{origin.importedAt && <div><dt>Imported</dt><dd><DateTime value={origin.importedAt} /></dd></div>}</dl>)}</div></details>}</div>;
+  return <div className="memory-detail-section"><h4>Origin & evidence</h4><dl className="memory-provenance"><div><dt>Built through</dt><dd>{originLabel(memory)}</dd></div><div><dt>Provider</dt><dd>{providerLabel(source.provider)}</dd></div>{path && <div><dt>{previous ? 'Based on' : 'Source file'}</dt><dd className="memory-source-path">{previous ? <Button variant="ghost" onClick={() => onSelect(previous)}>{source.provider === 'doxie-extractor' ? 'Open source memory' : 'Open source version'}</Button> : path}</dd></div>}{source.label && <div><dt>Evidence</dt><dd>{source.label}</dd></div>}{source.runId && <div><dt>Run</dt><dd className="memory-source-path">{source.runId}</dd></div>}{learnedAt && <div><dt>Remembered</dt><dd><DateTime value={learnedAt} /></dd></div>}{memory.updatedAt && memory.updatedAt !== memory.createdAt && <div><dt>Updated</dt><dd><DateTime value={memory.updatedAt} /></dd></div>}</dl>{origins.length > 1 && <details><summary>{origins.length} source records</summary><div className="stack">{origins.map((origin, index) => <dl className="memory-provenance" key={`${origin.path}/${index}`}><div><dt>From</dt><dd>{providerLabel(origin.provider)}</dd></div>{origin.path && <div><dt>Source</dt><dd className="memory-source-path">{origin.path}</dd></div>}{origin.importedAt && <div><dt>Imported</dt><dd><DateTime value={origin.importedAt} /></dd></div>}</dl>)}</div></details>}</div>;
 }
 
 function MemoryDetails({ id, revision, graph, onSelect, onReviewed }) {
@@ -112,7 +135,11 @@ function MemoryDetails({ id, revision, graph, onSelect, onReviewed }) {
   const neighborhood = useRetainedAsync(() => id ? invoke('memory:graph', { nodeId: id, limit: 24, maxBytes: 64000, includeStale: true, includeHistory: true }) : null, [id, revision]);
   const [reviewing, setReviewing] = useState(false);
   const [reviewError, setReviewError] = useState('');
+  const [associations, setAssociations] = useState(null);
+  const [exploring, setExploring] = useState(false);
+  const [associationError, setAssociationError] = useState('');
   useEffect(() => setReviewError(''), [id]);
+  useEffect(() => { setAssociations(null); setAssociationError(''); }, [id]);
   const memory = detail.value?.id === id ? detail.value : null;
   const relatedGraph = neighborhood.value?.nodes?.some(node => node.id === id) ? neighborhood.value : graph;
   const edges = (relatedGraph?.edges || []).filter(edge => [edge.fromId || edge.from, edge.toId || edge.to].includes(id)).sort((left, right) => (right.weight ?? 1) - (left.weight ?? 1));
@@ -137,16 +164,21 @@ function MemoryDetails({ id, revision, graph, onSelect, onReviewed }) {
         {previousId && <Button variant="ghost" onClick={() => onSelect(previousId)}>Open previous version</Button>}
         {memory.supersededBy && <Button variant="ghost" onClick={() => onSelect(memory.supersededBy)}>Open current version</Button>}
       </div>
-      <div className={`memory-review ${lifecycle}`}>
+      <details className="memory-history-controls"><summary>History & review</summary><div className={`memory-review ${lifecycle}`}>
         <Clock3 size={16} /><div><strong>{lifecycle === 'stale' ? 'Ready for another look' : lifecycle === 'archived' ? 'Retained as history' : lifecycle === 'superseded' ? 'A newer version is available' : 'Available to your agents'}</strong><p>{lifecycle === 'stale' ? 'Recheck the evidence before using this knowledge. Review keeps it useful without losing its history.' : lifecycle === 'archived' || lifecycle === 'superseded' ? 'This version is preserved for traceability and excluded from default agent retrieval.' : 'A review date helps Brain keep changing knowledge fresh.'}</p>{reviewAfter && <small>Review {lifecycle === 'stale' ? 'was due' : 'due'} <DateTime value={reviewAfter} /></small>}
         {lifecycle !== 'superseded' && <div className="actions start memory-review-actions">{lifecycle === 'current' ? <Button variant="ghost" disabled={reviewing} onClick={() => review('stale')}>Flag for review</Button> : <Button icon={Check} variant="ghost" disabled={reviewing} onClick={() => review('current')}>{lifecycle === 'archived' ? 'Restore as current' : 'Confirm current'}</Button>}{lifecycle === 'stale' && <Button variant="ghost" disabled={reviewing} onClick={() => review('archived')}>Archive</Button>}</div>}
         </div>
-      </div>
+      </div></details>
       {reviewError && <ErrorNotice error={reviewError} />}
       <div className="memory-detail-section"><h4>What to remember</h4><Markdown>{memory.content}</Markdown></div>
       {Object.keys(memory.parameters || {}).length > 0 && <div className="memory-detail-section"><h4>Learned parameters</h4><dl className="memory-parameters">{Object.entries(memory.parameters).map(([key, value]) => <div key={key}><dt>{readable(key)}</dt><dd>{valueText(value)}</dd></div>)}</dl></div>}
       {memory.tags?.length > 0 && <div className="memory-tag-list">{memory.tags.map(tag => <span className="memory-tag" key={tag}>{tag}</span>)}</div>}
       <SourceDetails memory={memory} onSelect={onSelect} />
+      <details className="memory-associations"><summary>Unexpected connections</summary><div className="memory-associations-body"><p>Explore indirect connections through shared entities, settings, and related knowledge.</p><Button icon={Network} variant="ghost" disabled={exploring} onClick={async () => {
+        setExploring(true); setAssociationError('');
+        try { setAssociations({ ...(await invoke('memory:associations', { nodeId: id, limit: 6, maxBytes: 32000 })), nodeId: id }); }
+        catch (problem) { setAssociationError(problem.message); } finally { setExploring(false); }
+      }}>{exploring ? 'Exploring associations…' : 'Explore associations'}</Button>{associationError && <ErrorNotice error={associationError} />}{associations?.nodeId === id && <div className="memory-association-results">{associations.results?.length ? associations.results.map(result => <div className="memory-association" key={result.id}><span className="memory-association-label">Hypothesis · {Math.round(result.score * 100)}% association</span><Button variant="ghost" onClick={() => onSelect(result.id)}>{result.title}</Button><p>{result.reason}</p><div className="memory-association-path" aria-label="Association path">{result.path?.map((item, index) => <span key={`${item.id}-${index}`}>{index > 0 && <span aria-hidden="true">→</span>}<Button variant="ghost" onClick={() => onSelect(item.id)}>{item.title || item.id}</Button></span>)}</div></div>) : <p>No indirect connections found in this neighborhood yet.</p>}{associations.truncated && <p className="muted">More associations exist beyond this neighborhood.</p>}</div>}</div></details>
       {edges.length > 0 && <div className="memory-detail-section"><h4>Connections</h4><div className="memory-connections">{edges.map((edge, index) => {
         const target = (edge.fromId || edge.from) === id ? edge.toId || edge.to : edge.fromId || edge.from;
         const other = relatedGraph.nodes.find(node => node.id === target);
@@ -164,6 +196,10 @@ export function LibrariesPage() {
   const [lifecycle, setLifecycle] = useState('');
   const [selected, setSelected] = useState('');
   const [revision, setRevision] = useState(0);
+  const [generation, setGeneration] = useState(0);
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState('');
   const selectionScope = useRef(null);
   useEffect(() => { const timer = setTimeout(() => setQuery(search.trim()), 180); return () => clearTimeout(timer); }, [search]);
   useEffect(() => window.doxie.onEvent(event => {
@@ -191,18 +227,18 @@ export function LibrariesPage() {
     if (!selected || (changedScope && !data.value.graph.nodes.some(node => node.id === selected))) setSelected(data.value.nodes[0]?.id || '');
   }, [data.value]);
   return <div className="page memory-page">
-    <PageHeading title="Brain" icon={Brain} subtitle="A shared memory that connects knowledge, keeps its evidence, and evolves with your agents." />
+    <PageHeading title="Brain" icon={Brain} subtitle="A shared memory that connects knowledge, keeps its evidence, and evolves with your agents." actions={<Button icon={Trash2} variant="ghost" disabled={clearing} onClick={() => { setClearError(''); setClearConfirm(true); }}>Clear Brain</Button>} />
     <div className="memory-learning-note"><Brain size={22} /><div><strong>Connected to every agent</strong><p>Agents consult Brain, connect related knowledge, and retain verified learnings as they work. Imported memories, derived insights, and optimized knowledge share one living graph.</p></div><Tag>Always connected</Tag><Button to="/agents">Open agents</Button></div>
     <div className="memory-stats">
       <div className="memory-stat"><Brain size={20} /><div><strong>{stats.memories ?? '—'}</strong><small>Memories</small></div></div>
       <div className="memory-stat"><CircleDot size={20} /><div><strong>{stats.entities ?? '—'}</strong><small>Entities</small></div></div>
       <div className="memory-stat"><Settings2 size={20} /><div><strong>{stats.parameters ?? '—'}</strong><small>Learned parameters</small></div></div>
       <div className="memory-stat"><GitBranch size={20} /><div><strong>{stats.relations ?? '—'}</strong><small>Connections</small></div></div>
-      <button type="button" className="memory-stat memory-stat-review" onClick={() => setLifecycle('stale')}><Clock3 size={20} /><div><strong>{stats.stale ?? stats.needsReview ?? 0}</strong><small>Need review</small></div></button>
     </div>
-    <div className="memory-toolbar"><SearchBox value={search} setValue={setSearch} placeholder="Search memories…" /><select aria-label="Memory type" value={kind} onChange={event => setKind(event.target.value)}><option value="">All types</option>{kinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><select aria-label="Memory lifecycle" value={lifecycle} onChange={event => setLifecycle(event.target.value)}><option value="">Current & needs review</option><option value="current">Current</option><option value="stale">Needs review</option><option value="history">Archived & previous versions</option></select></div>
+    <div className="memory-toolbar"><SearchBox value={search} setValue={setSearch} placeholder="Search memories…" /><select aria-label="Memory type" value={kind} onChange={event => setKind(event.target.value)}><option value="">All types</option>{kinds.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><details className="memory-history-filter"><summary>History filters</summary><select aria-label="Memory lifecycle" value={lifecycle} onChange={event => setLifecycle(event.target.value)}><option value="">Current & needs review</option><option value="current">Current</option><option value="stale">Needs review</option><option value="history">Archived & previous versions</option></select></details></div>
     <SemanticSearch />
-    <ImportMemories />
+    <ExtractKnowledge key={`extract-${generation}`} />
+    <ImportMemories key={`import-${generation}`} />
     {data.error && <div className="stack"><ErrorNotice error={data.error} /><div className="actions start">{data.value && <span className="muted">Showing the last available view.</span>}<Button icon={RefreshCw} onClick={() => setRevision(value => value + 1)}>Retry Brain load</Button></div></div>}
     <div className="memory-layout"><div className="memory-main">
       <Panel title="Memory map" icon={Network} hint="Explore evidence, semantic similarity, and the strength of each connection." actions={<>{data.loading && data.value && <span role="status" className="actions"><RefreshCw size={13} className="spinner" />Updating…</span>}<Tag>{graph.nodes.length} nodes · {graph.edges.length} links</Tag></>}>
@@ -218,5 +254,15 @@ export function LibrariesPage() {
         })}</div> : <Empty compact title={query || kind || lifecycle ? 'No matching memories' : 'No agent learnings yet'} detail={query || kind || lifecycle ? 'Try another search or clear a filter.' : 'Run an agent to build shared knowledge. Import existing provider memories when you choose.'} action={!query && !kind && !lifecycle && <Button to="/agents">Open agents</Button>} />}
       </Panel>
     </div><MemoryDetails id={selected} revision={revision} graph={graph} onSelect={setSelected} onReviewed={() => setRevision(value => value + 1)} /></div>
+    {clearConfirm && <Confirm title="Clear Brain" label={clearing ? 'Clearing Brain…' : 'Clear Brain'} detail={clearError || 'Permanently delete all Brain memories, entities, learned parameters, relationships, and indexes? Original provider files and downloaded models are preserved. This cannot be undone.'} close={() => { if (!clearing) setClearConfirm(false); }} confirm={async () => {
+      if (clearing) return;
+      setClearing(true); setClearError('');
+      try {
+        await invoke('memory:clear', { confirmation: 'CLEAR BRAIN' });
+        setSelected(''); setSearch(''); setQuery(''); setKind(''); setLifecycle('');
+        setGeneration(value => value + 1); setRevision(value => value + 1); setClearConfirm(false);
+      } catch (problem) { setClearError(problem.message); }
+      finally { setClearing(false); }
+    }} />}
   </div>;
 }

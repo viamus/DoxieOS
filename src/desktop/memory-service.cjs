@@ -77,6 +77,8 @@ async function createMemoryService({ root, store }) {
   const file = descriptorPath(root);
   mkdirSync(join(resolve(root), '.memory'), { recursive: true });
   let closing = false;
+  let paused = false;
+  let generation = 0;
   let tail = Promise.resolve();
   const sockets = new Set();
   let port;
@@ -98,6 +100,8 @@ async function createMemoryService({ root, store }) {
     if (incoming.method !== 'POST' || incoming.url !== '/tools' || !/^application\/json(?:;|$)/i.test(incoming.headers['content-type'] || '')) {
       incoming.resume(); reply(400, { ok: false, error: 'Unsupported Brain request.' }); return;
     }
+    if (paused) { incoming.resume(); reply(503, { ok: false, error: 'Brain is resetting. Try again after it finishes.' }); return; }
+    const requestGeneration = generation;
     if (Number(incoming.headers['content-length']) > maximumRequest) {
       incoming.resume(); reply(413, { ok: false, error: 'Brain request exceeds 256 KiB.' }); return;
     }
@@ -112,6 +116,9 @@ async function createMemoryService({ root, store }) {
     });
     incoming.on('end', () => {
       if (oversized) return;
+      if (paused || requestGeneration !== generation) {
+        reply(503, { ok: false, error: 'Brain reset invalidated this request. Try again after it finishes.' }); return;
+      }
       let message;
       try {
         message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -122,7 +129,9 @@ async function createMemoryService({ root, store }) {
       // The desktop process owns the embedded database. Serialize tool access
       // so MCP processes never compete for its file lock or share a handle.
       tail = tail.catch(() => {}).then(async () => {
-        if (closing) { reply(503, { ok: false, error: 'Brain is closing.' }); return; }
+        if (closing || paused || requestGeneration !== generation) {
+          reply(503, { ok: false, error: closing ? 'Brain is closing.' : 'Brain reset invalidated this request. Try again after it finishes.' }); return;
+        }
         try {
           const result = await callMemoryTool(store, message.name, message.args || {}, { ...(message.runId ? { runId: message.runId } : {}) });
           reply(200, { ok: true, result });
@@ -145,7 +154,14 @@ async function createMemoryService({ root, store }) {
     renameSync(temporary, file);
   } catch (error) { server.close(); throw error; }
   finally { rmSync(temporary, { force: true }); }
-  return { port, async close() {
+  return { port, async exclusive(action) {
+    if (closing || paused) throw new Error('Brain is closing or resetting.');
+    paused = true;
+    generation++;
+    const work = tail.catch(() => {}).then(action);
+    tail = work.catch(() => {});
+    try { return await work; } finally { paused = false; }
+  }, async close() {
     if (closing) return;
     closing = true;
     try { if (descriptor(root)?.token === token) rmSync(file, { force: true }); } catch {}

@@ -64,3 +64,19 @@ test('close cancels an active worker and queued operations, is idempotent, and r
   assert((await results).every(item => item.status === 'rejected'));
   await assert.rejects(jobs.preview({ sources: [] }), /closed/);
 });
+
+test('reset cancellation quiesces imports, prevents late writes and keeps the service reusable', async t => {
+  const { home, store, jobs, write } = setup(t);
+  const source = join(home, '.codex', 'memories');
+  write(join(source, 'fixture.md'), '# Extraction fixture\nOnly explicitly imported knowledge.');
+  const options = { sources: [{ provider: 'codex', path: source }] };
+  const active = jobs.import(options);
+  const queued = jobs.import(options);
+  const done = Promise.allSettled([active, queued]);
+  await jobs.cancel();
+  store.reset();
+  assert((await done).every(result => result.status === 'rejected'));
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(store.stats().total, 0);
+  assert.equal((await jobs.import(options)).imported, 1);
+});

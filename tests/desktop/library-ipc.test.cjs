@@ -62,3 +62,18 @@ test('provider memory import requires manual discovery, preview and explicit sel
   await assert.rejects(actions['memory:import']({ previewId: preview.previewId, selectedFileIds: [file.id] }), /Preview/);
   assert.equal(picks(), 0);
 });
+
+test('Brain clear requires explicit confirmation and uses the quiescing owner reset', async t => {
+  const { storage, actions } = await fixture(t);
+  storage.memory.remember({ title: 'Keep until confirmed', content: 'A deliberate reset is required.' });
+  let resets = 0;
+  storage.resetBrain = async () => { resets++; return storage.memory.reset(); };
+  for (const input of [undefined, {}, { confirmation: 'yes' }, { confirmation: 'clear brain' }]) {
+    await assert.rejects(actions['memory:clear'](input), /Confirm clearing/);
+  }
+  assert.equal(storage.memory.stats().total, 1);
+  assert.equal(resets, 0);
+  assert.equal((await actions['memory:clear']({ confirmation: 'CLEAR BRAIN' })).cleared, true);
+  assert.equal(resets, 1);
+  assert.equal(storage.memory.stats().total, 0);
+});

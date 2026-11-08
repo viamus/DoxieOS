@@ -5,6 +5,7 @@ const { request } = require('node:http');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { createMemoryService, connectMemoryService } = require('../../src/desktop/memory-service.cjs');
+const { memoryTools } = require('../../src/desktop/memory-tools.cjs');
 
 function send(port, body, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -67,4 +68,67 @@ test('MCP refuses to fall back to an independent store when a live desktop endpo
   const client = connectMemoryService({ root });
   assert(client);
   await assert.rejects(client.call('memory_search', { query: 'release' }), /service is unavailable/);
+});
+
+test('exclusive reset drains an in-flight query, rejects new tools while paused and resumes afterward', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-brain-exclusive-'));
+  let release;
+  let entered;
+  let first = true;
+  let reset = false;
+  let records = [{ id: 'before-reset' }];
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const store = { semantic: { async search() {
+    const result = { results: [...records] };
+    if (first) { first = false; entered(); await gate; }
+    return result;
+  } }, remember(args) { records.push({ id: 'after-reset', ...args }); return { id: 'after-reset', title: args.title, content: args.content }; } };
+  const service = await createMemoryService({ root, store });
+  t.after(async () => { release(); await service.close(); await rm(root, { recursive: true, force: true }); });
+  const descriptor = JSON.parse(await readFile(join(root, '.memory', 'service.json'), 'utf8'));
+  const client = connectMemoryService({ root });
+  const pending = client.call('memory_search', { query: 'before' });
+  await started;
+  const resetting = service.exclusive(() => { records = []; reset = true; });
+  const blocked = await send(service.port, { name: 'memory_remember', args: { title: 'Late write', content: 'Must wait for reset.' } }, { authorization: `Bearer ${descriptor.token}` });
+  assert.equal(blocked.status, 503);
+  assert.equal(reset, false, 'the exclusive action must wait for the active query');
+  release();
+  assert.equal((await pending).results[0].id, 'before-reset');
+  await resetting;
+  assert.deepEqual((await client.call('memory_search', { query: 'after' })).results, []);
+  assert.equal((await client.call('memory_remember', { title: 'New learning', content: 'Created after reset.' })).id, 'after-reset');
+  assert(!memoryTools.some(tool => /reset|clear/.test(tool.name)), 'providers cannot reset Brain through an MCP tool');
+});
+
+test('a request whose headers precede reset cannot write after its delayed body arrives', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'doxie-brain-reset-body-'));
+  const writes = [];
+  const service = await createMemoryService({ root, store: { remember(args) { writes.push(args); return { id: 'late', title: args.title, content: args.content }; } } });
+  t.after(async () => { await service.close(); await rm(root, { recursive: true, force: true }); });
+  const descriptor = JSON.parse(await readFile(join(root, '.memory', 'service.json'), 'utf8'));
+  const body = JSON.stringify({ name: 'memory_remember', args: { title: 'Old request', content: 'This request started before reset.' } });
+  const req = request({ host: '127.0.0.1', port: service.port, path: '/tools', method: 'POST', headers: {
+    authorization: `Bearer ${descriptor.token}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), expect: '100-continue',
+  } });
+  const response = new Promise((resolve, reject) => {
+    req.once('response', incoming => { let text = ''; incoming.on('data', chunk => { text += chunk; }); incoming.on('end', () => resolve({ status: incoming.statusCode, body: JSON.parse(text) })); });
+    req.once('error', reject);
+  });
+  const accepted = new Promise(resolve => req.once('continue', resolve));
+  req.flushHeaders();
+  await accepted; // The server accepted headers while Brain was available.
+  let release;
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  const resetting = service.exclusive(async () => { entered(); await gate; writes.length = 0; });
+  await started;
+  req.end(body);
+  await new Promise(resolve => setImmediate(resolve));
+  release();
+  await resetting;
+  assert.equal((await response).status, 503);
+  assert.equal(writes.length, 0, 'old requests cannot repopulate a reset Brain');
 });
