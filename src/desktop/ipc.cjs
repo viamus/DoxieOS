@@ -55,6 +55,26 @@ function createNotifications(storage, emit, { show = () => {}, dismiss = () => {
       return notification;
     },
     read,
+    remove(id) {
+      if (typeof id !== 'string' || !id.trim()) throw new TypeError('A notification ID is required.');
+      const index = notifications.findIndex(item => item.id === id);
+      if (index === -1) return false;
+      notifications.splice(index, 1);
+      persist();
+      try { dismiss(id); } catch {}
+      emit({ type: 'notifications:changed' });
+      return true;
+    },
+    clear() {
+      if (!notifications.length) return false;
+      const removed = notifications.splice(0);
+      persist();
+      for (const item of removed) {
+        try { dismiss(item.id); } catch {}
+      }
+      emit({ type: 'notifications:changed' });
+      return true;
+    },
   };
 }
 
@@ -371,6 +391,8 @@ function createActions({ app, dialog, shell, window, storage, agents, workflows,
     'settings:importMcp': () => mcp.importGlobals(),
     'storage:cleanup': async () => ({ removed: await sweepScratch({ storage, builders, retentionMs: 0 }) }),
     'notifications:read': (id) => notifications.read(id),
+    'notifications:delete': (id) => notifications.remove(id),
+    'notifications:clear': () => notifications.clear(),
     'notifications:openSource': (id) => {
       const item = notifications.list().find(notification => notification.id === id);
       if (!item?.sourcePath) throw new Error('The notification has no source folder.');

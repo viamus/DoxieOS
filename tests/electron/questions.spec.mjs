@@ -104,8 +104,9 @@ test('answers agent and workflow questions in Electron and follows their notific
 
     await page.evaluate(() => { window.location.hash = '/notifications'; });
     await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
-    const notificationPanel = page.locator('.panel').filter({ has: page.getByRole('heading', { name: notification.title, exact: true }) });
+    const notificationPanel = page.locator('.notification-row').filter({ has: page.locator('.notification-title').filter({ hasText: notification.title }) });
     await expect(notificationPanel).toContainText(notification.body);
+    await notificationPanel.getByRole('button', { name: `Show notification: ${notification.title}`, exact: true }).click();
     await notificationPanel.getByRole('button', { name: 'View source', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`run=${standaloneId}`));
     question = page.getByRole('form', { name: 'Waiting for your answer' });
