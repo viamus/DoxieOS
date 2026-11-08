@@ -52,7 +52,8 @@ Set a model-backed node's `execution` to override the provider selection for tha
 | `aggregate` | Merge text artifacts from direct upstream nodes. |
 | `approval-gate` | Pause for an operator decision. |
 | `if-else` | Evaluate upstream JSON and select the `true` or `false` edge. |
-| `library` | Create a library from selected material or mount an existing library into a workspace. |
+| `library` | Let the harness remember learnings, search shared knowledge, or relate evidence without a workspace mount. |
+| `workspace-memory` | List or load explicit Markdown inputs from a workspace without registering raw files as shared knowledge. |
 | `loop` | Run a subgraph for each item of an upstream JSON array. |
 | `prompt` | Invoke a model for a focused transformation on declared inputs. |
 | `sandbox` | Allocate and list temporary run-owned folders. |
@@ -114,10 +115,12 @@ builder conversations remain resumable through **Sessions**.
 ## Context efficiency
 
 DoxieOS sends request JSON without formatting whitespace. Agent instructions,
-explicit inputs, upstream context, agent memories, `WORKSPACE.md`, and
-high-priority memories remain whole. Other workspace and library memories
-share a 24 KiB inline budget; whole omitted sources remain available through
-the run's `DOXIE_CONTEXT_INDEX` file. Repeated identical context is deduplicated.
+explicit inputs, upstream context, and agent-owned instruction memories remain
+whole. Workspace notes and the shared library are not automatically copied
+into the request. Use the built-in `memory_search`, `memory_get`,
+`memory_remember`, `memory_relate`, and `memory_graph` tools to retrieve relevant
+knowledge and publish verified learnings. Search responses are bounded rather
+than attaching the entire library. See the [library guide](library-memory.md).
 
 Builder requests retain the first user requirement and a recent window of
 whole exchanges, normally up to eight turns and 24 KiB. The current message

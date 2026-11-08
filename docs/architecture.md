@@ -20,7 +20,10 @@ flowchart TD
     ProviderResolver --> ClaudeCLI["Claude Code CLI"]
     ProviderResolver --> CodexCLI["OpenAI Codex CLI"]
     Runner --> RunOutputs[".runs/"]
-    Runner --> Workspace[".workspace/"]
+    Runner --> Workspace["Input / output workspace"]
+    Runner <-->|Native memory MCP| Memory["Shared memory graph / text and vector index"]
+    Memory --> Embeddings["Optional local embedding worker"]
+    Sources["Codex / Claude Code memories"] -->|Import worker and provenance| Memory
     Notifications --> Main
 ```
 
@@ -28,7 +31,7 @@ flowchart TD
 
 | Boundary | Responsibility |
 | --- | --- |
-| Renderer | Pages, settings, builders, history, notifications, and graph editing. |
+| Renderer | Pages, settings, builders, history, notifications, and read-only knowledge graph inspection. |
 | Preload | Named IPC operations and runtime events exposed to the renderer. |
 | Main | Validates operations and owns filesystem access, SQLite, processes, and dialogs. |
 | Agents | Catalog parsing, provider prompt assembly, run persistence, process lifecycle. |
@@ -51,7 +54,7 @@ sequenceDiagram
     U->>UI: Start agent or workflow
     UI->>R: Dispatch through Electron IPC
     R->>C: Load agent/workflow definition
-    R->>W: Load workspace context and mounted memories
+    R->>W: Select input/output files; load Markdown only through explicit connector
     R->>P: Start a fresh provider session with the typed request
     P-->>R: Stream output and result metadata
     P-->>R: Publish transient context and durable artifacts
@@ -63,6 +66,13 @@ The handoff lives for the active workflow. It carries context JSON as the
 exact text published by the producer and indexes isolated artifact copies for
 the consumer. The engine drops the transport at workflow end. Native tools run
 inside the engine, with no model selection or provider process.
+
+The shared library is exclusively fed by the agent harness. All model-backed
+executions receive native retrieval/learning tools and autonomous learning
+instructions. The UI does not expose knowledge registration or editing. A
+Workspace Memory connector supplies explicit manual Markdown as transient
+input; the receiving agent can record verified learnings with evidence and its
+run ID. Loading Markdown does not write raw files into shared knowledge.
 
 ## Workflow Run States
 
@@ -104,6 +114,8 @@ flowchart LR
     Workbench --> RunsRoot[".runs/"]
     Workbench --> SandboxRoot[".sandbox/"]
     Workbench --> PrivateRoot[".private/"]
+    Workbench --> MemoryRoot[".memory/knowledge.db"]
+    Workbench --> ModelsRoot[".models/ verified local models"]
 ```
 
 Development and packaged launches use the same storage layout. The main

@@ -73,6 +73,14 @@ test('saved Codex agents share installed sign-in, preserve Doxie tools and ignor
       assert.deepEqual(interactiveCodexArgs(local), []);
       assert.ok(headlessArgs(local).some(value => value.endsWith('.requires_openai_auth=false')));
     }
+    storage.memory = {};
+    for (const options of [{}, { localCodex: true, mcp: false }, { env: { OPENAI_API_KEY: 'explicit-key' } }]) {
+      const native = providerFor(storage, 'codex', options);
+      const servers = toml.parse(headlessArgs(native).find(value => value.startsWith('mcp_servers='))).mcp_servers;
+      assert.equal(servers.doxie_library_memory.command, process.execPath);
+      assert.equal(servers.doxie_library_memory.env.ELECTRON_RUN_AS_NODE, '1');
+      if (options.mcp === false) assert.deepEqual(Object.keys(servers), ['doxie_library_memory']);
+    }
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;

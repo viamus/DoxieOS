@@ -49,65 +49,50 @@ test('opens existing SQLite settings without altering another table and reads co
   assert.equal(storage.getSetting('ui.language'), 'en');
 });
 
-test('reads old workspace mounts and preserves hand-authored context files', t => {
-  const { open } = setup(t);
-  const storage = open();
-  const workspace = path.join(storage.roots.workspaces, 'release');
+test('retires legacy workspace bindings and generated context while preserving user files and libraries', t => {
+  const { home, open } = setup(t);
+  const workspace = path.join(home, 'project', '.workspace', 'release');
   write(path.join(workspace, 'workspace.json'), JSON.stringify({ Name: 'Release', MountedLibraries: ['policy'], MountedAgents: ['review'], CreatedAt: '2026-01-02T12:00:00Z' }));
   write(path.join(workspace, 'AGENTS.md'), 'Team instructions\n');
+  write(path.join(workspace, 'CLAUDE.md'), '<!-- DoxieOS: auto-generated from workspace.json mountedLibraries -->\nRetired generated context.');
+  write(path.join(workspace, 'WORKSPACE.md'), 'Legacy project notes.');
+  write(path.join(workspace, 'memory', 'release.md'), 'Legacy reusable knowledge.');
+  const storage = open();
   storage.save('libraries', { id: 'policy', name: 'Policy' });
-  storage.writeFile('libraries', 'policy', 'memory/review.md', '---\nname: Review policy\ntype: Project\n---\n\nCheck the changelog.\n');
-  const saved = storage.save('workspaces', { id: 'release', description: 'Current release' });
+  storage.writeFile('libraries', 'policy', 'memory/review.md', 'Check the changelog.');
+  const saved = storage.save('workspaces', { id: 'release', description: 'Current release', mountedLibraryIds: ['policy'], mountedAgentIds: ['review'] });
   assert.equal(saved.name, 'Release');
   assert.equal(saved.createdAt, '2026-01-02T12:00:00Z');
-  assert.deepEqual(saved.mountedLibraryIds, ['policy']);
-  assert.deepEqual(saved.mountedAgentIds, ['review']);
-  assert.equal(storage.get('libraries', 'policy').memories[0].name, 'Review policy');
-  assert.match(fs.readFileSync(path.join(workspace, 'CLAUDE.md'), 'utf8'), /Review policy.*Source:.*memory\/review\.md/);
-  assert.doesNotMatch(fs.readFileSync(path.join(workspace, 'CLAUDE.md'), 'utf8'), /@.*memory\/review\.md/);
-  assert.equal(fs.readFileSync(path.join(workspace, 'AGENTS.md'), 'utf8'), 'Team instructions\n');
-  storage.save('workspaces', { id: 'release', mountedLibraryIds: [] });
+  assert.equal(Object.keys(saved).some(key => /^mounted/i.test(key)), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(workspace, 'workspace.json'), 'utf8'));
+  assert.equal(Object.keys(manifest).some(key => /^mounted/i.test(key)), false);
   assert.equal(fs.existsSync(path.join(workspace, 'CLAUDE.md')), false);
+  assert.equal(fs.readFileSync(path.join(workspace, 'AGENTS.md'), 'utf8'), 'Team instructions\n');
+  assert.equal(fs.readFileSync(path.join(workspace, 'WORKSPACE.md'), 'utf8'), 'Legacy project notes.');
+  assert.equal(fs.readFileSync(path.join(workspace, 'memory', 'release.md'), 'utf8'), 'Legacy reusable knowledge.');
+  assert.equal(storage.get('libraries', 'policy').memories[0].content, 'Check the changelog.');
 });
 
-test('managed workspace context indexes optional library sources and retains mandatory instructions without changing originals', t => {
+test('new workspaces contain only explicit files and never generate memory or provider context', t => {
   const { open } = setup(t);
   const storage = open({ managed: true });
-  storage.save('libraries', { id: 'policy', name: 'Team Policy' });
-  const low = '---\nname: Historical examples\ndescription: Examples for incident reviews\npriority: Low\n---\n\n' + 'LARGE_OPTIONAL_REFERENCE_BODY '.repeat(5000);
-  const medium = '---\nname: Reference guide\npriority: Medium\n---\n\nMEDIUM_REFERENCE_BODY';
-  const high = '---\nname: Required review\npriority: High\n---\n\nNever publish without a human review.\n';
-  storage.writeFile('libraries', 'policy', 'memory/low.md', low);
-  storage.writeFile('libraries', 'policy', 'memory/medium.md', medium);
-  storage.writeFile('libraries', 'policy', 'memory/high.md', high);
   const workspace = storage.save('workspaces', { id: 'release', name: 'Release' });
-  const notes = '# Project rules\n\nPreserve the customer interface.\n';
-  storage.writeFile('workspaces', workspace.id, 'WORKSPACE.md', notes);
+  for (const name of ['WORKSPACE.md', 'memory', 'memories', 'AGENTS.md', 'CLAUDE.md']) assert.equal(fs.existsSync(path.join(workspace.path, name)), false);
+  storage.save('libraries', { id: 'policy', name: 'Team Policy' });
+  const high = '---\npriority: High\n---\n\nPreserve required knowledge globally.\n';
+  storage.writeFile('libraries', 'policy', 'memory/high.md', high);
   storage.save('workspaces', { id: workspace.id, mountedLibraryIds: ['policy'] });
-  const codex = fs.readFileSync(path.join(workspace.path, 'AGENTS.md'), 'utf8');
-  const claude = fs.readFileSync(path.join(workspace.path, 'CLAUDE.md'), 'utf8');
-  assert(codex.includes(notes));
-  assert(codex.includes(high));
-  assert.match(claude, /^@WORKSPACE\.md$/m);
-  assert.match(claude, /^@.*memory\/high\.md$/m);
-  for (const text of [codex, claude]) {
-    assert.match(text, /Historical examples — Examples for incident reviews\. Source:.*memory\/low\.md/);
-    assert.match(text, /Reference guide\. Source:.*memory\/medium\.md/);
-    assert.doesNotMatch(text, /LARGE_OPTIONAL_REFERENCE_BODY|MEDIUM_REFERENCE_BODY/);
-    assert.doesNotMatch(text, /^@.*memory\/(?:low|medium)\.md$/m);
-    assert(Buffer.byteLength(text) < 3000);
-  }
-  assert.equal(storage.readFile('libraries', 'policy', 'memory/low.md').content, low);
-  assert.equal(storage.readFile('libraries', 'policy', 'memory/high.md').content, high);
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(fs.existsSync(path.join(workspace.path, name)), false);
+  const notes = '# Existing notes\nKeep as explicit input.\n';
+  storage.writeFile('workspaces', workspace.id, 'WORKSPACE.md', notes);
+  storage.writeFile('workspaces', workspace.id, 'memory/legacy.md', 'A preserved input file.');
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) storage.writeFile('workspaces', workspace.id, name, '# Custom ' + name + '\nKeep exactly.\n');
+  storage.save('workspaces', { id: workspace.id, mountedLibraries: ['policy'], mountedAgents: ['review'] });
+  for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(fs.readFileSync(path.join(workspace.path, name), 'utf8'), '# Custom ' + name + '\nKeep exactly.\n');
   assert.equal(storage.readFile('workspaces', workspace.id, 'WORKSPACE.md').content, notes);
-  storage.save('workspaces', { id: workspace.id, description: 'Updated metadata' });
-  assert.equal(fs.readFileSync(path.join(workspace.path, 'AGENTS.md'), 'utf8'), codex);
-  assert.equal(fs.readFileSync(path.join(workspace.path, 'CLAUDE.md'), 'utf8'), claude);
-
-  const custom = storage.save('workspaces', { id: 'custom', name: 'Custom' });
-  for (const name of ['AGENTS.md', 'CLAUDE.md']) storage.writeFile('workspaces', custom.id, name, `# Custom ${name}\nKeep exactly.\n`);
-  storage.save('workspaces', { id: custom.id, mountedLibraryIds: ['policy'] });
-  for (const name of ['AGENTS.md', 'CLAUDE.md']) assert.equal(fs.readFileSync(path.join(custom.path, name), 'utf8'), `# Custom ${name}\nKeep exactly.\n`);
+  assert.equal(storage.readFile('workspaces', workspace.id, 'memory/legacy.md').content, 'A preserved input file.');
+  assert.equal(storage.readFile('libraries', 'policy', 'memory/high.md').content, high);
+  assert.equal(storage.list('libraries').length, 1, 'legacy input files are not silently converted into new global knowledge');
 });
 
 test('confines workspace file operations and identifies binary previews', t => {
@@ -165,6 +150,34 @@ test('round-trips a legacy-format workflow ZIP with its agent and stages collisi
   assert.equal(destination.get('agents', 'review').systemPrompt, 'Check tests.');
   assert.equal(destination.readFile('agents', 'review', 'refs/checklist.md').content, 'Keep a checklist.');
   assert.equal(destination.importItem('workflows', archive).id, 'publish');
+});
+
+test('workspace ZIPs transfer files without legacy mounts or bundled agent dependencies', t => {
+  const { home, open } = setup(t);
+  const origin = open();
+  const destination = open({ root: path.join(home, 'destination') });
+  origin.save('agents', { id: 'review', name: 'Review', body: 'Review inputs.' });
+  const archive = new Zip();
+  archive.addFile('doxie-workspace-export.json', Buffer.from(JSON.stringify({ format: 'doxie.workspace.export.v1', workspaceId: 'release', agents: [{ id: 'review', path: 'agents/review.zip' }] })));
+  archive.addFile('agents/review.zip', origin.exportItem('agents', 'review'));
+  archive.addFile('workspace/release/workspace.json', Buffer.from(JSON.stringify({ Name: 'Release', MountedLibraries: ['policy'], mountedAgentIds: ['review'] })));
+  archive.addFile('workspace/release/AGENTS.md', Buffer.from('<!-- DoxieOS: auto-generated from workspace.json mountedLibraries -->\nOld context.'));
+  archive.addFile('workspace/release/CLAUDE.md', Buffer.from('Manually authored instructions.'));
+  archive.addFile('workspace/release/WORKSPACE.md', Buffer.from('Legacy project notes.'));
+  archive.addFile('workspace/release/memory/check.md', Buffer.from('Legacy checklist.'));
+  const supplied = archive.toBuffer();
+  const imported = destination.importItem('workspaces', supplied);
+  assert.equal(Object.keys(imported).some(key => /^mounted/i.test(key)), false);
+  assert.equal(destination.get('agents', 'review'), null, 'workspace imports do not install unrelated agent bindings');
+  assert.equal(fs.existsSync(path.join(imported.path, 'AGENTS.md')), false);
+  assert.equal(destination.readFile('workspaces', imported.id, 'CLAUDE.md').content, 'Manually authored instructions.');
+  assert.equal(destination.readFile('workspaces', imported.id, 'WORKSPACE.md').content, 'Legacy project notes.');
+  assert.equal(destination.readFile('workspaces', imported.id, 'memory/check.md').content, 'Legacy checklist.');
+  const exported = new Zip(destination.exportItem('workspaces', imported.id));
+  assert.equal(exported.getEntries().some(entry => entry.entryName.startsWith('agents/')), false);
+  assert.equal(Object.keys(JSON.parse(exported.readAsText('workspace/release/workspace.json'))).some(key => /^mounted/i.test(key)), false);
+  assert.equal(Object.hasOwn(JSON.parse(exported.readAsText('doxie-workspace-export.json')), 'agents'), false);
+  assert.deepEqual(JSON.parse(new Zip(supplied).readAsText('workspace/release/workspace.json')).MountedLibraries, ['policy']);
 });
 
 test('moves an agent between configured catalogs with its subagent, memory and companion files', t => {
@@ -345,7 +358,7 @@ test('creates a managed workspace from a selected folder without using its metad
   const workspace = storage.save('workspaces', { id: 'project-copy', name: 'Managed copy', path: source });
   assert.equal(workspace.path, path.join(storage.root, '.workspace', 'project-copy'));
   assert.equal(workspace.name, 'Managed copy');
-  assert.deepEqual(workspace.mountedLibraryIds, []);
+  assert.equal(Object.keys(workspace).some(key => /^mounted/i.test(key)), false);
   assert.equal(storage.readFile('workspaces', workspace.id, 'WORKSPACE.md').content, 'Existing notes');
   assert.equal(storage.readFile('workspaces', workspace.id, 'docs/overview.md').content, 'Project overview');
   assert.equal(fs.existsSync(path.join(workspace.path, '.env')), false);

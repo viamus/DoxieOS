@@ -28,3 +28,11 @@ Write the current draft to `.draft/manifest.json` in this builder sandbox. Updat
 Use kebab-case agent and mode IDs. Describe real prerequisites with `requirements` when the agent needs an environment variable, MCP server, or tool. Include an `execution` object with `providerId` and optional `model` when the user explicitly selects a provider.
 
 A workflow dispatch supplies explicit inputs and direct upstream context in a fresh request. Explain what the agent reads and what it writes. Use `DOXIE_WORKFLOW_CONTEXT_OUT` for small transient JSON context and the assigned output directory for explicit files. Keep the draft provider-neutral and refer to native workflow tools for deterministic actions such as approval, branching, and workspace delivery.
+
+The shared library belongs exclusively to the agent harness. Every execution
+can retrieve relevant memories and autonomously record verified learnings or
+parameters through native memory tools; no manual library registration is
+needed. A workspace is input/output storage. Manual Markdown is supplied
+explicitly through Workspace Memory when composing a workflow, and the agent
+can derive verified learnings from that input without copying raw files into
+the shared knowledge base.

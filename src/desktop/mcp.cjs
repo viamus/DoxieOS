@@ -85,14 +85,15 @@ function equivalentClaude(config, definition) {
   return JSON.stringify(ordered(declared)) === JSON.stringify(ordered(present));
 }
 
-function createMcp(storage) {
+function createMcp(storage, { nativeServers = [] } = {}) {
   const home = homedir();
   const globalCodexPath = join(process.env.CODEX_HOME || join(home, '.codex'), 'config.toml');
   const codexPath = join(providerEnvironment(storage).CODEX_HOME, 'config.toml');
   const claudePath = safePath(storage.root, '.mcp.json');
   const rootKey = createHash('sha256').update(process.platform === 'win32' ? storage.root.toLowerCase() : storage.root).digest('hex');
   const lastManaged = `desktop.mcp.claude-managed.${rootKey}`;
-  const list = () => jsonSetting(storage, key, []);
+  const nativeIds = new Set(nativeServers.map(server => server.id.toLowerCase()));
+  const list = () => [...jsonSetting(storage, key, []).filter(server => !nativeIds.has(String(server.id).toLowerCase())), ...nativeServers];
   function globalClaude() {
     const config = process.env.CLAUDE_CONFIG_DIR || join(home, '.claude');
     const paths = new Set([join(home, '.claude.json'), join(config, '.claude.json'), join(config, 'mcp.json')]);
@@ -107,7 +108,7 @@ function createMcp(storage) {
       return {
         id: server.id, name: server.name, transport: server.transport, command: server.command, arguments: server.arguments,
         url: server.url, providers: server.providers, enabled: server.enabled, environment: server.environment ? secret : '',
-        headers: masked, extraJson: JSON.stringify(masked ? { headers: masked } : {}),
+        headers: masked, extraJson: JSON.stringify(masked ? { headers: masked } : {}), builtin: nativeIds.has(server.id.toLowerCase()),
       };
     });
   }
@@ -157,6 +158,7 @@ function createMcp(storage) {
     const previous = new Map(list().map(server => [server.id, server]));
     const normalized = new Map();
     for (const item of values) {
+      if (nativeIds.has(String(item.id).toLowerCase())) continue;
       if (!/^[a-z0-9][a-z0-9_-]*$/i.test(item.id || '') || ['__proto__', 'constructor', 'prototype'].includes(item.id)) throw new Error('Invalid MCP server ID.');
       const prior = previous.get(item.id);
       const transport = item.transport === 'http' ? 'http' : 'stdio';
@@ -176,7 +178,7 @@ function createMcp(storage) {
       });
     }
     const items = [...normalized.values()];
-    sync(items);
+    sync([...items, ...nativeServers]);
     storage.setSetting(key, items);
     return publicList();
   }

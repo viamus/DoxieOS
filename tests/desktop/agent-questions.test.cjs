@@ -15,7 +15,7 @@ async function until(check) {
   throw new Error('The fixture did not reach its expected state.');
 }
 
-async function fixture(t, scenario = 'question') {
+async function fixture(t, scenario = 'question', nativeMemory = false) {
   const root = await mkdtemp(join(tmpdir(), 'doxie-questions-'));
   const storage = createStorage({ root, databasePath: ':memory:' });
   const capture = join(root, 'capture.json');
@@ -31,6 +31,8 @@ async function fixture(t, scenario = 'question') {
       const entries = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
       const turn = entries.length;
       entries.push({ prompt, hints: fs.readFileSync(process.env.DOXIE_OPERATOR_HINTS_FILE, 'utf8'),
+        mcpConfig: process.argv.includes('--mcp-config') ? JSON.parse(fs.readFileSync(process.argv[process.argv.indexOf('--mcp-config') + 1], 'utf8')) : null,
+        strictMcp: process.argv.includes('--strict-mcp-config'),
         contextExists: Boolean(process.env.DOXIE_WORKFLOW_CONTEXT_OUT && fs.existsSync(process.env.DOXIE_WORKFLOW_CONTEXT_OUT)),
         memoryIndex: process.env.DOXIE_CONTEXT_INDEX ? JSON.parse(fs.readFileSync(process.env.DOXIE_CONTEXT_INDEX, 'utf8')) : null });
       fs.writeFileSync(file, JSON.stringify(entries));
@@ -51,6 +53,7 @@ async function fixture(t, scenario = 'question') {
     environment: { DOXIE_FIXTURE_CAPTURE: capture, DOXIE_FIXTURE_SCENARIO: scenario } } });
   storage.save('agents', { id: 'inspect', name: 'Inspect release' });
   const notifications = [];
+  if (nativeMemory) storage.memory = {};
   const agents = createAgents({ storage, notify: data => notifications.push(data) });
   t.after(async () => { await agents.close(); storage.close(); await rm(root, { recursive: true, force: true }); });
   return { root, storage, agents, notifications, captured: async () => JSON.parse(await readFile(capture, 'utf8')) };
@@ -93,6 +96,24 @@ test('a question pauses the same run, notifies once and resumes with exact answe
   assert.equal(questions[0].id, run.id);
   assert.equal(questions.at(-1).question, null);
   assert.deepEqual(await readdir(join(root, '.runtime', 'agent-hints')), []);
+});
+
+test('autonomous learning and native run provenance apply to ordinary agents and builder executions', async t => {
+  const { root, agents, captured } = await fixture(t, 'complete', true);
+  await writeFile(join(root, '.mcp.json'), JSON.stringify({ mcpServers: { 'configured-tool': { command: 'fixture-tool', args: ['fixture'] } } }));
+  const run = agents.start('inspect', { arguments: 'Verify the supplied input.' });
+  assert.equal((await agents.wait(run.id)).status, 'Completed');
+  const builder = agents.runBuilder('agent', { providerId: 'claude-code', cwd: root, prompt: 'Prepare the draft.' });
+  assert.equal((await agents.wait(builder.id)).status, 'Completed');
+  const [ordinary, building] = await captured();
+  for (const [dispatch, id] of [[ordinary, run.id], [building, builder.id]]) {
+    assert(dispatch.prompt.includes('Autonomous harness learning'));
+    assert(dispatch.prompt.includes('Do not wait for a user to fill a library form'));
+    assert.equal(dispatch.mcpConfig.mcpServers.doxie_library_memory.env.DOXIE_MEMORY_RUN_ID, id);
+    assert.equal(dispatch.strictMcp, true);
+  }
+  assert.equal(ordinary.mcpConfig.mcpServers['configured-tool'].command, 'fixture-tool');
+  assert.equal(building.mcpConfig.mcpServers['configured-tool'], undefined);
 });
 
 test('stopping a run waiting for the user resolves wait and prevents a late answer', async t => {
@@ -162,7 +183,7 @@ test('startup marks a question from an ended application session as interrupted'
   await reopened.close();
 });
 
-test('agent prompts preserve instructions and user data while indexing optional memory as whole files', async t => {
+test('agent prompts preserve explicit inputs without injecting workspace notes or memory folders', async t => {
   const { root, storage, agents, captured } = await fixture(t, 'complete');
   storage.save('agents', { id: 'inspect', name: 'Inspect release', body: 'Mandatory instructions. '.repeat(3500) });
   const workspace = storage.save('workspaces', { id: 'release', name: 'Release' });
@@ -173,14 +194,14 @@ test('agent prompts preserve instructions and user data while indexing optional 
   const result = await agents.wait(run.id);
   const [{ prompt, memoryIndex }] = await captured();
   assert(prompt.includes('Mandatory instructions. '.repeat(3500)));
-  assert(prompt.includes('Always preserve the release branch.'));
+  assert(!prompt.includes('Always preserve the release branch.'));
   assert(prompt.includes(JSON.stringify(raw)));
-  assert(prompt.includes('End 0'));
+  assert(!prompt.includes('End 0'));
   assert(!prompt.includes('Reference 2\n'));
-  assert.equal(memoryIndex.length, 6);
-  assert(memoryIndex.every(item => item.source.startsWith(workspace.path)));
-  assert(result.contextMetrics.savedBytes > 30_000);
-  assert.equal(result.contextMetrics.memory.omittedItems, 6);
+  assert.equal(memoryIndex, null);
+  assert.equal(result.contextMetrics.memory.selectedItems, 0);
+  assert.equal(result.contextMetrics.memory.omittedItems, 0);
+  assert.equal(await readFile(join(workspace.path, 'WORKSPACE.md'), 'utf8'), 'Always preserve the release branch.');
   assert.deepEqual(await readdir(join(root, '.runtime', 'agent-hints')), []);
 });
 

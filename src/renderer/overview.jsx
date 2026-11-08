@@ -53,7 +53,7 @@ export function Dashboard() {
   const figures = {
     workflows: `${state.workflows.filter(({ enabled }) => enabled !== false).length} ${t('Home.Enabled', 'enabled')}`,
     agents: `${state.agentRuns.length} ${t('Home.Runs', 'runs')}`,
-    libraries: `${state.libraries.reduce((count, library) => count + (library.memories?.length || 0), 0)} ${t('Home.MemoryEntriesTotal', 'memory entries')}`,
+    libraries: `${Number(state.libraryStats?.memories || 0) + Number(state.libraryStats?.entities || 0) + Number(state.libraryStats?.parameters || 0)} ${t('Home.MemoryEntriesTotal', 'memory entries')}`,
     workspaces: `${consoles.length} ${t('Home.LiveConsolesCount', 'live consoles')}`,
   };
 
@@ -68,7 +68,7 @@ export function Dashboard() {
     </section>
     <div className="metrics">{categories.map(({ key, label, icon: Icon, tone }) => <a className={`metric ${tone}`} key={key} href={href(`/${key}`)}>
       <div className="metric-top"><span className="metric-icon"><Icon size={19} strokeWidth={1.65} /></span><ChevronRight size={17} className="row-caret" /></div>
-      <div className="metric-count">{state[key].length}<span>{t(`Home.${label}`, label)}</span></div><p>{figures[key]}</p>
+      <div className="metric-count">{key === 'libraries' ? 1 : state[key].length}<span>{key === 'libraries' ? t('Nav.Library', 'Library') : t(`Home.${label}`, label)}</span></div><p>{figures[key]}</p>
     </a>)}</div>
     <div className="dashboard-grid">
       <Panel title={t('Home.LiveNow', 'Live now')} icon={Activity} actions={<Tag>{running.length + consoles.length} active</Tag>}>
@@ -336,7 +336,7 @@ export function SettingsPage() {
       </ItemRow>)}</div>
     </Panel>
     <Panel title={t('Settings.McpServers', 'MCP servers')} icon={Layers3} hint="Configure tools available to your provider CLIs." actions={<><Button icon={Import} onClick={() => perform('settings:importMcp', [], 'Provider MCP configuration imported')}>{t('Settings.ImportFromProviders', 'Import from providers')}</Button><Button variant="primary" icon={Plus} onClick={() => setEditMcp({})}>{t('Settings.AddMcp', 'Add MCP')}</Button></>}>
-      {servers.length ? <div className="row-list">{servers.map((server) => <ItemRow key={server.id} icon={Layers3} title={server.name || server.id} detail={[server.transport, ...(server.providers || [])].filter(Boolean).join(' · ')}><Status status={server.enabled ? 'Enabled' : 'Disabled'} /><IconButton icon={Settings2} label="Edit MCP server" onClick={() => setEditMcp(server)} /><IconButton icon={Trash2} label="Remove MCP server" onClick={() => setRemoveMcp(server)} /></ItemRow>)}</div> : <Empty compact title="No MCP servers configured" icon={Layers3} />}
+      {servers.length ? <div className="row-list">{servers.map((server) => <ItemRow key={server.id} icon={Layers3} title={server.name || server.id} detail={[server.transport, ...(server.providers || [])].filter(Boolean).join(' · ')}><Status status={server.enabled ? 'Enabled' : 'Disabled'} />{server.builtin ? <Tag>Built in</Tag> : <><IconButton icon={Settings2} label="Edit MCP server" onClick={() => setEditMcp(server)} /><IconButton icon={Trash2} label="Remove MCP server" onClick={() => setRemoveMcp(server)} /></>}</ItemRow>)}</div> : <Empty compact title="No MCP servers configured" icon={Layers3} />}
     </Panel>
     <Panel title={t('Settings.DoxieCatalogs', 'Doxie catalogs')} icon={BookOpen} hint="Add a folder to copy its catalog into DoxieOS app data." actions={<Button icon={Plus} onClick={addCatalog}>{t('Settings.AddCatalog', 'Add catalog')}</Button>}>
       <div className="row-list">{catalogs.map((catalog) => <ItemRow key={catalog.id} icon={BookOpen} title={nameOf(catalog)} detail={catalog.path || catalog.root}>{catalog.isDefault || catalog.id === 'default' ? <Tag>Default</Tag> : <IconButton icon={Trash2} label="Remove catalog" onClick={() => setRemoveCatalog(catalog)} />}</ItemRow>)}</div>

@@ -12,3 +12,7 @@ documentation, package, or generated third-party notices surface.
 Local dictation uses OpenAI Whisper Tiny (MIT), with ONNX model exports from
 the Hugging Face ONNX Community and the Apache-2.0 Transformers.js runtime.
 Model revision and file digests are recorded in src/desktop/dictation-model.json.
+
+Optional local semantic retrieval uses the Apache-2.0 sentence-transformers
+paraphrase-multilingual-MiniLM-L12-v2 model with ONNX exports from Xenova.
+Model revision and file digests are recorded in src/desktop/semantic-model.json.

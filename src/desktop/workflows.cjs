@@ -14,7 +14,7 @@ const triggerKinds = ['manual', 'cron', 'event', 'webhook'];
 const terminal = new Set(['Succeeded', 'Failed', 'Cancelled']);
 const connectorKinds = new Map([
   ['aggregate', 'aggregate'], ['write-to-workspace', 'output'], ['loop', 'loop'],
-  ['if-else', 'decision'], ['approval-gate', 'approval'], ['library', 'library'], ['sandbox', 'sandbox'], ['prompt', 'prompt'],
+  ['if-else', 'decision'], ['approval-gate', 'approval'], ['library', 'library'], ['sandbox', 'sandbox'], ['prompt', 'prompt'], ['workspace-memory', 'workspace-memory'],
 ]);
 const transientFolder = '.doxie-transient';
 const maxContextBytes = 64 * 1024;
@@ -1019,9 +1019,10 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
     const modelBacked = kind === 'agent' || kind === 'prompt';
     const inputs = Object.fromEntries(Object.entries(node.inputs ?? {}).map(([key, value]) => [
       modelBacked ? key : lower(key),
-      modelBacked && typeof value !== 'string' ? value : substitute(value, run.triggerInputs, scope.loop),
+      kind === 'workspace-memory' && lower(key) === 'paths' && Array.isArray(value) ? value.map(item => substitute(item, run.triggerInputs, scope.loop))
+        : modelBacked && typeof value !== 'string' ? value : substitute(value, run.triggerInputs, scope.loop),
     ]));
-    if (scope.loop && !['agent', 'decision', 'library', 'sandbox', 'prompt'].includes(kind)) {
+    if (scope.loop && !['agent', 'decision', 'library', 'sandbox', 'prompt', 'workspace-memory'].includes(kind)) {
       throw new Error(`Loop body node '${node.id}' must be an agent or supported connector`);
     }
     if (kind === 'trigger') {
@@ -1044,6 +1045,7 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
       case 'loop': await executeLoop(context, scope, node, record, inputs, upstream, directory); break;
       case 'approval': await approval(context, scope, node, record, inputs, upstream, directory); break;
       case 'library':
+      case 'workspace-memory':
       case 'sandbox': await withHandoff(context, scope, node, upstream, handoff => utility(context, scope, node, kind, record, inputs, handoff, directory)); break;
     }
     if (kind === 'approval' || kind === 'aggregate') {
@@ -1065,15 +1067,27 @@ function createWorkflows({ storage, agents, emit = () => {}, notify = () => {}, 
   async function utility(context, scope, node, toolId, record, inputs, handoff, directory) {
     const { run, definition } = context;
     const toolMode = node.toolMode ?? node.agentMode;
-    const explicitMountTarget = toolId === 'library' && toolMode === 'mount' && inputs.workspace?.trim();
+    const readsWorkspaceFiles = toolId === 'workspace-memory';
     const result = await runNativeUtility(toolId, {
-      storage, toolMode, inputs, workspace: explicitMountTarget ? null : workspaceFor(context, scope, node),
+      storage, toolMode, inputs, workspace: readsWorkspaceFiles ? workspaceFor(context, scope, node) : null,
       sourceDirectories: handoff.sources.map(source => source.artifactDirectory).filter(Boolean),
       outputDir: directory, scratchRoot: safePath(transientRoot(run.id), 'sandboxes'), signal: scope.signal,
       catalogId: definition.catalogId,
+      provenance: { kind: 'workflow', runId: run.id, label: node.label || node.id },
     });
     record.outputSummary = result.summary;
     record.logs.push(`[${toolId}] ${result.summary}`);
+    if (result.contextJson !== undefined) {
+      const contextJson = typeof result.contextJson === 'string' ? result.contextJson : JSON.stringify(result.contextJson);
+      const value = JSON.parse(contextJson);
+      const size = Buffer.byteLength(contextJson);
+      if (!value || typeof value !== 'object' || Array.isArray(value) || size > maxContextBytes) throw new Error('Native tool context must be a JSON object of at most 64 KiB');
+      if (context.contextBytes + size > maxRunContextBytes) throw new Error('Workflow context exceeded its 512 KiB run budget');
+      context.contextBytes += size;
+      writeNodeContexts(scope, record, node, [{ nodeId: node.id,
+        ...(scope.loop ? { iteration: { index: scope.loop.index, total: scope.loop.total } } : {}), contextJson }]);
+      record.logs.push(`Published ${size} bytes of transient tool context`);
+    }
     if (toolId === 'sandbox') writeNodeContexts(scope, record, node, [], true);
   }
 

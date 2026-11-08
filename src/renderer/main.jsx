@@ -7,7 +7,8 @@ import { AgentsPage, AgentPage, BuilderPage, WorkflowsPage } from './automation.
 import { AgentEditor } from './agent-editor.jsx';
 import { ConnectorPage, ConnectorsPage } from './connectors.jsx';
 import { WorkflowEditor, WorkflowPage } from './workflow.jsx';
-import { ConsolesPage, LibrariesPage, Markdown, WorkspaceFilesPage, WorkspacesPage } from './workbench.jsx';
+import { ConsolesPage, Markdown, WorkspaceFilesPage, WorkspacesPage } from './workbench.jsx';
+import { LibrariesPage } from './libraries.jsx';
 import logo from './doxie-face.svg';
 import './styles.css';
 
@@ -18,7 +19,7 @@ const navigation = [
   { to: '/agents', key: 'Nav.Agents', label: 'Agents', icon: Bot },
   { to: '/connectors', key: 'Nav.Connectors', label: 'Connectors', icon: Plug },
   { to: '/workflows', key: 'Nav.Workflows', label: 'Workflows', icon: GitBranch },
-  { to: '/libraries', key: 'Nav.Libraries', label: 'Libraries', icon: BookOpen },
+  { to: '/libraries', key: 'Nav.Library', label: 'Library', icon: BookOpen },
   { to: '/history', key: 'Nav.History', label: 'History', icon: History },
 ];
 
