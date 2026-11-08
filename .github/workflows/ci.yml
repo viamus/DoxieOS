@@ -1,4 +1,4 @@
-name: CI
+name: Electron CI
 
 on:
   pull_request:
