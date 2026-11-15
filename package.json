@@ -28,14 +28,14 @@
     "@playwright/test": "1.65.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "electron": "45.2.3",
-    "lucide-react": "^1.69.0",
+    "electron": "45.3.1",
+    "lucide-react": "^1.72.0",
     "mermaid": "^12.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "vite": "^8.3.5"
+    "vite": "^8.3.8"
   },
   "overrides": {
     "glob": "14.0.3",
